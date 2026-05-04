@@ -51,7 +51,8 @@ def _logo_uri(filename: str) -> str:
     try:
         ext = os.path.splitext(filename)[1].lower().lstrip(".")
         mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-                "svg": "image/svg+xml", "webp": "image/webp"}.get(ext, "image/png")
+                "svg": "image/svg+xml", "webp": "image/webp",
+                "pdf": "application/pdf"}.get(ext, "application/octet-stream")
         with open(path, "rb") as f:
             return f"data:{mime};base64," + base64.b64encode(f.read()).decode()
     except Exception:
@@ -858,17 +859,14 @@ const Hero = ({ t }) => (
         <a className="btn btn-ghost" href="#"
            onClick={(e) => {
              e.preventDefault();
-             try {
-               const base = window.parent.location.origin;
+             const uri = (typeof PDF_URI !== 'undefined' && PDF_URI) ? PDF_URI : null;
+             if (uri) {
                const a = document.createElement('a');
-               a.href = base + '/app/static/GROCERYsim_User_Manual.pdf';
+               a.href = uri;
                a.download = 'GROCERYsim_User_Manual.pdf';
-               a.target = '_blank';
                document.body.appendChild(a);
                a.click();
                document.body.removeChild(a);
-             } catch(err) {
-               window.open('/app/static/GROCERYsim_User_Manual.pdf', '_blank');
              }
            }}>{t.heroDocsBtn}</a>
       </div>
@@ -1456,6 +1454,7 @@ def render_landing_page():
         "hero2":    _logo_uri("IAMO.png"),
         "hero3":    _logo_uri("Logo_lab.png"),
     }
+    _pdf_uri = _logo_uri("GROCERYsim_User_Manual.pdf")  # reuses same base64 helper
 
     landing_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1475,6 +1474,7 @@ def render_landing_page():
       hero:     ["{_lu['hero0']}", "{_lu['hero1']}", "{_lu['hero2']}", "{_lu['hero3']}"],
       partners: ['','','','','','','','']
     }};
+    var PDF_URI = "{_pdf_uri}";
   </script>
   <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
