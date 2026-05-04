@@ -161,6 +161,18 @@ def apply_theme():
             color: #8899aa !important;
         }
 
+        /* ── Title row: stack on mobile ── */
+        @media (max-width: 640px) {
+            div[data-testid="stColumns"] > div[data-testid="stColumn"] {
+                min-width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+            div[data-testid="stDownloadButton"] > button {
+                font-size: 12px !important;
+                padding: 8px 10px !important;
+            }
+        }
+
         /* ── Mobile / tablet responsiveness ── */
         @media (max-width: 768px) {
             /* Horizontal-scroll tabs instead of wrapping */
@@ -1044,8 +1056,10 @@ const Footer = ({ t }) => (
 
 // ── App ───────────────────────────────────────────────────────────────────────
 const App = () => {
-  const initLang = (typeof INITIAL_LANG !== 'undefined' && TRANSLATIONS[INITIAL_LANG]) ? INITIAL_LANG : 'en';
-  const [lang, setLang] = useState(initLang);
+  const _storedLang = (() => { try { return window.parent.sessionStorage.getItem('grocerysim_lang'); } catch(e) { return null; } })();
+  const initLang = (_storedLang && TRANSLATIONS[_storedLang]) ? _storedLang : ((typeof INITIAL_LANG !== 'undefined' && TRANSLATIONS[INITIAL_LANG]) ? INITIAL_LANG : 'en');
+  const [lang, setLangState] = useState(initLang);
+  const setLang = (code) => { setLangState(code); try { window.parent.sessionStorage.setItem('grocerysim_lang', code); } catch(e) {} };
   const t = TRANSLATIONS[lang];
   return (
     <div className="page">
@@ -1401,8 +1415,10 @@ const CaseStudiesPage = ({ t, lang, setLang }) => {
 
 // ── App root ──────────────────────────────────────────────────────────────────
 const CaseStudiesApp = () => {
-  const initLang = (typeof INITIAL_LANG !== 'undefined' && CS_TRANS[INITIAL_LANG]) ? INITIAL_LANG : 'en';
-  const [lang, setLang] = useState(initLang);
+  const _storedLang = (() => { try { return window.parent.sessionStorage.getItem('grocerysim_lang'); } catch(e) { return null; } })();
+  const initLang = (_storedLang && CS_TRANS[_storedLang]) ? _storedLang : ((typeof INITIAL_LANG !== 'undefined' && CS_TRANS[INITIAL_LANG]) ? INITIAL_LANG : 'en');
+  const [lang, setLangState] = useState(initLang);
+  const setLang = (code) => { setLangState(code); try { window.parent.sessionStorage.setItem('grocerysim_lang', code); } catch(e) {} };
   const t = CS_TRANS[lang];
   return <CaseStudiesPage t={t} lang={lang} setLang={setLang} />;
 };
@@ -1483,6 +1499,17 @@ def render_landing_page():
     {_GROCERY_SIM_JSX}
     {_LANDING_APP_JSX}
   </script>
+  <script>
+  (function(){{
+    function sendH(){{
+      var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      window.parent.postMessage({{type:'grocerysim_resize', height:h}}, '*');
+    }}
+    window.addEventListener('load', function(){{ sendH(); setTimeout(sendH,600); setTimeout(sendH,1800); }});
+    window.addEventListener('resize', sendH);
+    if(typeof ResizeObserver!=='undefined') new ResizeObserver(sendH).observe(document.body);
+  }})();
+  </script>
 </body>
 </html>"""
 
@@ -1497,7 +1524,6 @@ def render_landing_page():
     components.html("""<script>
 (function(){
   var NAV = {'launch_case_studies': '→cases'};
-  // Use MutationObserver to hide the trigger buttons as soon as Streamlit renders them
   var obs = new MutationObserver(function(){
     window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
       var lbl = (c.querySelector('button p, button') || {}).textContent || '';
@@ -1506,13 +1532,19 @@ def render_landing_page():
     });
   });
   try { obs.observe(window.parent.document.body, {childList:true, subtree:true}); } catch(e){}
-  // Listen for React postMessage events and click the matching hidden button
   window.parent.addEventListener('message', function(e){
-    if(!e.data || !NAV[e.data.type]) return;
-    var target = NAV[e.data.type];
-    window.parent.document.querySelectorAll('button').forEach(function(b){
-      if((b.textContent || '').trim() === target) b.click();
-    });
+    if(!e.data) return;
+    if(NAV[e.data.type]){
+      var target = NAV[e.data.type];
+      window.parent.document.querySelectorAll('button').forEach(function(b){
+        if((b.textContent || '').trim() === target) b.click();
+      });
+    }
+    if(e.data.type === 'grocerysim_resize' && e.data.height){
+      window.parent.document.querySelectorAll('iframe').forEach(function(fr){
+        try { if(fr.contentWindow === e.source){ fr.style.height = e.data.height+'px'; fr.style.minHeight = e.data.height+'px'; } } catch(ex){}
+      });
+    }
   });
 })();
 </script>""", height=0)
@@ -1566,6 +1598,17 @@ def render_case_studies_page():
   <script type="text/babel">
     {_CASE_STUDIES_JSX}
   </script>
+  <script>
+  (function(){{
+    function sendH(){{
+      var h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      window.parent.postMessage({{type:'grocerysim_resize', height:h}}, '*');
+    }}
+    window.addEventListener('load', function(){{ sendH(); setTimeout(sendH,600); setTimeout(sendH,1800); }});
+    window.addEventListener('resize', sendH);
+    if(typeof ResizeObserver!=='undefined') new ResizeObserver(sendH).observe(document.body);
+  }})();
+  </script>
 </body>
 </html>"""
 
@@ -1592,11 +1635,18 @@ def render_case_studies_page():
   });
   try { obs.observe(window.parent.document.body, {childList:true, subtree:true}); } catch(e){}
   window.parent.addEventListener('message', function(e){
-    if(!e.data || !NAV[e.data.type]) return;
-    var target = NAV[e.data.type];
-    window.parent.document.querySelectorAll('button').forEach(function(b){
-      if((b.textContent || '').trim() === target) b.click();
-    });
+    if(!e.data) return;
+    if(NAV[e.data.type]){
+      var target = NAV[e.data.type];
+      window.parent.document.querySelectorAll('button').forEach(function(b){
+        if((b.textContent || '').trim() === target) b.click();
+      });
+    }
+    if(e.data.type === 'grocerysim_resize' && e.data.height){
+      window.parent.document.querySelectorAll('iframe').forEach(function(fr){
+        try { if(fr.contentWindow === e.source){ fr.style.height = e.data.height+'px'; fr.style.minHeight = e.data.height+'px'; } } catch(ex){}
+      });
+    }
   });
 })();
 </script>""", height=0)
