@@ -5716,11 +5716,52 @@ def render_sensitivity_tab(params: dict):
 def main():
     params = build_sidebar_params()
 
-    st.title("🛒 GROCERYsim ABM v2.0")
-    st.markdown(
-        "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | "
-        "SecureFood / Horizon Europe — IAMO XR Lab"
-    )
+    _title_col, _btn_col = st.columns([4, 1])
+    with _title_col:
+        st.title("🛒 GROCERYsim ABM v2.0")
+        st.markdown(
+            "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | "
+            "SecureFood / Horizon Europe — IAMO XR Lab"
+        )
+    with _btn_col:
+        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+        _pdf_path = os.path.join(_STATIC_DIR, "GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf")
+        try:
+            with open(_pdf_path, "rb") as _f:
+                _pdf_bytes = _f.read()
+            st.download_button(
+                label="📄 Get SecureFood Scenario Instructions",
+                data=_pdf_bytes,
+                file_name="GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="securefood_pdf_btn",
+            )
+        except FileNotFoundError:
+            pass
+    components.html("""
+<script>
+(function applyOrangeBtn(){
+  function style(){
+    try {
+      window.parent.document.querySelectorAll('button').forEach(function(b){
+        if((b.innerText || '').includes('SecureFood Scenario Instructions')){
+          b.style.backgroundColor='#E87722';
+          b.style.color='white';
+          b.style.border='none';
+          b.style.fontWeight='600';
+          b.onmouseenter=function(){this.style.backgroundColor='#c9641a';};
+          b.onmouseleave=function(){this.style.backgroundColor='#E87722';};
+        }
+      });
+    } catch(e){}
+  }
+  style();
+  try {
+    new MutationObserver(style).observe(window.parent.document.body,{childList:true,subtree:true});
+  } catch(e){}
+})();
+</script>""", height=0)
     st.divider()
 
     tabs = st.tabs([
