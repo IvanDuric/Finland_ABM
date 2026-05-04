@@ -4300,7 +4300,7 @@ def _make_pdf_report(df: pd.DataFrame, baseline_name: str, n_runs: int) -> bytes
     ax2.set_title("Distribution of Daily Revenue"); ax2.legend()
     pdf.add_mpl(fig2); plt.close(fig2)
 
-    return pdf.output(dest="S").encode("latin-1")
+    return bytes(pdf.output())
 
 
 def _make_policy_pdf_brief(
@@ -4439,7 +4439,7 @@ def _make_policy_pdf_brief(
         "SecureFood / Horizon Europe -- grant agreement No. 101136583."
     )
 
-    return pdf.output(dest="S").encode("latin-1")
+    return bytes(pdf.output())
 
 
 # ===========================================================================
