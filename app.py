@@ -1,0 +1,5754 @@
+"""
+GROCERYsim — Streamlit Web App v2.0
+=====================================
+Scientific ABM dashboard for consumer behaviour and supply chain
+stress-testing in grocery retail.
+
+Tabs
+----
+  🏠 Data & Population  — upload Firebase + product files, preview demographics
+  🎮 Interactive Demo   — single-run visual simulation with live chart updates
+  🔬 Scientific Analysis — multi-run Monte Carlo workflow with AI optimisation
+  ♻️  Food Waste          — waste dashboard by product / category / reason
+  📦 Per-Product         — deep-dive stock / revenue / waste per SKU
+  🏛️ Policy Analysis     — Baseline vs Policy comparison (fat tax, subsidy, supply shock, labelling)
+  📥 Export              — download all simulation data as CSV
+
+Deployment (online access)
+--------------------------
+  Simplest (free):  push repo to GitHub → deploy on Streamlit Community Cloud
+                    https://streamlit.io/cloud
+  Google ecosystem: Google Cloud Run (containerised) → see README for Dockerfile
+"""
+
+import base64
+import io
+import json
+import os
+import tempfile
+import time
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import seaborn as sns
+import streamlit as st
+import streamlit.components.v1 as components
+from fpdf import FPDF
+
+from data_processor import run_pipeline_from_data, ARCHETYPE_LABELS
+from model import SupermarketModel, ProductAgent
+
+plt.switch_backend("Agg")
+
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+def _logo_uri(filename: str) -> str:
+    """Read a file from static/ and return a base64 data URI, or '' if missing."""
+    path = os.path.join(_STATIC_DIR, filename)
+    try:
+        ext = os.path.splitext(filename)[1].lower().lstrip(".")
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "svg": "image/svg+xml", "webp": "image/webp"}.get(ext, "image/png")
+        with open(path, "rb") as f:
+            return f"data:{mime};base64," + base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
+# ===========================================================================
+# 0. PAGE CONFIG & THEME
+# ===========================================================================
+
+st.set_page_config(
+    page_title="GROCERYsim ABM",
+    page_icon="🛒",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+def apply_theme():
+    """Theme — custom component style overrides with dark-mode support."""
+    st.markdown("""
+    <style>
+        /* ── Custom components — light defaults with explicit text colour ── */
+        .step-card {
+            background: #f0f7ff;
+            padding: 14px 18px;
+            border-radius: 4px;
+            border-left: 4px solid #44A1A0;
+            margin-bottom: 14px;
+            color: #1a2035;
+        }
+        .step-card h3, .step-card p { color: #1a2035; }
+
+        .metric-card {
+            background: #f8f9fa;
+            padding: 14px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            text-align: center;
+            color: #1a2035;
+        }
+        .archetype-pill {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            margin: 2px;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            margin-top: 50px;
+            border-top: 1px solid #e5e5e5;
+            color: #888;
+            font-size: 0.82rem;
+        }
+        .eu-text { font-style: italic; color: #44A1A0; }
+
+        /* Placeholder: keep tab list from adding extra ── */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 2px;
+            padding: 0 4px;
+        }
+        .stTabs [aria-selected="true"] {
+            border-bottom: 2px solid #44A1A0 !important;
+        }
+
+        /* ── Dark-mode overrides ── */
+        @media (prefers-color-scheme: dark) {
+            .step-card {
+                background: #1a2a3e !important;
+                border-left-color: #44A1A0 !important;
+                color: #e4eaf4 !important;
+            }
+            .step-card h3, .step-card p { color: #e4eaf4 !important; }
+
+            .metric-card {
+                background: #1e2d3d !important;
+                border-color: #2d4a6e !important;
+                color: #e4eaf4 !important;
+            }
+
+            .footer {
+                border-top-color: #2d4a6e !important;
+                color: #8899aa !important;
+            }
+        }
+
+        /* Streamlit's own dark-theme class (set by the Streamlit config toggle) */
+        [data-theme="dark"] .step-card,
+        .stApp[data-theme="dark"] .step-card {
+            background: #1a2a3e !important;
+            border-left-color: #44A1A0 !important;
+            color: #e4eaf4 !important;
+        }
+        [data-theme="dark"] .step-card h3,
+        [data-theme="dark"] .step-card p {
+            color: #e4eaf4 !important;
+        }
+        [data-theme="dark"] .metric-card {
+            background: #1e2d3d !important;
+            border-color: #2d4a6e !important;
+            color: #e4eaf4 !important;
+        }
+        [data-theme="dark"] .footer {
+            border-top-color: #2d4a6e !important;
+            color: #8899aa !important;
+        }
+
+        /* ── Mobile / tablet responsiveness ── */
+        @media (max-width: 768px) {
+            /* Horizontal-scroll tabs instead of wrapping */
+            .stTabs [data-baseweb="tab-list"] {
+                overflow-x: auto !important;
+                flex-wrap: nowrap !important;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+            .stTabs [data-baseweb="tab"] {
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+
+            /* Touch-friendly buttons */
+            .stButton > button {
+                min-height: 44px !important;
+                font-size: 14px !important;
+            }
+
+            /* Sidebar: narrower on tablet */
+            [data-testid="stSidebar"] {
+                min-width: 240px !important;
+                max-width: 280px !important;
+            }
+
+            /* Plotly charts: allow full width */
+            .js-plotly-plot, .plotly { width: 100% !important; }
+
+            /* Metrics: stack on very small screens */
+            [data-testid="stMetric"] { min-width: 120px; }
+        }
+
+        @media (max-width: 480px) {
+            /* Reduce padding so content isn't squeezed */
+            .main .block-container { padding-left: 12px !important; padding-right: 12px !important; }
+
+            /* Sidebar collapses by default — nothing to force, Streamlit handles it */
+            .stButton > button { width: 100% !important; min-height: 48px !important; }
+
+            /* Dataframes: horizontal scroll */
+            [data-testid="stDataFrame"] { overflow-x: auto !important; }
+            [data-testid="stDataFrame"] > div { overflow-x: auto !important; }
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+apply_theme()
+
+ARCHETYPE_COLORS = {
+    "price_champion":   "#DBA159",   # amber
+    "green_buyer":      "#BCDC8B",   # green
+    "health_optimizer": "#44A1A0",   # teal
+    "habitual_buyer":   "#92DDDB",   # light teal
+}
+ARCHETYPE_EMOJI = {
+    "price_champion":   "💸",
+    "green_buyer":      "🌿",
+    "health_optimizer": "💪",
+    "habitual_buyer":   "🔁",
+}
+
+# ===========================================================================
+# 0b. LANDING PAGE
+# ===========================================================================
+
+_LANDING_CSS = """
+/* GROCERYsim ABM — landing page styles */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-dark: #042026;
+  --bg-mid: #073B4C;
+  --teal: #44A1A0;
+  --teal-light: #92DDDB;
+  --amber: #DBA159;
+  --amber-light: #FCC995;
+  --amber-dark: #895833;
+  --green: #BCDC8B;
+  --cream: #F4EFE6;
+  --cream-dim: rgba(244, 239, 230, 0.68);
+  --cream-mute: rgba(244, 239, 230, 0.42);
+  --hairline: rgba(146, 221, 219, 0.16);
+  --hairline-strong: rgba(146, 221, 219, 0.28);
+  --max-width: 1440px;
+}
+
+html, body {
+  background: var(--bg-dark);
+  color: var(--cream);
+  font-family: 'Figtree', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  font-size: 0.78em;
+  letter-spacing: 0.04em;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ── Background ── */
+.bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.bg-gradient {
+  background:
+    radial-gradient(ellipse at 80% -10%, rgba(68,161,160,0.22), transparent 55%),
+    radial-gradient(ellipse at -10% 80%, rgba(219,161,89,0.16), transparent 60%),
+    linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-mid) 100%);
+}
+.aurora { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.42; mix-blend-mode: screen; animation: drift 24s ease-in-out infinite alternate; }
+.aurora.a1 { width: 700px; height: 700px; left: -10%; top: 5%; background: radial-gradient(circle, rgba(68,161,160,0.45), transparent 60%); animation-duration: 28s; }
+.aurora.a2 { width: 600px; height: 600px; right: -8%; top: 30%; background: radial-gradient(circle, rgba(146,221,219,0.22), transparent 60%); animation-duration: 32s; animation-delay: -8s; }
+.aurora.a3 { width: 800px; height: 800px; left: 30%; bottom: -20%; background: radial-gradient(circle, rgba(219,161,89,0.22), transparent 60%); animation-duration: 36s; animation-delay: -14s; }
+@keyframes drift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(40px,-30px) scale(1.08); } 100% { transform: translate(-30px,30px) scale(0.95); } }
+.grain { position: absolute; inset: 0; opacity: 0.05; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); mix-blend-mode: overlay; }
+
+/* ── Layout ── */
+.page { position: relative; z-index: 1; }
+main { max-width: var(--max-width); margin: 0 auto; padding: 0 clamp(24px, 5vw, 80px); }
+
+/* ── Header ── */
+.site-header {
+  position: relative; z-index: 10;
+  display: flex; align-items: center; justify-content: flex-start;
+  padding: 22px clamp(24px, 5vw, 80px);
+  max-width: var(--max-width); margin: 0 auto;
+  border-bottom: 1px solid var(--hairline);
+}
+.logo-slot { position: relative; width: 200px; height: 56px; display: flex; align-items: center; justify-content: center; }
+.logo-slot-bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.logo-slot-label { position: relative; z-index: 1; font-size: 10px; letter-spacing: 0.14em; color: var(--cream-dim); opacity: 0.7; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; letter-spacing: -0.005em; }
+.brand-dim { color: var(--cream-dim); font-weight: 500; letter-spacing: 0.04em; }
+
+/* ── Hero ── */
+.hero {
+  display: grid; grid-template-columns: 1.1fr 1fr;
+  gap: clamp(32px, 5vw, 80px);
+  padding: clamp(56px, 9vh, 110px) 0 clamp(80px, 14vh, 140px);
+  align-items: center;
+}
+.eyebrow { display: flex; align-items: center; gap: 14px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.14em; color: var(--teal-light); margin-bottom: 28px; text-transform: uppercase; }
+.eyebrow-line { width: 28px; height: 1px; background: var(--teal); }
+.hero-title { font-size: clamp(48px, 7vw, 96px); font-weight: 800; line-height: 1; letter-spacing: -0.03em; color: #F4EFE6 !important; margin-bottom: 18px; text-shadow: 0 2px 24px rgba(0,0,0,0.4); display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
+.hero-title .title-name { display: block; line-height: 0.95; }
+.hero-title .title-accent { font-style: italic; font-weight: 300; color: var(--amber); letter-spacing: -0.02em; }
+.hero-title .title-tag { display: inline-flex; align-items: center; font-size: 0.28em; font-weight: 600; letter-spacing: 0.18em; color: var(--teal-light); border: 1px solid var(--teal); padding: 8px 16px; border-radius: 2px; vertical-align: unset; margin-top: 0; }
+.hero-lede { font-size: clamp(17px, 1.4vw, 22px); font-weight: 500; line-height: 1.35; color: var(--cream); max-width: 520px; margin-bottom: 20px; text-wrap: balance; }
+.hero-sub { font-size: clamp(14px, 1vw, 16px); line-height: 1.6; color: var(--cream-dim); max-width: 480px; margin-bottom: 36px; }
+.hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+
+/* Hero logo strip */
+.hero-logos { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--hairline); display: flex; flex-direction: column; gap: 12px; max-width: 560px; }
+.hero-logos-label { color: var(--cream-mute); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; }
+.hero-logos-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.hero-logo-slot { position: relative; aspect-ratio: 5 / 2; border: none; border-radius: 3px; background: rgba(7, 59, 76, 0.25); display: flex; align-items: center; justify-content: center; overflow: hidden; transition: background 0.2s ease; }
+.hero-logo-slot.has-logo { background: #ffffff; }
+.hero-logo-slot.has-logo:hover { background: #f5f5f5; }
+.hero-logo-slot:not(.has-logo):hover { border: 1px dashed var(--teal); background: rgba(7, 59, 76, 0.45); }
+.hero-logo-slot svg { position: absolute; inset: 0; opacity: 0.55; }
+.hero-logo-tag { position: relative; z-index: 1; color: var(--cream-mute); font-size: 9px; letter-spacing: 0.1em; background: rgba(4, 32, 38, 0.6); padding: 3px 8px; border-radius: 2px; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 14px 22px; font-size: 14px; font-weight: 600; letter-spacing: 0.01em; border-radius: 2px; transition: all 0.2s ease; cursor: pointer; font-family: inherit; border: none; }
+.btn-primary { background: var(--amber); color: var(--bg-dark); border: 1px solid var(--amber); }
+.btn-primary:hover { background: var(--amber-light); border-color: var(--amber-light); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(219,161,89,0.25); }
+.btn-ghost { background: transparent; color: var(--cream); border: 1px solid var(--hairline-strong); }
+.btn-ghost:hover { border-color: var(--teal-light); color: var(--teal-light); }
+
+/* Hero right (sim) */
+.hero-right { display: flex; flex-direction: column; gap: 14px; }
+.sim-frame { position: relative; aspect-ratio: 16 / 11; border-radius: 4px; border: 1px solid var(--hairline-strong); background: rgba(4, 32, 38, 0.6); overflow: hidden; box-shadow: 0 0 0 1px rgba(146,221,219,0.04), 0 30px 80px rgba(0,0,0,0.4), inset 0 0 80px rgba(68,161,160,0.06); }
+.sim-caption { display: flex; align-items: center; gap: 12px; font-size: 11px; letter-spacing: 0.06em; color: var(--cream-mute); font-family: 'JetBrains Mono', ui-monospace, monospace; text-transform: uppercase; }
+
+/* Simulation overlay */
+.sim-wrap { position: absolute; inset: 0; }
+.sim-wrap canvas { display: block; width: 100%; height: 100%; }
+.sim-overlay { position: absolute; inset: 0; pointer-events: none; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--cream-dim); }
+.sim-corner { position: absolute; display: flex; align-items: center; gap: 6px; padding: 12px 14px; text-transform: uppercase; }
+.sim-corner.tl { top: 0; left: 0; }
+.sim-corner.tr { top: 0; right: 0; }
+.sim-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.6s ease-in-out infinite; }
+.sim-legend { position: absolute; bottom: 14px; left: 14px; right: 14px; display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.sim-legend-item { display: flex; align-items: center; gap: 6px; font-size: 9px; }
+.sim-legend-dot { width: 6px; height: 6px; border-radius: 50%; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── Sections ── */
+section { padding: clamp(80px, 14vh, 160px) 0; }
+.section-head { display: flex; align-items: center; gap: 16px; margin-bottom: 36px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--teal-light); }
+.section-num { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--teal); color: var(--teal); border-radius: 50%; }
+.section-title { font-size: clamp(36px, 5vw, 68px); font-weight: 700; line-height: 1.05; letter-spacing: -0.03em; margin-bottom: 64px; max-width: 22ch; text-wrap: balance; color: var(--cream); }
+.section-title em { font-style: italic; font-weight: 300; color: var(--amber); }
+
+/* ── Overview ── */
+.overview-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: clamp(32px, 5vw, 80px); align-items: start; }
+.overview-lead p { font-size: clamp(16px, 1.3vw, 19px); line-height: 1.6; margin-bottom: 20px; color: var(--cream); }
+.overview-lead p.muted { color: var(--cream-dim); font-size: 15px; }
+.overview-stats { display: flex; flex-direction: column; gap: 24px; border-left: 1px solid var(--hairline); padding-left: clamp(24px, 3vw, 48px); }
+.stat { display: flex; flex-direction: column; gap: 4px; }
+.stat-num { font-size: clamp(40px, 4.4vw, 64px); font-weight: 800; line-height: 1; letter-spacing: -0.03em; color: var(--cream); }
+.stat-label { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cream-mute); }
+
+/* ── Features ── */
+.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.feature-card { padding: 32px 28px; background: rgba(7, 59, 76, 0.45); border: 1px solid var(--hairline); border-radius: 3px; transition: all 0.25s ease; display: flex; flex-direction: column; gap: 14px; min-height: 260px; }
+.feature-card:hover { border-color: var(--teal); background: rgba(7, 59, 76, 0.7); transform: translateY(-2px); }
+.feature-head { display: flex; justify-content: space-between; align-items: center; }
+.feature-n { color: var(--amber); font-size: 11px; }
+.feature-tag { color: var(--teal-light); font-size: 9px; padding: 3px 8px; border: 1px solid var(--hairline-strong); border-radius: 2px; }
+.feature-card h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: var(--cream); line-height: 1.15; }
+.feature-card p { font-size: 14px; line-height: 1.6; color: var(--cream-dim); }
+
+/* ── Partners ── */
+.partner-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); }
+.partner-card { display: flex; align-items: center; gap: 16px; padding: 22px 20px; background: rgba(4, 32, 38, 0.6); transition: background 0.2s; }
+.partner-card:hover { background: rgba(7, 59, 76, 0.6); }
+.partner-mark { flex-shrink: 0; width: 40px; height: 40px; border-radius: 2px; overflow: hidden; }
+.partner-name { font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em; color: var(--cream); margin-bottom: 2px; }
+.partner-kind { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.08em; color: var(--cream-mute); text-transform: uppercase; }
+.partner-foot { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--hairline); }
+.eu-flag { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--cream-dim); }
+.eu-flag svg { flex-shrink: 0; }
+
+/* ── Footer ── */
+.site-footer { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 24px; max-width: var(--max-width); margin: 60px auto 0; padding: 40px clamp(24px, 5vw, 80px) 32px; border-top: 1px solid var(--hairline); }
+.foot-left p { font-size: 13px; color: var(--cream-dim); margin-top: 8px; max-width: 380px; }
+.foot-right { color: var(--cream-mute); }
+
+/* ── Responsive ── */
+/* ── Responsive — tablet (≤860px) ── */
+@media (max-width: 860px) {
+  .hero { grid-template-columns: 1fr; }
+  .sim-frame { aspect-ratio: 16 / 11; max-height: 50vh; }
+  .overview-grid { grid-template-columns: 1fr; }
+  .overview-stats { border-left: none; border-top: 1px solid var(--hairline); padding-left: 0; padding-top: 24px; flex-direction: row; gap: 32px; flex-wrap: wrap; }
+  .feature-grid { grid-template-columns: 1fr; }
+  .partner-grid { grid-template-columns: repeat(2, 1fr); }
+  .hero-logos-row { grid-template-columns: repeat(4, 1fr); }
+
+  main { padding: 0 clamp(16px, 4vw, 40px); }
+  .site-header { padding: 0 clamp(16px, 4vw, 40px); }
+  .hero { padding: 48px 0 40px; }
+  .hero-title { font-size: clamp(52px, 10vw, 96px); }
+  .hero-actions { gap: 10px; }
+  .btn { min-height: 44px; padding: 11px 22px; font-size: 14px; }
+  .overview-stat-val { font-size: clamp(28px, 5vw, 48px); }
+  .section-title { font-size: clamp(26px, 4vw, 44px); }
+}
+
+/* ── Responsive — phone (≤560px) ── */
+@media (max-width: 560px) {
+  .partner-grid { grid-template-columns: 1fr; }
+  .overview-stats { flex-direction: column; }
+
+  main { padding: 0 16px; }
+  .site-header { padding: 0 16px; height: 52px; }
+  .logo-slot { max-width: 140px; }
+  .logo-slot-label { font-size: 9px; }
+
+  .hero { padding: 32px 0 28px; }
+  .hero-title { font-size: clamp(44px, 14vw, 72px); }
+  .hero-lede { font-size: 15px; }
+  .hero-sub { font-size: 13px; }
+  .hero-actions { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .btn { width: 100%; min-height: 48px; justify-content: center; font-size: 14px; padding: 12px 20px; }
+  .hero-logos-row { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+
+  .overview-stat-val { font-size: clamp(24px, 8vw, 40px); }
+  .section-title { font-size: clamp(22px, 6vw, 36px); }
+  .feature-card { padding: 20px; }
+  .partner-card { padding: 12px; }
+  .partner-mark { width: 36px; height: 36px; }
+
+  .site-footer { flex-direction: column; gap: 12px; align-items: flex-start; padding: 20px 16px; }
+  .lang-btn { min-height: 36px; padding: 6px 10px; }
+}
+
+/* ── Language switcher ── */
+.lang-switcher { display: flex; align-items: center; gap: 2px; margin-left: auto; background: rgba(7,59,76,0.5); border: 1px solid var(--hairline-strong); border-radius: 3px; padding: 3px; }
+.lang-btn { background: transparent; border: none; color: var(--cream-mute); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; padding: 5px 10px; border-radius: 2px; cursor: pointer; transition: all 0.15s ease; }
+.lang-btn:hover { color: var(--teal-light); background: rgba(68,161,160,0.12); }
+.lang-btn.active { color: var(--amber); background: rgba(219,161,89,0.15); }
+
+/* ── Case studies page ── */
+.cs-hero { padding: 12px 0 20px; text-align: center; }
+.cs-hero-back { display: inline-flex; align-items: center; gap: 8px; color: var(--cream-mute); font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: color 0.2s; margin-bottom: 12px; border: none; background: transparent; }
+.cs-hero-back:hover { color: var(--teal-light); }
+.cs-hero-back svg { transition: transform 0.2s; }
+.cs-hero-back:hover svg { transform: translateX(-3px); }
+.cs-title { font-size: clamp(28px, 3.5vw, 52px); font-weight: 800; line-height: 1; letter-spacing: -0.03em; color: var(--cream); margin-bottom: 8px; }
+.cs-subtitle { font-size: clamp(13px, 1vw, 15px); color: var(--cream-dim); max-width: 500px; margin: 0 auto; }
+.cs-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding-bottom: 32px; }
+@media (max-width: 1100px) { .cs-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px)  { .cs-grid { grid-template-columns: 1fr; } }
+
+.cs-card { position: relative; display: flex; flex-direction: column; background: rgba(7,59,76,0.45); border: 1px solid var(--hairline); border-radius: 4px; overflow: hidden; transition: all 0.25s ease; }
+.cs-card.active:hover { border-color: var(--teal); transform: translateY(-3px); box-shadow: 0 16px 48px rgba(0,0,0,0.35), 0 0 0 1px rgba(68,161,160,0.2); }
+.cs-card.inactive { opacity: 0.55; pointer-events: none; }
+.cs-photo { position: relative; aspect-ratio: 16/9; overflow: hidden; }
+.cs-photo-inner { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.cs-badge { position: absolute; top: 10px; right: 10px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; padding: 3px 8px; border-radius: 2px; text-transform: uppercase; }
+.cs-badge.active   { background: rgba(188,220,139,0.2); color: var(--green); border: 1px solid rgba(188,220,139,0.4); }
+.cs-badge.soon     { background: rgba(219,161,89,0.15); color: var(--amber); border: 1px solid rgba(219,161,89,0.3); }
+.cs-country { position: absolute; top: 10px; left: 10px; font-size: 18px; }
+.cs-body { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.cs-card-title { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--cream); line-height: 1.2; }
+.cs-card-desc  { font-size: 13px; line-height: 1.6; color: var(--cream-dim); flex: 1; }
+.cs-card-tag   { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--teal-light); text-transform: uppercase; }
+.cs-card-btn   { margin-top: 6px; display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; font-size: 13px; font-weight: 600; border-radius: 2px; cursor: pointer; font-family: inherit; border: none; transition: all 0.2s; }
+.cs-card-btn.launch { background: var(--amber); color: var(--bg-dark); }
+.cs-card-btn.launch:hover { background: var(--amber-light); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(219,161,89,0.3); }
+.cs-card-btn.disabled { background: rgba(146,221,219,0.1); color: var(--cream-mute); border: 1px solid var(--hairline); cursor: not-allowed; }
+"""
+
+_GROCERY_SIM_JSX = """
+const GroceryStore = ({ palette }) => {
+  const canvasRef = React.useRef(null);
+  const wrapRef = React.useRef(null);
+  const stateRef = React.useRef(null);
+  const [hud, setHud] = React.useState({ shoppers: 12, stockouts: 0, restock: 0 });
+
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+    const ctx = canvas.getContext('2d');
+    let raf;
+    const W = 320, H = 220;
+    const SHELF_X0 = 40, SHELF_DX = 38, SHELF_W = 30, SHELF_H = 14, SHELF_COUNT = 6;
+    const AISLE_Y = [60, 110, 160];
+    const CORRIDOR_LEFT_X = 22;
+    const CORRIDOR_RIGHT_X = SHELF_X0 + SHELF_COUNT * SHELF_DX - 6;
+    const AISLE_BELOW_Y = AISLE_Y.map(y => y + SHELF_H + 8);
+    const TOP_LANE_Y = 30;
+    const makeShelves = () => {
+      const s = [];
+      for (let row = 0; row < 3; row++)
+        for (let i = 0; i < SHELF_COUNT; i++)
+          s.push({ x: SHELF_X0 + i*SHELF_DX, y: AISLE_Y[row], w: SHELF_W, h: SHELF_H, stock: 0.6+Math.random()*0.4, cat: i%3, row });
+      return s;
+    };
+    const archetypes = [
+      { label:'Calm',         color: palette.lightTeal,  panic:0.0,  hoard:0.2,  speed:0.55 },
+      { label:'Price-sens.',  color: palette.green,      panic:0.1,  hoard:0.4,  speed:0.60 },
+      { label:'Hoarder',      color: palette.amber,      panic:0.4,  hoard:0.85, speed:0.70 },
+      { label:'Panic',        color: palette.amberLight, panic:0.85, hoard:0.6,  speed:0.85 },
+    ];
+    const pathToShelf = (x, y, shelf) => {
+      const cx = shelf.x + shelf.w/2;
+      const ay = AISLE_BELOW_Y[shelf.row];
+      const useLeft = Math.abs(x - CORRIDOR_LEFT_X) <= Math.abs(x - CORRIDOR_RIGHT_X);
+      const corX = useLeft ? CORRIDOR_LEFT_X : CORRIDOR_RIGHT_X;
+      return [{x:corX,y},{x:corX,y:ay},{x:cx,y:ay}];
+    };
+    const pathToExit = (x, y, shelf) => {
+      const ay = AISLE_BELOW_Y[shelf.row];
+      const useLeft = Math.abs(x - CORRIDOR_LEFT_X) <= Math.abs(x - CORRIDOR_RIGHT_X);
+      const corX = useLeft ? CORRIDOR_LEFT_X : CORRIDOR_RIGHT_X;
+      return [{x:corX,y:ay},{x:corX,y:TOP_LANE_Y},{x:CORRIDOR_LEFT_X,y:TOP_LANE_Y},{x:CORRIDOR_LEFT_X,y:20}];
+    };
+    const makeShopper = (shelves) => {
+      const a = archetypes[Math.floor(Math.random()*archetypes.length)];
+      const target = shelves[Math.floor(Math.random()*shelves.length)];
+      const x = 16 + Math.random()*8, y = 20 + Math.random()*12;
+      return { x, y, targetShelf: target, archetype: a, state:'walking', stateT:0, cart:0, path: pathToShelf(x,y,target), wp:0 };
+    };
+    const init = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = wrap.getBoundingClientRect();
+      canvas.width = rect.width*dpr; canvas.height = rect.height*dpr;
+      canvas.style.width = rect.width+'px'; canvas.style.height = rect.height+'px';
+      ctx.setTransform(rect.width*dpr/W, 0, 0, rect.height*dpr/H, 0, 0);
+      const shelves = makeShelves();
+      const shoppers = [];
+      for (let i=0;i<12;i++) shoppers.push(makeShopper(shelves));
+      stateRef.current = { W, H, shelves, shoppers, t:0, restocks:0, stockouts:0 };
+    };
+    init();
+    const ro = new ResizeObserver(init); ro.observe(wrap);
+    let lastHudT = 0;
+    const stepAlongPath = (sh) => {
+      if (sh.wp >= sh.path.length) return true;
+      const wp = sh.path[sh.wp];
+      const dx = wp.x-sh.x, dy = wp.y-sh.y;
+      const d = Math.sqrt(dx*dx+dy*dy);
+      if (d < 1.2) { sh.wp++; return sh.wp >= sh.path.length; }
+      sh.x += (dx/d)*sh.archetype.speed;
+      sh.y += (dy/d)*sh.archetype.speed;
+      return false;
+    };
+    const tick = () => {
+      const s = stateRef.current;
+      if (!s) { raf = requestAnimationFrame(tick); return; }
+      s.t++;
+      if (s.t % 600 === 0) { for (const sh of s.shelves) if (sh.stock<0.5) sh.stock=Math.min(1,sh.stock+0.5); s.restocks++; }
+      while (s.shoppers.length < 12) s.shoppers.push(makeShopper(s.shelves));
+      for (const sh of s.shoppers) {
+        sh.stateT++;
+        if (sh.state==='walking') { if (stepAlongPath(sh)) { sh.state='picking'; sh.stateT=0; } }
+        else if (sh.state==='picking') {
+          if (sh.stateT>50) {
+            const want=0.05+sh.archetype.hoard*0.18;
+            const took=Math.min(want,sh.targetShelf.stock);
+            sh.targetShelf.stock-=took;
+            if (sh.targetShelf.stock<=0.001) { sh.targetShelf.stock=0; s.stockouts++; }
+            sh.cart+=took;
+            if (sh.archetype.panic>0.5 && Math.random()<0.6 && sh.cart<0.6) {
+              sh.targetShelf=s.shelves[Math.floor(Math.random()*s.shelves.length)];
+              sh.path=pathToShelf(sh.x,sh.y,sh.targetShelf); sh.wp=0; sh.state='walking'; sh.stateT=0;
+            } else { sh.path=pathToExit(sh.x,sh.y,sh.targetShelf); sh.wp=0; sh.state='leaving'; sh.stateT=0; }
+          }
+        } else if (sh.state==='leaving') {
+          if (stepAlongPath(sh)) { const idx=s.shoppers.indexOf(sh); if(idx>=0) s.shoppers.splice(idx,1); }
+        }
+      }
+      // Render
+      ctx.fillStyle=palette.bgDark; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle='rgba(146,221,219,0.05)'; ctx.lineWidth=0.3;
+      for(let x=0;x<W;x+=16){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+      for(let y=0;y<H;y+=16){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+      ctx.strokeStyle='rgba(146,221,219,0.25)'; ctx.lineWidth=0.6; ctx.strokeRect(8,8,W-16,H-16);
+      ctx.fillStyle='rgba(146,221,219,0.5)'; ctx.font='5px "JetBrains Mono",monospace';
+      ctx.fillText('ENTRANCE',12,18); ctx.fillText('CHECKOUT',12,H-6); ctx.fillText('STOCKROOM',W-50,H-6);
+      ctx.fillStyle='rgba(68,161,160,0.15)'; ctx.fillRect(W-16,H-30,8,15);
+      for (const sh of s.shelves) {
+        const sc = sh.stock>0.5 ? palette.lightTeal : sh.stock>0.15 ? palette.amberLight : 'rgba(255,90,90,0.9)';
+        ctx.fillStyle='rgba(7,59,76,0.85)'; ctx.fillRect(sh.x,sh.y,sh.w,sh.h);
+        ctx.strokeStyle='rgba(146,221,219,0.35)'; ctx.lineWidth=0.4; ctx.strokeRect(sh.x,sh.y,sh.w,sh.h);
+        ctx.fillStyle=sc; ctx.fillRect(sh.x+2,sh.y+2,(sh.w-4)*sh.stock,sh.h-4);
+        if (sh.stock<0.05) {
+          const a=0.3+0.3*Math.sin(s.t*0.15);
+          ctx.strokeStyle=`rgba(255,90,90,${a})`; ctx.lineWidth=0.8; ctx.strokeRect(sh.x-1,sh.y-1,sh.w+2,sh.h+2);
+        }
+      }
+      ctx.fillStyle='rgba(146,221,219,0.4)'; ctx.font='4px "JetBrains Mono",monospace';
+      ctx.fillText('AISLE 01',12,70); ctx.fillText('AISLE 02',12,120); ctx.fillText('AISLE 03',12,170);
+      for (const sh of s.shoppers) {
+        ctx.fillStyle=sh.archetype.color; ctx.beginPath(); ctx.arc(sh.x,sh.y,2.2,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle=sh.archetype.color+'60'; ctx.lineWidth=0.4; ctx.beginPath(); ctx.arc(sh.x,sh.y,3.6,0,Math.PI*2); ctx.stroke();
+        if (sh.state==='walking' && sh.wp<sh.path.length) {
+          ctx.strokeStyle=sh.archetype.color+'22'; ctx.lineWidth=0.3; ctx.beginPath(); ctx.moveTo(sh.x,sh.y);
+          for(let i=sh.wp;i<sh.path.length;i++) ctx.lineTo(sh.path[i].x,sh.path[i].y);
+          ctx.stroke();
+        }
+      }
+      if (s.t-lastHudT>30) { lastHudT=s.t; setHud({shoppers:s.shoppers.length,stockouts:s.stockouts,restocks:s.restocks}); }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [palette]);
+
+  return (
+    <div ref={wrapRef} className="sim-wrap">
+      <canvas ref={canvasRef} />
+      <div className="sim-overlay">
+        <div className="sim-corner tl"><span className="sim-dot"/><span>STORE LIVE · {hud.shoppers} SHOPPERS</span></div>
+        <div className="sim-corner tr"><span>STOCKOUTS · {String(hud.stockouts).padStart(3,'0')}</span></div>
+        <div className="sim-legend">
+          {[['CALM',palette.lightTeal],['PRICE SENS.',palette.green],['HOARDER',palette.amber],['PANIC',palette.amberLight]].map(([l,c])=>(
+            <div key={l} className="sim-legend-item">
+              <span className="sim-legend-dot" style={{background:c}}/>
+              <span>{l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+"""
+
+_LANDING_APP_JSX = """
+const { useState, useEffect } = React;
+
+// =============================================================================
+// LOGO CONFIGURATION
+// All PNG files live in the static/ folder next to app.py.
+// They are served at /app/static/<filename>.png
+//
+// SIZE ADJUSTMENTS:
+//   Header logo   -> search for "HEADER LOGO SIZE" (~60 lines below)
+//                    change maxHeight / maxWidth on the <img> tag
+//   Hero strip    -> search for "HERO LOGO SIZE" (~320 lines below)
+//                    change maxHeight on the <img> style
+//   Partner marks -> CSS class .partner-mark in _LANDING_CSS (~line 322)
+//                    change width / height on that rule
+// =============================================================================
+
+// LOGO_URIS is injected by Python as base64 data URIs (see render_landing_page).
+// SIZE ADJUSTMENTS:
+//   Header logo   -> search for "HEADER LOGO SIZE" (~60 lines below)
+//                    change maxHeight / maxWidth on the <img> tag
+//   Hero strip    -> search for "HERO LOGO SIZE" (~320 lines below)
+//                    change maxHeight on the <img> style
+//   Partner marks -> CSS class .partner-mark in _LANDING_CSS (~line 322)
+//                    change width / height on that rule
+
+const LOGO_CONFIG = {
+  // Populated from LOGO_URIS injected by Python; falls back to '' (shows placeholder)
+  header:   (typeof LOGO_URIS !== 'undefined' && LOGO_URIS.header)    ? LOGO_URIS.header    : '',
+  hero:     (typeof LOGO_URIS !== 'undefined' && LOGO_URIS.hero)      ? LOGO_URIS.hero      : ['','','',''],
+  partners: (typeof LOGO_URIS !== 'undefined' && LOGO_URIS.partners)  ? LOGO_URIS.partners  : ['','','','','','','',''],
+};
+
+// Helper: renders a real <img> if url is set, otherwise the striped placeholder
+const LogoImg = ({ url, alt, className, style }) => url
+  ? <img src={url} alt={alt || ''} className={className} style={{objectFit:'contain', ...style}} />
+  : null;
+
+const PALETTE = {
+  bgDark: '#042026', bgMid: '#073B4C', teal: '#44A1A0', lightTeal: '#92DDDB',
+  amber: '#DBA159', amberLight: '#FCC995', amberDark: '#895833',
+  green: '#BCDC8B', cream: '#F4EFE6',
+};
+
+// ── Translations ─────────────────────────────────────────────────────────────
+const TRANSLATIONS = {
+  en: {
+    eyebrow: 'SECUREFOOD',
+    heroLede: 'Agent-Based Model for Consumer Behavior & Supply Chain Stress-Testing.',
+    heroSub: 'Simulate consumer behavior and supply-chain dynamics in a retail environment. Stress-test the resilience of food supply chains under crisis scenarios — from panic buying to logistics disruption.',
+    heroBtn: 'Explore case studies',
+    heroDocsBtn: 'Read documentation',
+    figCaption: 'Live store — cognitive shoppers, shelf inventory, periodic restock.',
+    overviewLabel: 'WHAT IS GROCERYSIM',
+    overviewTitle: 'A web application that lets stakeholders stress-test the resilience of food supply chains.',
+    overviewP1: 'The model represents a retail environment as autonomous agents: consumers with individual cognitive traits, shelves with finite inventory, and logistics with realistic lead times. From their interactions, system-level behaviour emerges — resilience, fragility, and adaptation under stress.',
+    overviewP2: 'Researchers calibrate scenarios; policy makers explore interventions; retailers validate contingency plans before they are needed.',
+    stat1: 'Agent-runs / day', stat2: 'Crisis scenarios', stat3: 'EU markets modeled',
+    featuresLabel: 'KEY FEATURES',
+    featuresTitle: 'Three pillars. One model.',
+    f1t: 'Cognitive Agents', f1d: 'Consumers with individual traits — panic, hoarding, price sensitivity. Each shopper makes decisions under uncertainty, producing realistic behavioural diversity.', f1tag: 'BEHAVIOUR',
+    f2t: 'Logistics Simulation', f2d: 'Realistic inventory management with lead times, capacity limits, and delivery cycles. Stockouts cascade through the network just as they do in the real world.', f2tag: 'SUPPLY CHAIN',
+    f3t: 'Scientific Optimization', f3d: 'AI-driven recommendations balance waste against stockouts. Run thousands of policy permutations and surface the strategies that hold under shock.', f3tag: 'OPTIMIZATION',
+    partnersLabel: 'CONSORTIUM',
+    partnersTitle: 'Built by 23 institutions across 14 countries.',
+    euText: 'Funded by the European Union under Horizon Europe · SecureFood Consortium',
+    footerTagline: 'An open agent-based model for stress-testing the resilience of grocery supply chains.',
+    footerCopy: '© 2026 · SecureFood Consortium',
+  },
+  fi: {
+    eyebrow: 'SECUREFOOD',
+    heroLede: 'Agenttipohjainen malli kuluttajakäyttäytymiselle ja toimitusketjun stressitestaukselle.',
+    heroSub: 'Simuloi kuluttajakäyttäytymistä ja elintarviketoimitusketjun dynamiikkaa kriisitilanteissa — paniikkiostoksista logistiikkahäiriöihin.',
+    heroBtn: 'Tutustu tapaustutkimuksiin',
+    heroDocsBtn: 'Lue dokumentaatio',
+    figCaption: 'Reaaliaikainen kauppa — kognitiiviset ostajat, hyllyvarasto, jaksottainen täydennys.',
+    overviewLabel: 'MIKÄ ON GROCERYSIM',
+    overviewTitle: 'Verkkosovellus, jolla sidosryhmät voivat testata elintarviketoimitusketjujen kestävyyttä.',
+    overviewP1: 'Malli kuvaa vähittäismyyntiympäristöä autonomisina agentteina: kuluttajat yksilöllisillä kognitiivisilla ominaisuuksilla, hyllyt rajallisella varastolla ja logistiikka realistisilla toimitusajoilla. Niiden vuorovaikutuksesta syntyy järjestelmätason käyttäytyminen.',
+    overviewP2: 'Tutkijat kalibroivat skenaarioita; päättäjät tutkivat interventioita; vähittäiskauppiaat validoivat valmiussuunnitelmia ennen kuin niitä tarvitaan.',
+    stat1: 'Agenttikierrosta / pv', stat2: 'Kriisiskenaariot', stat3: 'EU-markkinat mallinnettuna',
+    featuresLabel: 'OMINAISUUDET',
+    featuresTitle: 'Kolme pilaria. Yksi malli.',
+    f1t: 'Kognitiiviset agentit', f1d: 'Kuluttajat yksilöllisillä ominaisuuksilla — paniikki, hamstraus, hintaherkkyys. Jokainen ostaja tekee päätöksiä epävarmuudessa tuottaen realistista käyttäytymistä.', f1tag: 'KÄYTTÄYTYMINEN',
+    f2t: 'Logistiikkasimulaatio', f2d: 'Realistinen varastonhallinta toimitusajoilla, kapasiteettirajoituksilla ja toimitussykleillä. Varastopuutteet leviävät verkon läpi kuten todellisuudessa.', f2tag: 'TOIMITUSKETJU',
+    f3t: 'Tieteellinen optimointi', f3d: 'Tekoälypohjainen optimointi tasapainottaa hävikin varastopuutteiden välillä. Testaa tuhansia politiikkapermutaatioita ja löydä vakaat strategiat.', f3tag: 'OPTIMOINTI',
+    partnersLabel: 'KONSORTIO',
+    partnersTitle: 'Rakennettu 23 instituution toimesta 14 maassa.',
+    euText: 'Rahoittaa Euroopan unioni Horisontti Eurooppa ‑ohjelman kautta · SecureFood-konsortio',
+    footerTagline: 'Avoin agenttipohjainen malli elintarviketoimitusketjujen resilienssitestaukseen.',
+    footerCopy: '© 2026 · SecureFood-konsortio',
+  },
+  el: {
+    eyebrow: 'SECUREFOOD',
+    heroLede: 'Μοντέλο Πολλαπλών Παραγόντων για τη Συμπεριφορά Καταναλωτών και τον Έλεγχο Ανθεκτικότητας της Εφοδιαστικής Αλυσίδας.',
+    heroSub: 'Προσομοιώστε τη συμπεριφορά καταναλωτών και τη δυναμική της εφοδιαστικής αλυσίδας τροφίμων σε σενάρια κρίσης — από πανικόβλητες αγορές έως διαταραχές εφοδιασμού.',
+    heroBtn: 'Εξερευνήστε μελέτες περίπτωσης',
+    heroDocsBtn: 'Διαβάστε την τεκμηρίωση',
+    figCaption: 'Ζωντανό κατάστημα — γνωστικοί αγοραστές, αποθέματα ραφιών, περιοδικός εφοδιασμός.',
+    overviewLabel: 'ΤΙ ΕΙΝΑΙ ΤΟ GROCERYSIM',
+    overviewTitle: 'Μια εφαρμογή που επιτρέπει στους φορείς να δοκιμάζουν την ανθεκτικότητα των αλυσίδων τροφίμων.',
+    overviewP1: 'Το μοντέλο αναπαριστά ένα λιανικό περιβάλλον ως αυτόνομους παράγοντες: καταναλωτές με ατομικά γνωστικά χαρακτηριστικά, ράφια με πεπερασμένα αποθέματα και εφοδιαστική με ρεαλιστικούς χρόνους παράδοσης.',
+    overviewP2: 'Ερευνητές βαθμονομούν σενάρια· υπεύθυνοι χάραξης πολιτικής εξερευνούν παρεμβάσεις· λιανοπωλητές επικυρώνουν σχέδια έκτακτης ανάγκης.',
+    stat1: 'Εκτελέσεις πρακτόρων / ημ.', stat2: 'Σενάρια κρίσης', stat3: 'Αγορές ΕΕ σε μοντέλο',
+    featuresLabel: 'ΒΑΣΙΚΑ ΧΑΡΑΚΤΗΡΙΣΤΙΚΑ',
+    featuresTitle: 'Τρεις πυλώνες. Ένα μοντέλο.',
+    f1t: 'Γνωστικοί Πράκτορες', f1d: 'Καταναλωτές με ατομικά χαρακτηριστικά — πανικός, συσσώρευση, ευαισθησία τιμών. Κάθε αγοραστής λαμβάνει αποφάσεις υπό αβεβαιότητα.', f1tag: 'ΣΥΜΠΕΡΙΦΟΡΑ',
+    f2t: 'Προσομοίωση Logistics', f2d: 'Ρεαλιστική διαχείριση αποθεμάτων με χρόνους παράδοσης και περιορισμούς χωρητικότητας. Οι ελλείψεις εξαπλώνονται στο δίκτυο.', f2tag: 'ΕΦΟΔΙΑΣΤΙΚΗ',
+    f3t: 'Επιστημονική Βελτιστοποίηση', f3d: 'Συστάσεις ΑΙ που εξισορροπούν τις απώλειες με τις ελλείψεις αποθεμάτων. Εκτελέστε χιλιάδες παραμετροποιήσεις πολιτικής.', f3tag: 'ΒΕΛΤΙΣΤΟΠΟΙΗΣΗ',
+    partnersLabel: 'ΚΟΝΣΟΡΤΣΙΟΥΜ',
+    partnersTitle: 'Κατασκευάστηκε από 23 ιδρύματα σε 14 χώρες.',
+    euText: 'Χρηματοδοτείται από την Ευρωπαϊκή Ένωση στο πλαίσιο του Horizon Europe · Κοινοπραξία SecureFood',
+    footerTagline: 'Ένα ανοιχτό μοντέλο πολλαπλών παραγόντων για τον έλεγχο ανθεκτικότητας.',
+    footerCopy: '© 2026 · Κοινοπραξία SecureFood',
+  },
+  pt: {
+    eyebrow: 'SECUREFOOD',
+    heroLede: 'Modelo Baseado em Agentes para Comportamento do Consumidor e Resiliência da Cadeia de Abastecimento.',
+    heroSub: 'Simule o comportamento do consumidor e a dinâmica da cadeia de abastecimento alimentar em cenários de crise — do pânico nas compras às perturbações logísticas.',
+    heroBtn: 'Explorar estudos de caso',
+    heroDocsBtn: 'Ler documentação',
+    figCaption: 'Loja ao vivo — compradores cognitivos, inventário de prateleiras, reabastecimento periódico.',
+    overviewLabel: 'O QUE É O GROCERYSIM',
+    overviewTitle: 'Uma aplicação web que permite às partes interessadas testar a resiliência das cadeias de abastecimento alimentar.',
+    overviewP1: 'O modelo representa um ambiente de retalho como agentes autónomos: consumidores com traços cognitivos individuais, prateleiras com inventário finito e logística com prazos de entrega realistas.',
+    overviewP2: 'Investigadores calibram cenários; decisores exploram intervenções; retalhistas validam planos de contingência antes de serem necessários.',
+    stat1: 'Execuções de agentes / dia', stat2: 'Cenários de crise', stat3: 'Mercados UE modelados',
+    featuresLabel: 'FUNCIONALIDADES',
+    featuresTitle: 'Três pilares. Um modelo.',
+    f1t: 'Agentes Cognitivos', f1d: 'Consumidores com traços individuais — pânico, acumulação, sensibilidade ao preço. Cada comprador toma decisões sob incerteza.', f1tag: 'COMPORTAMENTO',
+    f2t: 'Simulação Logística', f2d: 'Gestão de inventário realista com prazos de entrega, limites de capacidade e ciclos de entrega. As ruturas propagam-se pela rede.', f2tag: 'CADEIA DE ABAST.',
+    f3t: 'Otimização Científica', f3d: 'Recomendações de IA que equilibram desperdício e ruturas de stock. Execute milhares de permutações de políticas e identifique estratégias robustas.', f3tag: 'OTIMIZAÇÃO',
+    partnersLabel: 'CONSÓRCIO',
+    partnersTitle: 'Construído por 23 instituições em 14 países.',
+    euText: 'Financiado pela União Europeia ao abrigo do Horizonte Europa · Consórcio SecureFood',
+    footerTagline: 'Um modelo aberto baseado em agentes para testar a resiliência das cadeias de abastecimento alimentar.',
+    footerCopy: '© 2026 · Consórcio SecureFood',
+  },
+};
+
+// ── Background ──────────────────────────────────────────────────────────────
+const Background = () => (
+  <div className="bg bg-gradient">
+    <div className="aurora a1" />
+    <div className="aurora a2" />
+    <div className="aurora a3" />
+    <div className="grain" />
+  </div>
+);
+
+// ── Language switcher ─────────────────────────────────────────────────────────
+const LangSwitcher = ({ lang, setLang }) => {
+  const langs = [['en','EN'],['fi','FI'],['el','EL'],['pt','PT']];
+  return (
+    <div className="lang-switcher" title="Select language">
+      {langs.map(([code, label]) => (
+        <button key={code}
+          className={'lang-btn' + (lang === code ? ' active' : '')}
+          onClick={() => setLang(code)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+// ── Header ───────────────────────────────────────────────────────────────────
+const Header = ({ lang, setLang }) => (
+  <header className="site-header">
+    <div className="logo-slot" aria-label="Header logo">
+      {LOGO_CONFIG.header
+        ? (/* HEADER LOGO SIZE — change maxHeight (px) and maxWidth (px) here */
+           <img src={LOGO_CONFIG.header} alt="Logo"
+                style={{maxHeight:'200px', maxWidth:'300px', objectFit:'contain', display:'block'}} />)
+        : (<>
+            <svg className="logo-slot-bg" viewBox="0 0 200 56" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <pattern id="logo-stripe" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(146,221,219,0.18)" strokeWidth="2"/>
+                </pattern>
+              </defs>
+              <rect x="0.5" y="0.5" width="199" height="55" fill="url(#logo-stripe)" stroke="rgba(146,221,219,0.28)" strokeDasharray="3 3"/>
+            </svg>
+            <span className="logo-slot-label mono">LOGO&nbsp;·&nbsp;200×56</span>
+          </>)
+      }
+    </div>
+    <LangSwitcher lang={lang} setLang={setLang} />
+  </header>
+);
+
+// ── Hero ─────────────────────────────────────────────────────────────────────
+const Hero = ({ t }) => (
+  <section className="hero">
+    <div className="hero-left" style={{position: 'relative', zIndex: 5}}>
+      <div className="eyebrow">
+        <span className="eyebrow-line" />
+        <span>{t.eyebrow}</span>
+      </div>
+      <h1 className="hero-title" style={{color: '#F4EFE6'}}>
+        <span className="title-name">
+          <span style={{color: '#F4EFE6', fontWeight: 800}}>GROCERY</span><span style={{color: '#DBA159', fontStyle: 'italic', fontWeight: 300}}>sim</span>
+        </span>
+        <span className="title-tag">ABM</span>
+      </h1>
+      <p className="hero-lede" style={{color: '#F4EFE6'}}>{t.heroLede}</p>
+      <p className="hero-sub">{t.heroSub}</p>
+      <div className="hero-actions">
+        <button className="btn btn-primary" onClick={() => {
+          try { window.parent.postMessage({type:'launch_case_studies'}, '*'); } catch(e) {}
+        }}>
+          {t.heroBtn}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 7h8m0 0L7.5 3.5M11 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <a className="btn btn-ghost" href="#"
+           onClick={(e) => {
+             e.preventDefault();
+             try {
+               const base = window.parent.location.origin;
+               const a = document.createElement('a');
+               a.href = base + '/app/static/GROCERYsim_User_Manual.pdf';
+               a.download = 'GROCERYsim_User_Manual.pdf';
+               a.target = '_blank';
+               document.body.appendChild(a);
+               a.click();
+               document.body.removeChild(a);
+             } catch(err) {
+               window.open('/app/static/GROCERYsim_User_Manual.pdf', '_blank');
+             }
+           }}>{t.heroDocsBtn}</a>
+      </div>
+      <div className="hero-logos">
+        <div className="hero-logos-row">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className={'hero-logo-slot' + (LOGO_CONFIG.hero[i] ? ' has-logo' : '')}
+                 aria-label={'Partner logo ' + (i+1)}>
+              {LOGO_CONFIG.hero[i]
+                ? (/* HERO LOGO SIZE
+                      Slot 0 (EU.png)  — change the first  maxHeight / padding values below
+                      Slots 1-3        — change the second maxHeight / padding values below */
+                   <img src={LOGO_CONFIG.hero[i]} alt={'Partner ' + (i+1)}
+                        style={{maxWidth:'100%',
+                                maxHeight: i === 0 ? '52px' : '40px',
+                                objectFit:'contain', display:'block', margin:'auto',
+                                padding:  i === 0 ? '3px 6px' : '5px 8px'}} />)
+                : (<>
+                    <svg viewBox="0 0 120 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                      <defs>
+                        <pattern id={'hlogo-stripe-' + i} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                          <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(146,221,219,0.18)" strokeWidth="2"/>
+                        </pattern>
+                      </defs>
+                      <rect width="120" height="48" fill={'url(#hlogo-stripe-' + i + ')'} />
+                    </svg>
+                    <span className="hero-logo-tag mono">{'LOGO ' + String(i+1).padStart(2,'0')}</span>
+                  </>)
+              }
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    <div className="hero-right">
+      <div className="sim-frame">
+        <GroceryStore palette={PALETTE} />
+      </div>
+      <div className="sim-caption">
+        <span className="mono">FIG&nbsp;01</span>
+        <span>{t.figCaption}</span>
+      </div>
+    </div>
+  </section>
+);
+
+// ── Overview ─────────────────────────────────────────────────────────────────
+const Overview = ({ t }) => (
+  <section className="overview" id="overview">
+    <div className="section-head">
+      <span className="section-num">01</span>
+      <span className="section-label">{t.overviewLabel}</span>
+    </div>
+    <h2 className="section-title">
+      {t.overviewTitle.replace('stress-test', '')}
+      <em>stress-test</em>
+      {t.overviewTitle.split('stress-test')[1] || ''}
+    </h2>
+    <div className="overview-grid">
+      <div className="overview-lead">
+        <p>{t.overviewP1}</p>
+        <p className="muted">{t.overviewP2}</p>
+      </div>
+      <div className="overview-stats">
+        <div className="stat"><span className="stat-num">142k</span><span className="stat-label">{t.stat1}</span></div>
+        <div className="stat"><span className="stat-num">9</span><span className="stat-label">{t.stat2}</span></div>
+        <div className="stat"><span className="stat-num">27</span><span className="stat-label">{t.stat3}</span></div>
+      </div>
+    </div>
+  </section>
+);
+
+// ── Features ─────────────────────────────────────────────────────────────────
+const Features = ({ t }) => {
+  const features = [
+    { n: '01', title: t.f1t, desc: t.f1d, tag: t.f1tag },
+    { n: '02', title: t.f2t, desc: t.f2d, tag: t.f2tag },
+    { n: '03', title: t.f3t, desc: t.f3d, tag: t.f3tag },
+  ];
+  return (
+    <section className="features" id="features">
+      <div className="section-head">
+        <span className="section-num">02</span>
+        <span className="section-label">{t.featuresLabel}</span>
+      </div>
+      <h2 className="section-title">{t.featuresTitle.split('. ')[0]}. <em>{t.featuresTitle.split('. ')[1]}</em></h2>
+      <div className="feature-grid">
+        {features.map((f, i) => (
+          <article key={i} className="feature-card">
+            <div className="feature-head">
+              <span className="mono feature-n">{f.n}</span>
+              <span className="mono feature-tag">{f.tag}</span>
+            </div>
+            <h3>{f.title}</h3>
+            <p>{f.desc}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+};
+
+// ── Partners ─────────────────────────────────────────────────────────────────
+const Partners = ({ t }) => {
+  const partners = [
+    { name: 'Wageningen University', kind: 'Research lead' },
+    { name: 'CNR — Italy', kind: 'Modelling' },
+    { name: 'INRAE', kind: 'Agricultural data' },
+    { name: 'JRC Ispra', kind: 'EU coordination' },
+    { name: 'University of Bonn', kind: 'Economics' },
+    { name: 'TU Delft', kind: 'Systems engineering' },
+    { name: 'Aarhus University', kind: 'Behavioural science' },
+    { name: 'EFSA', kind: 'Food safety' },
+  ];
+  return (
+    <section className="partners" id="partners">
+      <div className="section-head">
+        <span className="section-num">03</span>
+        <span className="section-label">{t.partnersLabel}</span>
+      </div>
+      <h2 className="section-title">{t.partnersTitle.replace('14 countries', '')} <em>14 {t.partnersTitle.includes('countries') ? 'countries' : t.partnersTitle.includes('maassa') ? 'maassa' : t.partnersTitle.includes('χώρες') ? 'χώρες' : 'países'}.</em></h2>
+      <div className="partner-grid">
+        {partners.map((p, i) => (
+          <div key={i} className="partner-card">
+            <div className="partner-mark">
+              {LOGO_CONFIG.partners[i]
+                ? <img src={LOGO_CONFIG.partners[i]} alt={p.name} style={{width:'100%',height:'100%',objectFit:'contain',borderRadius:'2px'}} />
+                : (<svg viewBox="0 0 56 56" width="100%" height="100%">
+                    <defs>
+                      <pattern id={'stripe-' + i} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                        <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(146,221,219,0.25)" strokeWidth="2"/>
+                      </pattern>
+                    </defs>
+                    <rect width="56" height="56" fill={'url(#stripe-' + i + ')'} stroke="rgba(146,221,219,0.18)" />
+                  </svg>)
+              }
+            </div>
+            <div className="partner-text">
+              <div className="partner-name">{p.name}</div>
+              <div className="partner-kind">{p.kind}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="partner-foot">
+        <div className="eu-flag">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <circle cx="12" cy="12" r="11" fill="none" stroke="#DBA159" strokeWidth="0.8"/>
+            {Array.from({length: 12}).map((_, k) => {
+              const a = (k / 12) * Math.PI * 2 - Math.PI/2;
+              return <circle key={k} cx={12 + Math.cos(a)*7.5} cy={12 + Math.sin(a)*7.5} r="0.9" fill="#DBA159"/>;
+            })}
+          </svg>
+          <span>{t.euText}</span>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+// ── Footer ───────────────────────────────────────────────────────────────────
+const Footer = ({ t }) => (
+  <footer className="site-footer">
+    <div className="foot-left">
+      <div className="brand">
+        <span style={{color: '#F4EFE6'}}>GROCERY<span style={{color: '#DBA159'}}>sim</span><span className="brand-dim">&nbsp;ABM</span></span>
+      </div>
+      <p>{t.footerTagline}</p>
+    </div>
+    <div className="foot-right">
+      <span className="mono">{t.footerCopy}</span>
+    </div>
+  </footer>
+);
+
+// ── App ───────────────────────────────────────────────────────────────────────
+const App = () => {
+  const initLang = (typeof INITIAL_LANG !== 'undefined' && TRANSLATIONS[INITIAL_LANG]) ? INITIAL_LANG : 'en';
+  const [lang, setLang] = useState(initLang);
+  const t = TRANSLATIONS[lang];
+  return (
+    <div className="page">
+      <Background />
+      <Header lang={lang} setLang={setLang} />
+      <main>
+        <Hero t={t} />
+        <Overview t={t} />
+        <Features t={t} />
+        <Partners t={t} />
+      </main>
+      <Footer t={t} />
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+"""
+
+# ---------------------------------------------------------------------------
+# 0c. CASE STUDIES PAGE JSX
+# ---------------------------------------------------------------------------
+
+_CASE_STUDIES_JSX = """
+const { useState } = React;
+
+// ── Logo config (mirror of landing page LOGO_CONFIG.header) ─────────────────
+// CS_HEADER_URI is injected by Python as a base64 data URI (see render_case_studies_page).
+// SIZE: change maxHeight/maxWidth on the <img> inside CSHeader (~15 lines below)
+const CS_HEADER_LOGO = (typeof CS_HEADER_URI !== 'undefined') ? CS_HEADER_URI : '';
+
+// ── Case-Studies Translations ────────────────────────────────────────────────
+const CS_TRANS = {
+  en: {
+    eyebrow: 'SECUREFOOD',
+    pageTitle: 'Case Studies',
+    pageSub: 'Select a market context to explore.',
+    backBtn: 'Back to overview',
+    launchBtn: 'Launch simulation',
+    comingSoon: 'Coming soon',
+    cards: [
+      { title: 'Finland — Dairy Supply Chain',
+        desc: 'Simulate dairy product availability, panic-buying dynamics and supply disruptions in the Finnish grocery market.',
+        tag: 'DAIRY · NORTHERN EU', status: 'active' },
+      { title: 'Greece — Olive Oil Markets',
+        desc: 'Mediterranean supply chain stress-testing under drought and export restriction scenarios.',
+        tag: 'STAPLES · SOUTH EU', status: 'soon' },
+      { title: 'Portugal — Atlantic Food Corridor',
+        desc: 'Cross-border food security modelling across Atlantic trade routes and seasonal demand shifts.',
+        tag: 'TRADE · ATLANTIC', status: 'soon' },
+      { title: 'EU-Wide Stress Test',
+        desc: 'Multi-country ABM calibrated across 27 EU member states for coordinated crisis scenario analysis.',
+        tag: 'SYSTEMIC · ALL MARKETS', status: 'soon' },
+    ],
+  },
+  fi: {
+    eyebrow: 'SECUREFOOD',
+    pageTitle: 'Tapaustutkimukset',
+    pageSub: 'Valitse markkinalähtökohta tutkittavaksi.',
+    backBtn: 'Takaisin etusivulle',
+    launchBtn: 'Käynnistä simulaatio',
+    comingSoon: 'Tulossa pian',
+    cards: [
+      { title: 'Suomi — Maitotuoteketju',
+        desc: 'Simuloi maitotuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä suomalaisessa ruokakaupassa.',
+        tag: 'MAITOTUOTTEET · POHJ. EU', status: 'active' },
+      { title: 'Kreikka — Oliiviöljymarkkinat',
+        desc: 'Välimeren toimitusketjun stressitestaus kuivuuden ja vientirajoitusten oloissa.',
+        tag: 'PERUSELINTARVIKKEET · ET. EU', status: 'soon' },
+      { title: 'Portugali — Atlantin ruokakäytävä',
+        desc: 'Rajat ylittävä elintarviketurvamallinnus Atlantin kauppareittejä pitkin.',
+        tag: 'KAUPPA · ATLANTTI', status: 'soon' },
+      { title: 'EU-laajuinen stressitesti',
+        desc: 'Monimaainen ABM 27 EU-jäsenmaalle koordinoitua kriisianalyysia varten.',
+        tag: 'SYSTEEMINEN · KAIKKI MARKKINAT', status: 'soon' },
+    ],
+  },
+  el: {
+    eyebrow: 'SECUREFOOD',
+    pageTitle: 'Μελέτες Περίπτωσης',
+    pageSub: 'Επιλέξτε πλαίσιο αγοράς για εξερεύνηση.',
+    backBtn: 'Πίσω στην επισκόπηση',
+    launchBtn: 'Εκκίνηση προσομοίωσης',
+    comingSoon: 'Σύντομα',
+    cards: [
+      { title: 'Φινλανδία — Αλυσίδα Γαλακτοκομικών',
+        desc: 'Προσομοιώστε διαθεσιμότητα γαλακτοκομικών, αγορές πανικού και διαταραχές στη φινλανδική αγορά.',
+        tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΒΟΡΕΙΑ ΕΕ', status: 'active' },
+      { title: 'Ελλάδα — Αγορές Ελαιόλαδου',
+        desc: 'Ανθεκτικότητα αλυσίδας Μεσογείου υπό ξηρασία και εξαγωγικούς περιορισμούς.',
+        tag: 'ΒΑΣΙΚΑ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
+      { title: 'Πορτογαλία — Ατλαντικός Διάδρομος',
+        desc: 'Διασυνοριακή μοντελοποίηση επισιτιστικής ασφάλειας κατά μήκος ατλαντικών εμπορικών διαδρόμων.',
+        tag: 'ΕΜΠΟΡΙΟ · ΑΤΛΑΝΤΙΚΟΣ', status: 'soon' },
+      { title: 'Πανευρωπαϊκό Stress Test',
+        desc: 'Πολυ-χώρο ABM βαθμονομημένο σε 27 κράτη-μέλη ΕΕ για ανάλυση κρίσεων.',
+        tag: 'ΣΥΣΤΗΜΙΚΟ · ΟΛΕΣ ΟΙ ΑΓΟΡΕΣ', status: 'soon' },
+    ],
+  },
+  pt: {
+    eyebrow: 'SECUREFOOD',
+    pageTitle: 'Estudos de Caso',
+    pageSub: 'Selecione um contexto de mercado para explorar.',
+    backBtn: 'Voltar à visão geral',
+    launchBtn: 'Iniciar simulação',
+    comingSoon: 'Em breve',
+    cards: [
+      { title: 'Finlândia — Cadeia de Laticínios',
+        desc: 'Simule disponibilidade de laticínios, compras em pânico e perturbações logísticas no mercado finlandês.',
+        tag: 'LATICÍNIOS · NORTE UE', status: 'active' },
+      { title: 'Grécia — Mercados de Azeite',
+        desc: 'Teste de resiliência mediterrânica sob cenários de seca e restrições à exportação.',
+        tag: 'BÁSICOS · SUL UE', status: 'soon' },
+      { title: 'Portugal — Corredor Alimentar Atlântico',
+        desc: 'Modelação transfronteiriça de segurança alimentar pelas rotas comerciais atlânticas.',
+        tag: 'COMÉRCIO · ATLÂNTICO', status: 'soon' },
+      { title: 'UE — Stress Test Pan-Europeu',
+        desc: 'ABM multi-país calibrado em 27 estados-membros para análise coordenada de crises.',
+        tag: 'SISTÉMICO · TODOS OS MERCADOS', status: 'soon' },
+    ],
+  },
+};
+
+const CARD_FLAGS = ['🇫🇮', '🇬🇷', '🇵🇹', '🇪🇺'];
+
+// ── Photo illustrations ───────────────────────────────────────────────────────
+const PhotoFI = () => (
+  <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style={{display:'block'}}>
+    <defs>
+      <linearGradient id="fi-g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#042026"/>
+        <stop offset="100%" stopColor="#0a4a5e"/>
+      </linearGradient>
+    </defs>
+    <rect width="400" height="300" fill="url(#fi-g)"/>
+    <path d="M0 200 C80 170 120 190 200 175 C280 160 330 185 400 165 L400 300 L0 300Z" fill="rgba(68,161,160,0.12)"/>
+    <path d="M0 225 C100 210 200 220 300 205 C360 196 390 212 400 208 L400 300 L0 300Z" fill="rgba(146,221,219,0.07)"/>
+    <circle cx="78" cy="72" r="42" fill="none" stroke="rgba(188,220,139,0.14)" strokeWidth="1"/>
+    <circle cx="78" cy="72" r="24" fill="none" stroke="rgba(188,220,139,0.2)" strokeWidth="1"/>
+    <line x1="78" y1="48" x2="78" y2="96" stroke="rgba(188,220,139,0.15)" strokeWidth="1"/>
+    <line x1="54" y1="72" x2="102" y2="72" stroke="rgba(188,220,139,0.15)" strokeWidth="1"/>
+    <path d="M172 105 Q182 92 200 90 Q218 92 228 105 L233 182 Q200 196 167 182Z" fill="none" stroke="rgba(146,221,219,0.35)" strokeWidth="1.5"/>
+    <rect x="180" y="132" width="40" height="28" rx="2" fill="rgba(146,221,219,0.06)" stroke="rgba(146,221,219,0.2)" strokeWidth="1"/>
+    <text x="200" y="151" textAnchor="middle" fill="rgba(146,221,219,0.45)" fontSize="8" fontFamily="monospace" letterSpacing="2">DAIRY</text>
+    <circle cx="312" cy="58" r="3" fill="rgba(188,220,139,0.5)"/>
+    <circle cx="342" cy="88" r="2" fill="rgba(188,220,139,0.4)"/>
+    <circle cx="292" cy="100" r="2.5" fill="rgba(188,220,139,0.3)"/>
+    <circle cx="352" cy="48" r="2" fill="rgba(188,220,139,0.6)"/>
+    <text x="200" y="262" textAnchor="middle" fill="rgba(146,221,219,0.2)" fontSize="10" fontFamily="monospace" letterSpacing="4">FINLAND · FI</text>
+  </svg>
+);
+
+const PhotoGR = () => (
+  <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style={{display:'block'}}>
+    <defs>
+      <linearGradient id="gr-g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#1a0a00"/>
+        <stop offset="100%" stopColor="#2a1500"/>
+      </linearGradient>
+    </defs>
+    <rect width="400" height="300" fill="url(#gr-g)"/>
+    <path d="M30 200 Q80 185 150 195 Q200 200 250 190 Q330 175 400 195 L400 300 L0 300Z" fill="rgba(219,161,89,0.07)"/>
+    <path d="M100 60 Q150 20 200 60 Q250 100 300 60 Q330 40 340 80 L330 280 L270 300 L130 300 L70 280Z" fill="none" stroke="rgba(219,161,89,0.18)" strokeWidth="1.5"/>
+    <ellipse cx="200" cy="150" rx="14" ry="48" fill="rgba(219,161,89,0.08)" stroke="rgba(219,161,89,0.22)" strokeWidth="1"/>
+    <ellipse cx="166" cy="132" rx="9" ry="32" fill="rgba(219,161,89,0.06)" stroke="rgba(219,161,89,0.18)" strokeWidth="1" transform="rotate(-15 166 132)"/>
+    <ellipse cx="234" cy="132" rx="9" ry="32" fill="rgba(219,161,89,0.06)" stroke="rgba(219,161,89,0.18)" strokeWidth="1" transform="rotate(15 234 132)"/>
+    <circle cx="200" cy="95" r="17" fill="rgba(219,161,89,0.1)" stroke="rgba(219,161,89,0.28)" strokeWidth="1.5"/>
+    <text x="200" y="262" textAnchor="middle" fill="rgba(219,161,89,0.22)" fontSize="10" fontFamily="monospace" letterSpacing="4">GREECE · GR</text>
+  </svg>
+);
+
+const PhotoPT = () => (
+  <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style={{display:'block'}}>
+    <defs>
+      <linearGradient id="pt-g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#021520"/>
+        <stop offset="100%" stopColor="#042a3a"/>
+      </linearGradient>
+    </defs>
+    <rect width="400" height="300" fill="url(#pt-g)"/>
+    <circle cx="320" cy="68" r="44" fill="none" stroke="rgba(252,201,149,0.14)" strokeWidth="1"/>
+    <circle cx="320" cy="68" r="32" fill="rgba(252,201,149,0.04)" stroke="rgba(252,201,149,0.18)" strokeWidth="1.5"/>
+    <path d="M0 180 Q50 160 100 170 Q150 180 200 160 Q260 140 320 165 Q370 180 400 170 L400 300 L0 300Z" fill="rgba(68,161,160,0.13)"/>
+    <path d="M0 205 Q80 190 160 205 Q240 220 320 200 Q370 190 400 204 L400 300 L0 300Z" fill="rgba(68,161,160,0.09)"/>
+    <path d="M0 232 Q100 222 200 237 Q300 252 400 232 L400 300 L0 300Z" fill="rgba(68,161,160,0.06)"/>
+    <path d="M130 195 Q150 175 170 195 Q180 205 190 195 Q200 185 210 195" fill="none" stroke="rgba(146,221,219,0.38)" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M200 210 Q220 192 240 210 Q252 220 262 210 Q272 200 282 210" fill="none" stroke="rgba(146,221,219,0.28)" strokeWidth="2" strokeLinecap="round"/>
+    <text x="200" y="262" textAnchor="middle" fill="rgba(68,161,160,0.28)" fontSize="10" fontFamily="monospace" letterSpacing="4">PORTUGAL · PT</text>
+  </svg>
+);
+
+const PhotoEU = () => (
+  <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style={{display:'block'}}>
+    <defs>
+      <radialGradient id="eu-g" cx="50%" cy="47%">
+        <stop offset="0%" stopColor="#073B4C"/>
+        <stop offset="100%" stopColor="#042026"/>
+      </radialGradient>
+    </defs>
+    <rect width="400" height="300" fill="url(#eu-g)"/>
+    <circle cx="200" cy="138" r="92" fill="none" stroke="rgba(219,161,89,0.1)" strokeWidth="1"/>
+    <circle cx="200" cy="138" r="72" fill="none" stroke="rgba(219,161,89,0.13)" strokeWidth="1"/>
+    <circle cx="200" cy="138" r="50" fill="none" stroke="rgba(219,161,89,0.16)" strokeWidth="1"/>
+    {Array.from({length:12}).map((_,k) => {
+      const a = (k/12)*Math.PI*2 - Math.PI/2;
+      return <circle key={k} cx={200 + Math.cos(a)*72} cy={138 + Math.sin(a)*72} r="4" fill="rgba(219,161,89,0.48)"/>;
+    })}
+    <circle cx="200" cy="138" r="7" fill="rgba(219,161,89,0.14)" stroke="rgba(219,161,89,0.38)" strokeWidth="1.5"/>
+    <text x="200" y="262" textAnchor="middle" fill="rgba(219,161,89,0.22)" fontSize="10" fontFamily="monospace" letterSpacing="4">EUROPE · EU</text>
+  </svg>
+);
+
+const PHOTOS = [PhotoFI, PhotoGR, PhotoPT, PhotoEU];
+
+// ── Shared layout components ──────────────────────────────────────────────────
+const CSBackground = () => (
+  <div className="bg bg-gradient">
+    <div className="aurora a1" />
+    <div className="aurora a2" />
+    <div className="aurora a3" />
+    <div className="grain" />
+  </div>
+);
+
+const CSLangSwitcher = ({ lang, setLang }) => {
+  const langs = [['en','EN'],['fi','FI'],['el','EL'],['pt','PT']];
+  return (
+    <div className="lang-switcher" title="Select language">
+      {langs.map(([code, label]) => (
+        <button key={code}
+          className={'lang-btn' + (lang === code ? ' active' : '')}
+          onClick={() => setLang(code)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const CSHeader = ({ lang, setLang }) => (
+  <header className="site-header">
+    <div className="logo-slot" aria-label="Header logo">
+      {CS_HEADER_LOGO
+        ? (/* HEADER LOGO SIZE (case studies page) — change maxHeight / maxWidth here */
+           <img src={CS_HEADER_LOGO} alt="Logo" style={{maxHeight:'200px', maxWidth:'300px', objectFit:'contain', display:'block'}} />)
+        : (<>
+            <svg className="logo-slot-bg" viewBox="0 0 200 56" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <pattern id="cs-logo-stripe" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(146,221,219,0.18)" strokeWidth="2"/>
+                </pattern>
+              </defs>
+              <rect x="0.5" y="0.5" width="199" height="55" fill="url(#cs-logo-stripe)" stroke="rgba(146,221,219,0.28)" strokeDasharray="3 3"/>
+            </svg>
+            <span className="logo-slot-label mono">LOGO&nbsp;·&nbsp;200×56</span>
+          </>)
+      }
+    </div>
+    <CSLangSwitcher lang={lang} setLang={setLang} />
+  </header>
+);
+
+const CSFooter = () => (
+  <footer className="site-footer">
+    <div className="foot-left">
+      <div className="brand">
+        <span style={{color:'#F4EFE6'}}>GROCERY<span style={{color:'#DBA159'}}>sim</span><span style={{color:'rgba(244,239,230,0.6)',fontWeight:500}}>&nbsp;ABM</span></span>
+      </div>
+      <p style={{fontSize:'13px',color:'rgba(244,239,230,0.6)',marginTop:'8px'}}>© 2026 · SecureFood Consortium · Horizon Europe</p>
+    </div>
+    <div className="foot-right">
+      <span className="mono" style={{color:'rgba(244,239,230,0.35)',fontSize:'11px'}}>SECUREFOOD</span>
+    </div>
+  </footer>
+);
+
+// ── Single case-study card ────────────────────────────────────────────────────
+const CaseStudyCard = ({ card, flag, Photo, launchBtn, comingSoon }) => {
+  const isActive = card.status === 'active';
+  const handleLaunch = () => {
+    if (!isActive) return;
+    try { window.parent.postMessage({type:'launch_grocerysim'}, '*'); } catch(e) {}
+  };
+  return (
+    <div className={'cs-card ' + (isActive ? 'active' : 'inactive')}>
+      <div className="cs-photo">
+        <div className="cs-photo-inner"><Photo /></div>
+        <div className={'cs-badge ' + (isActive ? 'active' : 'soon')}>
+          {isActive ? 'LIVE' : 'SOON'}
+        </div>
+        <div className="cs-country">{flag}</div>
+      </div>
+      <div className="cs-body">
+        <div className="cs-card-tag mono">{card.tag}</div>
+        <div className="cs-card-title">{card.title}</div>
+        <div className="cs-card-desc">{card.desc}</div>
+        <button
+          className={'cs-card-btn ' + (isActive ? 'launch' : 'disabled')}
+          onClick={handleLaunch}
+          disabled={!isActive}
+        >
+          {isActive ? (
+            <>
+              {launchBtn}
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2 6h8m0 0L7 3M10 6L7 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </>
+          ) : comingSoon}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ── Case Studies Page ─────────────────────────────────────────────────────────
+const CaseStudiesPage = ({ t, lang, setLang }) => {
+  const handleBack = () => {
+    try { window.parent.postMessage({type:'launch_back'}, '*'); } catch(e) {}
+  };
+  return (
+    <div className="page">
+      <CSBackground />
+      <CSHeader lang={lang} setLang={setLang} />
+      <main>
+        <div className="cs-hero">
+          <button className="cs-hero-back" onClick={handleBack}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {t.backBtn}
+          </button>
+          <h1 className="cs-title">{t.pageTitle}</h1>
+          <p className="cs-subtitle">{t.pageSub}</p>
+        </div>
+        <div className="cs-grid">
+          {t.cards.map((card, i) => (
+            <CaseStudyCard
+              key={i}
+              card={card}
+              flag={CARD_FLAGS[i]}
+              Photo={PHOTOS[i]}
+              launchBtn={t.launchBtn}
+              comingSoon={t.comingSoon}
+            />
+          ))}
+        </div>
+      </main>
+      <CSFooter />
+    </div>
+  );
+};
+
+// ── App root ──────────────────────────────────────────────────────────────────
+const CaseStudiesApp = () => {
+  const initLang = (typeof INITIAL_LANG !== 'undefined' && CS_TRANS[INITIAL_LANG]) ? INITIAL_LANG : 'en';
+  const [lang, setLang] = useState(initLang);
+  const t = CS_TRANS[lang];
+  return <CaseStudiesPage t={t} lang={lang} setLang={setLang} />;
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<CaseStudiesApp />);
+"""
+
+
+def render_landing_page():
+    """Display the full GROCERYsim landing page."""
+    st.markdown("""
+    <style>
+        /* ── Hide ALL Streamlit chrome ── */
+        section[data-testid="stSidebar"],
+        div[data-testid="stSidebarCollapsedControl"],
+        div[data-testid="collapsedControl"],
+        button[data-testid="baseButton-headerNoPadding"],
+        [data-testid*="Sidebar"] { display: none !important; visibility: hidden !important; }
+        header[data-testid="stHeader"] { display: none !important; }
+        #MainMenu, footer { display: none !important; }
+
+        /* ── Dark background ── */
+        .stApp,
+        .stApp > div,
+        section.main,
+        div.block-container { background-color: #042026 !important; }
+        .main .block-container {
+            background-color: #042026 !important;
+            padding: 0 !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stVerticalBlock"] { gap: 0 !important; background: #042026 !important; }
+
+        /* ── Strip component iframe border ── */
+        iframe { border: none !important; outline: none !important;
+                 display: block !important; }
+        .element-container { padding: 0 !important; margin: 0 !important;
+                              background: transparent !important; }
+
+        /* ── Hide hidden nav trigger buttons ── */
+        div[data-testid="stButton"] { display: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    _lu = {
+        "header":   _logo_uri("GROCERYsim.png"),
+        "hero0":    _logo_uri("EU.png"),
+        "hero1":    _logo_uri("SecureFood.png"),
+        "hero2":    _logo_uri("IAMO.png"),
+        "hero3":    _logo_uri("Logo_lab.png"),
+    }
+
+    landing_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,300&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>{_LANDING_CSS}</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    var LOGO_URIS = {{
+      header:   "{_lu['header']}",
+      hero:     ["{_lu['hero0']}", "{_lu['hero1']}", "{_lu['hero2']}", "{_lu['hero3']}"],
+      partners: ['','','','','','','','']
+    }};
+  </script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+  <script type="text/babel">
+    {_GROCERY_SIM_JSX}
+    {_LANDING_APP_JSX}
+  </script>
+</body>
+</html>"""
+
+    # Hidden nav trigger — clicked programmatically by the JS bridge below
+    if st.button("→cases", key="cases_nav_btn"):
+        st.session_state["page"] = "case_studies"
+        st.rerun()
+
+    components.html(landing_html, height=880)
+
+    # JS bridge: listen for postMessage from React iframe, then click the hidden button
+    components.html("""<script>
+(function(){
+  var NAV = {'launch_case_studies': '→cases'};
+  // Use MutationObserver to hide the trigger buttons as soon as Streamlit renders them
+  var obs = new MutationObserver(function(){
+    window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
+      var lbl = (c.querySelector('button p, button') || {}).textContent || '';
+      if(Object.values(NAV).some(function(v){ return lbl.trim() === v; }))
+        c.style.display = 'none';
+    });
+  });
+  try { obs.observe(window.parent.document.body, {childList:true, subtree:true}); } catch(e){}
+  // Listen for React postMessage events and click the matching hidden button
+  window.parent.addEventListener('message', function(e){
+    if(!e.data || !NAV[e.data.type]) return;
+    var target = NAV[e.data.type];
+    window.parent.document.querySelectorAll('button').forEach(function(b){
+      if((b.textContent || '').trim() === target) b.click();
+    });
+  });
+})();
+</script>""", height=0)
+
+def render_case_studies_page():
+    """Display the Case Studies hub — 4 scenario cards, back navigation, multi-language."""
+    st.markdown("""
+    <style>
+        /* ── Hide ALL Streamlit chrome ── */
+        section[data-testid="stSidebar"],
+        div[data-testid="stSidebarCollapsedControl"],
+        div[data-testid="collapsedControl"],
+        [data-testid*="Sidebar"] { display: none !important; visibility: hidden !important; }
+        header[data-testid="stHeader"] { display: none !important; }
+        #MainMenu, footer { display: none !important; }
+
+        /* ── Dark background ── */
+        .stApp, .stApp > div, section.main,
+        div.block-container { background-color: #042026 !important; }
+        .main .block-container {
+            background-color: #042026 !important;
+            padding: 0 !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stVerticalBlock"] { gap: 0 !important; background: #042026 !important; }
+        iframe { border: none !important; outline: none !important; display: block !important; }
+        .element-container { padding: 0 !important; margin: 0 !important;
+                              background: transparent !important; }
+
+        /* ── Hide hidden nav trigger buttons ── */
+        div[data-testid="stButton"] { display: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    cs_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,300&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>{_LANDING_CSS}</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>var INITIAL_LANG = 'en'; var CS_HEADER_URI = "{_logo_uri('GROCERYsim.png')}";</script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+  <script type="text/babel">
+    {_CASE_STUDIES_JSX}
+  </script>
+</body>
+</html>"""
+
+    # Hidden nav triggers — clicked programmatically by the JS bridge below
+    if st.button("→main", key="main_nav_btn"):
+        st.session_state["page"] = "main"
+        st.rerun()
+    if st.button("→back", key="back_nav_btn"):
+        st.session_state["page"] = "landing"
+        st.rerun()
+
+    components.html(cs_html, height=1020)
+
+    # JS bridge: hide trigger buttons and route React postMessages to them
+    components.html("""<script>
+(function(){
+  var NAV = {'launch_grocerysim': '→main', 'launch_back': '→back'};
+  var obs = new MutationObserver(function(){
+    window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
+      var lbl = (c.querySelector('button p, button') || {}).textContent || '';
+      if(Object.values(NAV).some(function(v){ return lbl.trim() === v; }))
+        c.style.display = 'none';
+    });
+  });
+  try { obs.observe(window.parent.document.body, {childList:true, subtree:true}); } catch(e){}
+  window.parent.addEventListener('message', function(e){
+    if(!e.data || !NAV[e.data.type]) return;
+    var target = NAV[e.data.type];
+    window.parent.document.querySelectorAll('button').forEach(function(b){
+      if((b.textContent || '').trim() === target) b.click();
+    });
+  });
+})();
+</script>""", height=0)
+
+
+# ===========================================================================
+# 1. SESSION STATE INITIALISATION
+# ===========================================================================
+
+defaults = {
+    "config_data":     None,
+    "page":            "landing",
+    # Simulation results
+    "sim_results":     None,
+    "sim_stock":       None,
+    "sim_scm_log":     None,
+    "sim_waste":       None,
+    "sim_product_recs": None,
+    "sim_model_crisis": None,
+    "sim_pref_drift":   None,
+    # Scientific workflow state
+    "mc_stage":        0,
+    "data_base_raw":   None,
+    "data_base_opt":   None,
+    "data_crisis":     None,
+    "ai_recs":         None,
+    "active_baseline": "Baseline (Raw)",
+    "prod_stats_raw":  None,
+    # Policy analysis results
+    "policy_baseline":  None,   # DataFrame: daily records, no policy
+    "policy_scenario":  None,   # DataFrame: daily records, with policy active
+    "policy_label":     None,   # human-readable name of the active policy run
+    # Multi-scenario store: list of {"label": str, "df": DataFrame}
+    "policy_scenarios": [],
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ---------------------------------------------------------------------------
+# Auto-load bundled data files on first run (no upload required)
+# ---------------------------------------------------------------------------
+_FIREBASE_PATH  = "/Users/itiamo/Downloads/food-finland-default-rtdb-export.json"
+_PRODUCTS_PATH  = "/Volumes/Windows/2026/ABM_NetLogo/ABM_Python/master_products.json"
+
+if st.session_state.config_data is None:
+    try:
+        import pathlib
+        _fb_path   = pathlib.Path(_FIREBASE_PATH)
+        _prod_path = pathlib.Path(_PRODUCTS_PATH)
+        if _fb_path.exists() and _prod_path.exists():
+            _firebase_dict  = json.loads(_fb_path.read_text(encoding="utf-8"))
+            _products_dict  = json.loads(_prod_path.read_text(encoding="utf-8"))
+            st.session_state.config_data = run_pipeline_from_data(
+                _firebase_dict, _products_dict, pool_size=2000, n_archetypes=4
+            )
+    except Exception:
+        pass   # silently skip — user can still upload manually in Data & Population tab
+
+# ===========================================================================
+# 2. HELPERS
+# ===========================================================================
+
+def render_footer():
+    st.markdown("""
+    <div class="footer">
+        <div class="eu-text">The SecureFood project is funded by the European Union's
+        Horizon Europe research and innovation programme — grant agreement No. 101136583.</div>
+        <div>© 2026 IAMO XR Lab | GROCERYsim ABM v2.0</div>
+    </div>""", unsafe_allow_html=True)
+
+
+def _product_agents(model):
+    return [a for a in model.schedule.agents if isinstance(a, ProductAgent)]
+
+
+def _collect_model_day(model, day: int, scenario_label: str,
+                        collect_products: bool = True) -> tuple[dict, list]:
+    """Extract aggregate + optional per-product records from a model after step()."""
+    agents   = _product_agents(model)
+    d_rev         = sum(a.daily_base_revenue for a in agents)   # constant-price revenue
+    d_rev_nominal = sum(a.daily_revenue      for a in agents)   # nominal revenue (inflated prices)
+    d_waste  = sum(a.daily_waste      for a in agents)
+    d_lost   = sum(a.daily_lost_sales for a in agents)
+    d_sales  = sum(a.daily_sales      for a in agents)
+
+    # Pull the latest daily_record written by model.step() for policy/env metrics
+    last_rec = model.daily_records[-1] if model.daily_records else {}
+
+    agg = {
+        "Day":            day,
+        "Scenario":       scenario_label,
+        "Revenue":        d_rev,           # constant-price (base_price × units) — falls with inflation/disruption
+        "NominalRevenue": d_rev_nominal,   # nominal cash (current_price × units) — rises with inflation
+        "AvgPrice":       last_rec.get("AvgPrice", 0.0),   # mean product price; rises with inflation
+        "CrisisPhase":    last_rec.get("CrisisPhase",    "pre"),
+        "ScenarioEndDay": last_rec.get("ScenarioEndDay", 0),
+        "Waste":      d_waste,
+        "LostSales":  d_lost,
+        "Sales":      d_sales,
+        "Consumers":  model.daily_consumer_count,
+        "PanicLevel": model.global_panic_level,
+        # Environmental
+        "CO2Sales":          last_rec.get("CO2Sales",          0.0),
+        "CO2Waste":          last_rec.get("CO2Waste",          0.0),
+        "CO2Total":          last_rec.get("CO2Total",          0.0),
+        "ImportDepPct":      last_rec.get("ImportDepPct",      0.0),
+        "DomesticSales":     last_rec.get("DomesticSales",     0),
+        "ImportSales":       last_rec.get("ImportSales",       0),
+        # Consumer welfare — aggregate
+        "BudgetExhaustionRate": last_rec.get("BudgetExhaustionRate", 0.0),
+        "FoodStressedPct":      last_rec.get("FoodStressedPct",      0.0),
+        "FulfillmentRate":      last_rec.get("FulfillmentRate",      1.0),
+        "MeanFatPurchased":     last_rec.get("MeanFatPurchased",     0.0),
+        # Consumer welfare — income brackets
+        "BudgetExh_Low":    last_rec.get("BudgetExh_Low",    0.0),
+        "BudgetExh_Mid":    last_rec.get("BudgetExh_Mid",    0.0),
+        "BudgetExh_High":   last_rec.get("BudgetExh_High",   0.0),
+        "Fulfillment_Low":  last_rec.get("Fulfillment_Low",  1.0),
+        "Fulfillment_Mid":  last_rec.get("Fulfillment_Mid",  1.0),
+        "Fulfillment_High": last_rec.get("Fulfillment_High", 1.0),
+        "MeanFat_Low":      last_rec.get("MeanFat_Low",      0.0),
+        "MeanFat_Mid":      last_rec.get("MeanFat_Mid",      0.0),
+        "MeanFat_High":     last_rec.get("MeanFat_High",     0.0),
+        "N_Low":            last_rec.get("N_Low",  0),
+        "N_Mid":            last_rec.get("N_Mid",  0),
+        "N_High":           last_rec.get("N_High", 0),
+        # ── Behavioural Theory columns ──────────────────────────────────────
+        # Nudge / Rationing (Thaler & Sunstein 2008)
+        "GiniAccess":         last_rec.get("GiniAccess",         0.0),
+        "PurchaseLimitOn":    last_rec.get("PurchaseLimitOn",    0),
+        "PurchaseLimit":      last_rec.get("PurchaseLimit",      0),
+        # Theory of Planned Behaviour (Ajzen 1991)
+        "AvgSubjectiveNorm":  last_rec.get("AvgSubjectiveNorm",  0.0),
+        "AvgTPBIntention":    last_rec.get("AvgTPBIntention",    0.0),
+        # FIES Food Security (FAO 2016) — mean score per bracket
+        "FIES_Low":           last_rec.get("FIES_Low",           0.0),
+        "FIES_Mid":           last_rec.get("FIES_Mid",           0.0),
+        "FIES_High":          last_rec.get("FIES_High",          0.0),
+        # FIES — fraction severely food-insecure per bracket
+        "FIESSevere_Low":     last_rec.get("FIESSevere_Low",     0.0),
+        "FIESSevere_Mid":     last_rec.get("FIESSevere_Mid",     0.0),
+        "FIESSevere_High":    last_rec.get("FIESSevere_High",    0.0),
+        # Stockpile pressure (O'Donoghue & Rabin 1999)
+        "StockpilePressure":  last_rec.get("StockpilePressure",  0.0),
+        # Media / Communication Channel (McCombs & Shaw 1972)
+        "MediaIntensity":     last_rec.get("MediaIntensity",     0.0),
+        "MediaType":          last_rec.get("MediaType",          "neutral"),
+        "MediaPanicEffect":   last_rec.get("MediaPanicEffect",   0.0),
+        # Store calibration & daily loss breakdown
+        "StoreTier":          last_rec.get("StoreTier",          "Unknown"),
+        "DailyLossStockout":  last_rec.get("DailyLossStockout",  0.0),
+        "DailyLossPrice":     last_rec.get("DailyLossPrice",     0.0),
+    }
+
+    prod_rows = []
+    if collect_products:
+        for a in agents:
+            prod_rows.append({
+                "Day":        day,
+                "Scenario":   scenario_label,
+                "Product":    a.name,
+                "Category":   a.category,
+                "Shelf":      a.snap_shelf,
+                "Storage":    a.snap_storage,
+                "Pending":    a.snap_pending,
+                "Revenue":    a.daily_revenue,
+                "Sales":      a.daily_sales,
+                "Waste":      a.daily_waste,
+                "LostSales":  a.daily_lost_sales,
+                "Price":      a.current_price,
+                "NearExpiry": a.daily_near_expiry_sold,
+                "CO2Sales":   round(a.daily_co2_sales,  2),
+                "CO2Waste":   round(a.daily_co2_waste,  2),
+                "DomesticSales": a.daily_domestic_sales,
+                "ImportSales":   a.daily_import_sales,
+                "Origin":        a.origin,
+                "FatContent":    a.fat_content,
+            })
+    return agg, prod_rows
+
+
+# ===========================================================================
+# 2b. CHART ANALYSIS HELPER
+# ===========================================================================
+
+def _render_analysis(
+    df: pd.DataFrame,
+    metric: str,
+    params: dict,
+    *,
+    baseline_label: str = "Baseline",
+    crisis_label: str = "Crisis",
+    prefix: str = "",
+    suffix: str = "",
+    higher_is_better: bool = True,
+    decimals: int = 1,
+    recovery_tolerance: float = 0.05,
+) -> None:
+    """
+    Render a compact, always-visible statistical analysis row below a chart.
+
+    Two modes
+    ---------
+    Comparative  (df has both baseline_label and crisis_label)
+        → columns: Baseline avg | Crisis phase avg | Recovery phase avg | Days to recover
+        → one-line conclusion sentence with direction + severity
+    Single-series (only one Scenario in df)
+        → columns: Overall avg | Peak value | Lowest value | Trend
+    """
+    if df is None or df.empty or metric not in df.columns:
+        return
+
+    scenarios = df["Scenario"].unique().tolist()
+    is_comparative = (baseline_label in scenarios and crisis_label in scenarios)
+
+    cri_start = params.get("cri_start", 0)
+    cri_dur   = params.get("cri_duration", 0)
+    max_day   = int(df["Day"].max())
+    cri_end   = (cri_start + cri_dur) if cri_dur > 0 else (max_day + 1)
+
+    def _avg(d: pd.DataFrame, lo: int = 1, hi: int = None):
+        hi = hi if hi is not None else (max_day + 1)
+        sub = d[(d["Day"] >= lo) & (d["Day"] < hi)][metric]
+        return float(sub.mean()) if not sub.empty else None
+
+    def _pct(new, ref):
+        if new is None or ref is None or abs(ref) < 1e-9:
+            return None
+        return (new - ref) / abs(ref) * 100
+
+    def _fmt(v):
+        if v is None:
+            return "—"
+        return f"{prefix}{v:,.{decimals}f}{suffix}".strip()
+
+    def _delta_color(pct_val):
+        """'normal' = green when positive (for higher-is-better); 'inverse' = red when positive."""
+        if pct_val is None:
+            return "off"
+        return "normal" if (pct_val >= 0) == higher_is_better else "inverse"
+
+    # ── Comparative mode ─────────────────────────────────────────────────────
+    if is_comparative:
+        df_b = df[df["Scenario"] == baseline_label]
+        df_c = df[df["Scenario"] == crisis_label]
+
+        b_full = _avg(df_b)
+        b_dur  = _avg(df_b, cri_start, cri_end)
+        c_dur  = _avg(df_c, cri_start, cri_end)
+        has_post = (cri_dur > 0 and cri_end <= max_day)
+        b_post = _avg(df_b, cri_end) if has_post else None
+        c_post = _avg(df_c, cri_end) if has_post else None
+
+        pct_dur  = _pct(c_dur,  b_dur)
+        pct_post = _pct(c_post, b_post) if has_post else None
+        pct_all  = _pct(_avg(df_c), b_full)
+
+        # Recovery day: first day after crisis_end where crisis ≈ baseline (within tolerance)
+        recovery_days = None
+        if has_post:
+            for d in range(cri_end, max_day + 1):
+                cv = df_c.loc[df_c["Day"] == d, metric].values
+                bv = df_b.loc[df_b["Day"] == d, metric].values
+                if len(cv) and len(bv) and abs(bv[0]) > 1e-9:
+                    if abs(cv[0] - bv[0]) / abs(bv[0]) <= recovery_tolerance:
+                        recovery_days = d - cri_end
+                        break
+
+        n_cols = 4 if has_post else 3
+        cols = st.columns(n_cols)
+
+        cols[0].metric(
+            "Baseline avg",
+            _fmt(b_full),
+            help="Mean across the full simulation (no-crisis scenario)",
+        )
+        cols[1].metric(
+            "Crisis phase avg",
+            _fmt(c_dur),
+            delta=(f"{pct_dur:+.1f}% vs baseline" if pct_dur is not None else None),
+            delta_color=_delta_color(pct_dur),
+            help=f"Days {cri_start}–{cri_end - 1} of the crisis scenario",
+        )
+        if has_post:
+            cols[2].metric(
+                "Recovery phase avg",
+                _fmt(c_post),
+                delta=(f"{pct_post:+.1f}% vs baseline" if pct_post is not None else None),
+                delta_color=_delta_color(pct_post),
+                help=f"Post-crisis days {cri_end}–{max_day}",
+            )
+            if recovery_days is not None:
+                cols[3].metric(
+                    "Days to recover",
+                    str(recovery_days),
+                    help=f"First day the crisis metric came within {int(recovery_tolerance*100)}% of baseline",
+                )
+            else:
+                cols[3].metric(
+                    "Days to recover",
+                    "Outside window",
+                    delta="no full recovery",
+                    delta_color="off",
+                )
+        else:
+            cols[2].metric(
+                "Full-sim crisis avg",
+                _fmt(_avg(df_c)),
+                delta=(f"{pct_all:+.1f}% vs baseline" if pct_all is not None else None),
+                delta_color=_delta_color(pct_all),
+                help="Crisis scenario average across all days (no recovery phase configured)",
+            )
+
+        # Conclusion sentence
+        if pct_dur is not None:
+            direction = "higher" if pct_dur > 0 else "lower"
+            good = (pct_dur > 0) == higher_is_better
+            icon = "🟢" if good else ("🟡" if abs(pct_dur) < 10 else "🔴")
+            label = metric.replace("_", " ")
+            parts = [
+                f"{icon} During the crisis, **{label}** was **{abs(pct_dur):.1f}% {direction}** "
+                f"than the baseline ({_fmt(c_dur)} vs {_fmt(b_dur)})."
+            ]
+            if has_post and pct_post is not None:
+                rec_icon = "🟢" if abs(pct_post) < 5 else ("🟡" if abs(pct_post) < 15 else "🔴")
+                rec_word = "fully recovered" if abs(pct_post) < 5 else "partially recovered"
+                parts.append(
+                    f"{rec_icon} Recovery phase: {rec_word} "
+                    f"({_fmt(c_post)}, {pct_post:+.1f}% vs baseline)."
+                )
+                if recovery_days is not None:
+                    parts.append(f"⏱️ Returned to within {int(recovery_tolerance*100)}% of baseline after **{recovery_days} day(s)**.")
+                else:
+                    parts.append("⚠️ Full recovery not observed within the simulation window.")
+            st.caption("  ".join(parts))
+
+    # ── Single-series mode ───────────────────────────────────────────────────
+    else:
+        sel_sc = scenarios[0] if scenarios else None
+        df_s   = df[df["Scenario"] == sel_sc] if sel_sc else df
+
+        s_mean = _avg(df_s)
+        s_max  = float(df_s[metric].max()) if not df_s.empty else None
+        s_min  = float(df_s[metric].min()) if not df_s.empty else None
+        peak_day = int(df_s.loc[df_s[metric].idxmax(), "Day"]) if not df_s.empty and s_max else None
+
+        # Simple trend: compare second half vs first half
+        mid = max_day // 2
+        first_half = _avg(df_s, 1, mid)
+        second_half = _avg(df_s, mid, max_day + 1)
+        trend_pct = _pct(second_half, first_half)
+
+        cols = st.columns(4)
+        cols[0].metric("Average", _fmt(s_mean), help="Mean across the simulation")
+        cols[1].metric("Peak", _fmt(s_max), help=f"Highest value (day {peak_day})" if peak_day else None)
+        cols[2].metric("Minimum", _fmt(s_min))
+        if trend_pct is not None:
+            direction = "up" if trend_pct > 0 else "down"
+            cols[3].metric(
+                "2nd-half trend",
+                f"{trend_pct:+.1f}%",
+                delta=f"vs first half",
+                delta_color=_delta_color(trend_pct),
+                help="Change from first half to second half of the simulation",
+            )
+        if peak_day:
+            label = metric.replace("_", " ")
+            st.caption(
+                f"📌 **{label}** averaged {_fmt(s_mean)}, "
+                f"peaking at {_fmt(s_max)} on day {peak_day}."
+            )
+
+
+# ===========================================================================
+# 3. SIDEBAR — SHARED PARAMETERS
+# ===========================================================================
+
+def build_sidebar_params():
+    st.sidebar.title("⚙️ Simulation Parameters")
+
+    st.sidebar.header("📅 General")
+    days_to_run    = st.sidebar.slider("Duration (Days)", 7, 1825, 60,
+                                       help="1 year = 365 days | 5 years = 1825 days")
+    start_month    = st.sidebar.selectbox("Start Month", list(range(1, 13)), index=0)
+    base_consumers = st.sidebar.number_input("Base Daily Consumers", 10, 5000, 100,
+                                              help="Approximate — actual count varies by weekday & season")
+
+    # Auto-calibrated store tier display
+    _tier_info = {
+        "Small (neighbourhood shop)":    ("🏪", "< 200/day",   "compact neighbourhood shop"),
+        "Medium (supermarket)":          ("🏬", "200–499/day",  "mid-size supermarket"),
+        "Large (hypermarket)":           ("🏢", "500–1499/day", "large-format hypermarket"),
+        "Very Large (wholesale / hyper)":("🏭", "≥ 1500/day",  "wholesale / hypermarket"),
+    }
+    _tier = SupermarketModel.store_tier_label(int(base_consumers))
+    _icon, _range, _desc = _tier_info.get(_tier, ("🏪", "", ""))
+    st.sidebar.info(
+        f"**Auto-calibrated:** {_icon} **{_tier}** ({_range})\n\n"
+        f"Shelf, storage & initial stock scale automatically to this traffic."
+    )
+
+    with st.sidebar.expander("ℹ️ Store size & calibration logic"):
+        st.markdown(f"""
+**Current tier:** {_icon} {_tier}
+
+---
+**Store tiers** (by base consumers/day)
+
+| Tier | Consumers/day |
+|---|---|
+| 🏪 Small | < 200 |
+| 🏬 Medium | 200 – 499 |
+| 🏢 Large | 500 – 1 499 |
+| 🏭 Very Large | ≥ 1 500 |
+
+---
+**Auto-calibrated capacities** (per product)
+
+The model estimates each product's daily demand as:
+
+> `demand = base_consumers × avg_basket_qty`
+
+Then sizes shelves and storage accordingly:
+
+| Product perishability | Shelf cover | Shelf cap formula |
+|---|---|---|
+| Perishable (≤ 7 days) | 1.5 days | `demand × 1.5` |
+| Medium (8 – 30 days) | 2.5 days | `demand × 2.5` |
+| Dry / canned (> 30 days) | 4.0 days | `demand × 4.0` |
+
+Storage capacity = `demand × (lead_time + 4-day safety buffer)`, minimum 2× shelf cap.
+
+**Initial fill:**  shelf = 75% of max | storage = 60% of max.
+
+---
+**Reorder logic**
+
+- When `storage < reorder_point × max_storage` → an order is placed automatically
+- Order fills storage back to `target_stock × max_storage`
+- Delivery arrives after **lead time** days
+
+---
+**Daily traffic variation**
+
+Actual visitors = `base × weekday factor × month factor × noise (±10%)`
+
+| Weekday | Factor | Month | Factor |
+|---|---|---|---|
+| Monday | 0.80 | Jan–Feb | 0.90 |
+| Tuesday | 0.90 | Mar–May | 1.00 |
+| Wednesday | 0.90 | Jun–Jul | 1.10 |
+| Thursday | 1.00 | Aug–Oct | 1.00 |
+| Friday | 1.10 | November | 1.10 |
+| Saturday | 1.30 | December | 1.30 |
+| Sunday | 0.70 | | |
+""")
+
+    st.sidebar.header("🚚 Logistics")
+    reorder_pt  = st.sidebar.slider("Reorder Point (% of max storage)", 10, 90, 30) / 100.0
+    target_stock = st.sidebar.slider("Restock Target (% of max storage)", 50, 100, 90) / 100.0
+    lead_time   = st.sidebar.slider("Lead Time (Days)", 1, 14, 2)
+
+    st.sidebar.header("🔴 Crisis Scenario")
+    cri_start    = st.sidebar.slider("Crisis Start Day", 1, max(2, days_to_run - 1),
+                                     min(int(days_to_run / 2), days_to_run - 1))
+    inflation    = st.sidebar.slider("Price Inflation (%)", 0, 150, 25)
+    disruption   = st.sidebar.slider("Supply Disruption (Days)", 0, 30, 5)
+    # Crisis Duration: how many days the crisis lasts before conditions normalise.
+    # 0 = indefinite (crisis runs to end of simulation — legacy behaviour).
+    # >0 = crisis ends after this many days; prices revert, supply resumes,
+    #      panic decays naturally → a full "crisis + recovery" arc is visible.
+    max_dur      = max(1, days_to_run - cri_start)
+    cri_duration = st.sidebar.slider(
+        "Crisis Duration (Days)", 0, max_dur, 0,
+        help="0 = crisis runs to end of simulation.  Set >0 to model a temporary "
+             "shock (e.g. fuel price spike) — prices and supply return to normal "
+             "after this many days so you can measure the full recovery arc."
+    )
+
+    st.sidebar.header("🧠 Consumer Behaviour")
+    panic_sens   = st.sidebar.slider("Panic Sensitivity", 0.0, 1.0, 0.50, 0.05)
+    hoarding     = st.sidebar.slider("Hoarding Factor", 1.0, 3.0, 1.5, 0.1)
+
+    st.sidebar.header("🛡️ Behavioural Interventions")
+    st.sidebar.caption("These levers are visible in the 🧪 Behavioural Theory tab.")
+
+    with st.sidebar.expander("🛒 Nudge — Purchase Limit", expanded=False):
+        purchase_limit_on = st.checkbox(
+            "Enable per-visit purchase cap", False, key="nudge_limit_on",
+            help="Rationing: cap the number of units any one consumer can buy per product per visit."
+        )
+        purchase_limit_val = st.slider(
+            "Max units per product per visit", 1, 20, 3,
+            key="nudge_limit_val",
+            help="Thaler & Sunstein (2008): a purchase cap reduces panic-hoarding but may lower equity."
+        )
+        purchase_limit = purchase_limit_val if purchase_limit_on else None
+
+    with st.sidebar.expander("📡 Media / Communication", expanded=False):
+        media_intensity = st.slider(
+            "Media intensity (0 = off)", 0.0, 1.0, 0.0, 0.05,
+            key="media_intensity",
+            help="How strongly media amplifies or dampens panic each day."
+        )
+        communication_type = st.selectbox(
+            "Communication type", ["neutral", "panic", "calming"],
+            key="comm_type",
+            help=(
+                "panic = sensationalist coverage (raises global panic); "
+                "calming = reassuring coverage (lowers panic); "
+                "neutral = factual reporting (no panic effect)."
+            ),
+        )
+
+    with st.sidebar.expander("🏠 Stockpile Horizon", expanded=False):
+        stockpile_days_on = st.checkbox(
+            "Override stockpile horizon", False, key="stockpile_on",
+            help="Override the agent's default stockpile planning horizon (β-δ quasi-hyperbolic model)."
+        )
+        stockpile_days_val = st.slider(
+            "Stockpile days (planning horizon)", 1, 14, 3,
+            key="stockpile_days_val",
+            help="O'Donoghue & Rabin (1999): agents plan to hold this many days of supply at home."
+        )
+        stockpile_days_override = stockpile_days_val if stockpile_days_on else None
+
+    st.sidebar.header("🔬 Monte Carlo")
+    mc_runs = st.sidebar.number_input("Monte Carlo Runs (N)", 3, 100, 10,
+                                       help="More runs = tighter confidence intervals")
+
+    # -----------------------------------------------------------------------
+    st.sidebar.header("🏛️ Policy Scenarios")
+    st.sidebar.caption("Configure policy levers for the Policy Analysis tab.")
+
+    with st.sidebar.expander("🧀 Fat Tax", expanded=False):
+        fat_tax_active    = st.checkbox("Enable Fat Tax", False, key="pol_fat_active")
+        fat_tax_threshold = st.slider("Fat% threshold", 0.5, 5.0, 3.5, 0.5,
+                                      key="pol_fat_thresh",
+                                      help="Products with fat_content ≥ this value are taxed")
+        fat_tax_rate      = st.slider("Surcharge rate (%)", 5, 50, 20, 5,
+                                      key="pol_fat_rate") / 100.0
+
+    with st.sidebar.expander("🌿 Domestic / Organic Subsidy", expanded=False):
+        sub_active = st.checkbox("Enable Subsidy", False, key="pol_sub_active")
+        sub_target = st.selectbox("Subsidy target", ["domestic", "organic", "both"],
+                                  key="pol_sub_target")
+        sub_rate   = st.slider("Discount rate (%)", 5, 40, 15, 5,
+                                key="pol_sub_rate") / 100.0
+
+    with st.sidebar.expander("🐄 Domestic Supply Shock", expanded=False):
+        shock_active   = st.checkbox("Enable Supply Shock", False, key="pol_shock_active")
+        shock_day      = st.slider("Shock Start Day", 1, max(2, days_to_run - 1),
+                                   min(30, max(1, days_to_run // 2)), key="pol_shock_day")
+        shock_duration = st.slider("Shock Duration (Days)", 1, 120, 30, key="pol_shock_dur")
+        shock_severity = st.slider("Shock Severity (fraction blocked)", 0.1, 1.0, 0.70, 0.05,
+                                   key="pol_shock_sev")
+
+    with st.sidebar.expander("🏷️ Nutritional Labelling", expanded=False):
+        lab_active        = st.checkbox("Enable Labelling", False, key="pol_lab_active")
+        lab_day           = st.slider("Labelling Start Day", 1, max(2, days_to_run - 1),
+                                      1, key="pol_lab_day")
+        lab_health_boost  = st.slider("Health preference boost", 0.0, 0.4, 0.15, 0.05,
+                                      key="pol_lab_health")
+        lab_organic_boost = st.slider("Organic preference boost", 0.0, 0.3, 0.10, 0.05,
+                                      key="pol_lab_organic")
+
+    policy_cfg = {
+        "fat_tax_active":     fat_tax_active,
+        "fat_tax_threshold":  fat_tax_threshold,
+        "fat_tax_rate":       fat_tax_rate,
+        "subsidy_active":     sub_active,
+        "subsidy_target":     sub_target,
+        "subsidy_rate":       sub_rate,
+        "domestic_shock_active":   shock_active,
+        "domestic_shock_day":      shock_day,
+        "domestic_shock_duration": shock_duration,
+        "domestic_shock_severity": shock_severity,
+        "labelling_active":        lab_active,
+        "labelling_day":           lab_day,
+        "labelling_health_boost":  lab_health_boost,
+        "labelling_organic_boost": lab_organic_boost,
+    }
+
+    return {
+        "days":                    days_to_run,
+        "month":                   start_month,
+        "base_con":                int(base_consumers),
+        "reorder":                 reorder_pt,
+        "target":                  target_stock,
+        "lead":                    lead_time,
+        "cri_start":               cri_start,
+        "cri_duration":            int(cri_duration),   # 0 = indefinite, >0 = days the crisis lasts
+        "inf":                     float(inflation),
+        "dis":                     int(disruption),
+        "panic":                   panic_sens,
+        "hoard":                   hoarding,
+        "mc_runs":                 int(mc_runs),
+        "policy_cfg":              policy_cfg,
+        # Behavioural interventions
+        "purchase_limit":          purchase_limit,
+        "media_intensity":         media_intensity,
+        "communication_type":      communication_type,
+        "stockpile_days":          stockpile_days_override,
+    }
+
+
+def _make_model(
+    params: dict,
+    is_crisis: bool,
+    seed: int,
+    ai_recs=None,
+    policy_cfg: dict = None,
+) -> SupermarketModel:
+    return SupermarketModel(
+        config_data          = st.session_state.config_data,
+        base_consumers       = params["base_con"],
+        start_month          = params["month"],
+        reorder_pt           = params["reorder"],
+        target_stock         = params["target"],
+        lead_time            = params["lead"],
+        is_crisis_mode       = is_crisis,
+        scenario_start_day   = params["cri_start"],
+        crisis_duration      = params.get("cri_duration", 0),
+        inflation_pct        = params["inf"],
+        disruption_days      = params["dis"],
+        panic_sens           = params["panic"],
+        hoarding_fac         = params["hoard"],
+        fixed_seed           = seed,
+        ai_recs              = ai_recs,
+        policy_cfg           = policy_cfg,
+        purchase_limit            = params.get("purchase_limit"),
+        media_intensity           = params.get("media_intensity", 0.0),
+        communication_type        = params.get("communication_type", "neutral"),
+        stockpile_days_override   = params.get("stockpile_days"),
+    )
+
+
+# ===========================================================================
+# 4. TAB: DATA & POPULATION
+# ===========================================================================
+
+def render_data_tab():
+    st.header("🏠 Data & Population")
+
+    # ── Bundled-data status banner ────────────────────────────────────────────
+    import pathlib as _pl
+    _fb_ok   = _pl.Path(_FIREBASE_PATH).exists()
+    _prod_ok = _pl.Path(_PRODUCTS_PATH).exists()
+    if _fb_ok and _prod_ok and st.session_state.config_data is not None:
+        cfg_stats = st.session_state.config_data.get("stats", {})
+        n_real  = cfg_stats.get("n_real", "?")
+        n_pool  = cfg_stats.get("pool_size", "?")
+        n_prods = len(st.session_state.config_data.get("products", []))
+        st.success(
+            f"✅ **Initial data loaded** — {n_real} real participants · "
+            f"{n_pool} synthetic agents · {n_prods} products in catalogue.\n\n"
+            "You can jump straight to **🎮 Interactive Demo**. "
+            "Use the expander below only if you want to load a different dataset."
+        )
+    elif not (_fb_ok and _prod_ok):
+        st.warning(
+            "⚠️ Default data files are not available. "
+            "Please upload your Firebase export and product catalogue below."
+        )
+
+    with st.expander("🔄 Reload / Override Data Files", expanded=(st.session_state.config_data is None)):
+        st.markdown(
+            "Upload a new **Firebase export** and/or **product catalogue** to rebuild the "
+            "agent population pool from scratch."
+        )
+
+        col_fb, col_prod = st.columns(2)
+        with col_fb:
+            fb_file = st.file_uploader(
+                "📂 Firebase Export JSON",
+                type=["json"],
+                key="upload_firebase",
+                help="The JSON file exported from your Firebase Realtime Database",
+            )
+        with col_prod:
+            prod_file = st.file_uploader(
+                "📂 Product Catalogue JSON",
+                type=["json"],
+                key="upload_products",
+                help="master_products.json exported from Unity",
+            )
+
+        pool_size    = st.number_input("Population Pool Size", 100, 50000, 2000,
+                                       help="Total synthetic agents to generate (real + bootstrapped)")
+        n_archetypes = st.selectbox("Number of Behavioural Archetypes", [2, 3, 4, 5], index=2)
+
+        col_btn1, col_btn2 = st.columns(2)
+        if col_btn1.button("🔄 Process Uploaded Files", type="primary"):
+            if fb_file is None or prod_file is None:
+                st.error("Please upload both JSON files before processing.")
+                return
+            with st.spinner("Parsing profiles, running K-Means clustering, bootstrapping…"):
+                try:
+                    firebase_dict  = json.load(fb_file)
+                    products_dict  = json.load(prod_file)
+                    config         = run_pipeline_from_data(
+                        firebase_dict, products_dict,
+                        pool_size=int(pool_size), n_archetypes=int(n_archetypes),
+                    )
+                    st.session_state.config_data = config
+                    for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
+                              "sim_product_recs","sim_model_crisis",
+                              "mc_stage","data_base_raw","data_base_opt",
+                              "data_crisis","ai_recs","prod_stats_raw"]:
+                        st.session_state[k] = None if k != "mc_stage" else 0
+                    st.success("✅ Population rebuilt from uploaded files!")
+                except Exception as e:
+                    st.error(f"Processing failed: {e}")
+                    return
+
+        if col_btn2.button("♻️ Reload Bundled Files"):
+            try:
+                _firebase_dict  = json.loads(_pl.Path(_FIREBASE_PATH).read_text(encoding="utf-8"))
+                _products_dict  = json.loads(_pl.Path(_PRODUCTS_PATH).read_text(encoding="utf-8"))
+                st.session_state.config_data = run_pipeline_from_data(
+                    _firebase_dict, _products_dict,
+                    pool_size=int(pool_size), n_archetypes=int(n_archetypes),
+                )
+                for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
+                          "sim_product_recs","sim_model_crisis",
+                          "mc_stage","data_base_raw","data_base_opt",
+                          "data_crisis","ai_recs","prod_stats_raw"]:
+                    st.session_state[k] = None if k != "mc_stage" else 0
+                st.success("✅ Reloaded from bundled files!")
+            except Exception as e:
+                st.error(f"Reload failed: {e}")
+
+    if st.session_state.config_data is None:
+        st.info("No data loaded yet. Upload files and click **Process Data**.")
+        return
+
+    cfg   = st.session_state.config_data
+    stats = cfg["stats"]
+    pool  = cfg["population"]
+    prods = cfg["products"]
+
+    # ---- Summary metrics ----
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Real Participants", stats["n_real"])
+    c2.metric("Synthetic Agents",  stats["pool_size"] - stats["n_real"])
+    c3.metric("Total Pool Size",   stats["pool_size"])
+    c4.metric("Products in Catalogue", len(prods))
+
+    if stats.get("n_skipped", 0):
+        st.warning(
+            f"⚠️ {stats['n_skipped']} participant(s) were skipped "
+            "(basket had no products matching the catalogue)."
+        )
+
+    st.divider()
+    st.subheader("👥 Population Demographics")
+
+    real_profiles = [p for p in pool if p.get("is_real")]
+    df_demo = pd.DataFrame(real_profiles)
+
+    col_a, col_b, col_c = st.columns(3)
+
+    with col_a:
+        if "age" in df_demo:
+            fig_age = px.histogram(df_demo, x="age", nbins=10, title="Age Distribution",
+                                   color_discrete_sequence=["#003399"])
+            fig_age.update_layout(template="plotly_white", showlegend=False,
+                                  xaxis_title="Age", yaxis_title="Count")
+            st.plotly_chart(fig_age, width='stretch')
+
+    with col_b:
+        if "gender" in df_demo:
+            gender_counts = df_demo["gender"].value_counts().reset_index()
+            gender_counts.columns = ["Gender", "Count"]
+            fig_gen = px.pie(gender_counts, names="Gender", values="Count",
+                             title="Gender Distribution",
+                             color_discrete_sequence=px.colors.qualitative.Set2)
+            fig_gen.update_layout(template="plotly_white")
+            st.plotly_chart(fig_gen, width='stretch')
+
+    with col_c:
+        if "income_group" in df_demo:
+            inc_counts = df_demo["income_group"].value_counts().reset_index()
+            inc_counts.columns = ["Income", "Count"]
+            fig_inc = px.bar(inc_counts, x="Income", y="Count",
+                             title="Income Groups",
+                             color_discrete_sequence=["#003399"])
+            fig_inc.update_layout(template="plotly_white", xaxis_title="",
+                                  xaxis_tickangle=-30)
+            st.plotly_chart(fig_inc, width='stretch')
+
+    # ---- Archetype distribution ----
+    _arch_hdr, _arch_info = st.columns([8, 1])
+    with _arch_hdr:
+        st.subheader("🏷️ Behavioural Archetypes (Real Participants)")
+    with _arch_info:
+        with st.popover("ℹ️"):
+            st.markdown("""
+**Buyer-type profiles** are derived from PCA on 5 survey attitude dimensions
+(price · health · environment · animal welfare · sensory/habit) and assigned to
+each participant via k-means clustering.
+
+| Type | Core trait | Crisis behaviour |
+|------|-----------|-----------------|
+| 💸 **Price Champion** | Maximises value; switches brands freely when prices rise | Early substitution, lower budget exhaustion, mild hoarding |
+| 🌿 **Green Buyer** | Prefers organic & domestic; accepts premium pricing | Higher stockout risk on niche lines; slow to panic |
+| 💪 **Health Optimizer** | Fat/nutrition-focused; continuously adjusts diet | Basket disruption when preferred fat-profile products are absent |
+| 🔁 **Habitual Buyer** | Brand-loyal; resists change until forced | Highest panic score; hardest hit by stockouts |
+
+**Theoretical grounding**
+- Substitution tolerance, hoarding multiplier, and price tolerance differ per archetype
+  (Prospect Theory λ = 2.25; TPB intention weights 0.49 / 0.26 / 0.39).
+- β-δ temporal discounting means present-biased agents (esp. Habitual Buyers)
+  stockpile more aggressively as panic rises (Hendel & Nevo 2006).
+- FIES food-insecurity flags are summed per agent daily (0 = none → 4 = severe).
+""")
+    arch_data = stats.get("archetypes_real", {})
+    if arch_data:
+        col_arch, col_radar = st.columns([1, 2])
+        with col_arch:
+            for a, n in arch_data.items():
+                emoji = ARCHETYPE_EMOJI.get(a, "•")
+                color = ARCHETYPE_COLORS.get(a, "#999")
+                pct   = n / max(stats["n_real"], 1) * 100
+                st.markdown(
+                    f'<div style="margin:6px 0; padding:8px 12px; '
+                    f'border-left:4px solid {color}; border-radius:4px; '
+                    f'background:#f8f9fa; color:#1a2035;">'
+                    f'{emoji} <b>{a.replace("_"," ").title()}</b>: '
+                    f'{n} participants ({pct:.0f}%)</div>',
+                    unsafe_allow_html=True,
+                )
+
+        with col_radar:
+            # Radar chart of mean factor scores per archetype
+            factor_cols = ["q_price", "q_health", "q_environment",
+                           "q_animal_welfare", "q_sensory_habit"]
+            factor_labels = ["Price", "Health", "Environment", "Animal Welfare", "Sensory/Habit"]
+            df_real = pd.DataFrame(real_profiles)
+
+            fig_radar = go.Figure()
+            for arch in ARCHETYPE_LABELS:
+                sub = df_real[df_real["archetype"] == arch]
+                if sub.empty:
+                    continue
+                means = [sub[c].mean() for c in factor_cols if c in sub.columns]
+                if len(means) < len(factor_labels):
+                    continue
+                means += means[:1]
+                labels_loop = factor_labels + factor_labels[:1]
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=means, theta=labels_loop,
+                    fill="toself", name=arch.replace("_", " ").title(),
+                    line_color=ARCHETYPE_COLORS.get(arch, "#999"),
+                ))
+            fig_radar.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                title="Mean Questionnaire Factor Scores by Archetype",
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_radar, width='stretch')
+
+    # ---- DCE preference distributions ----
+    st.subheader("🧠 DCE-Derived Preference Distributions")
+    pref_cols = {
+        "finnish_preference": "Finnish Preference",
+        "organic_preference": "Organic Preference",
+        "price_sensitivity":  "Price Sensitivity",
+        "preferred_fat":      "Preferred Fat %",
+    }
+    cols_pref = st.columns(4)
+    df_all = pd.DataFrame(pool)
+    for (col_key, col_label), col_widget in zip(pref_cols.items(), cols_pref):
+        if col_key in df_all.columns:
+            fig = px.histogram(df_all, x=col_key, nbins=15, title=col_label,
+                               color_discrete_sequence=["#2980b9"])
+            fig.update_layout(template="plotly_white", showlegend=False,
+                              xaxis_title="", yaxis_title="Count", height=250)
+            col_widget.plotly_chart(fig, width='stretch')
+
+    # ---- Product catalogue preview ----
+    st.subheader("🛒 Product Catalogue")
+    df_prods = pd.DataFrame(prods)
+    cols_show = [c for c in ["name","category","price","fat_content",
+                             "is_bio","is_plant_based","shelf_life_days",
+                             "initial_stock_shelf","initial_stock_storage"]
+                 if c in df_prods.columns]
+    st.dataframe(df_prods[cols_show].sort_values("category"), width='stretch')
+
+    render_footer()
+
+
+# ===========================================================================
+# 5. TAB: INTERACTIVE DEMO
+# ===========================================================================
+
+def render_demo_tab(params: dict):
+    st.header("🎮 Interactive Demo")
+    st.markdown(
+        "Run a single paired simulation (Baseline vs Crisis) and watch the "
+        "results update in real time."
+    )
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Load data in the **🏠 Data & Population** tab first.")
+        return
+
+    run_speed = st.slider("Animation Speed (delay per day, seconds)", 0.0, 0.2, 0.02, 0.01)
+
+    if st.button("▶️ Run Comparative Simulation", type="primary"):
+        SEED = 42
+        model_base   = _make_model(params, is_crisis=False, seed=SEED)
+        model_crisis = _make_model(params, is_crisis=True,  seed=SEED)
+
+        results      = []
+        stock_rows   = []
+        progress     = st.progress(0, text="Simulating…")
+        chart_spot   = st.empty()
+
+        for day in range(1, params["days"] + 1):
+            model_base.step()
+            model_crisis.step()
+            model_base.collect_product_snapshot()
+            model_crisis.collect_product_snapshot()
+            model_base.collect_preference_snapshot()
+            model_crisis.collect_preference_snapshot()
+
+            agg_b, prod_b = _collect_model_day(model_base,   day, "Baseline")
+            agg_c, prod_c = _collect_model_day(model_crisis, day, "Crisis")
+            results.append(agg_b)
+            results.append(agg_c)
+            stock_rows.extend(prod_b)
+            stock_rows.extend(prod_c)
+
+            if day % max(1, params["days"] // 100) == 0 or day == params["days"]:
+                df_live = pd.DataFrame(results)
+                fig = px.line(
+                    df_live, x="Day", y="Revenue", color="Scenario",
+                    title="Daily Revenue at Baseline Prices — Baseline vs Crisis  (falls with inflation & disruption)",
+                    color_discrete_map={"Baseline": "#2E8B57", "Crisis": "#DC143C"},
+                    line_dash="Scenario",
+                    line_dash_map={"Baseline": "solid", "Crisis": "dash"},
+                )
+                fig.add_vline(x=params["cri_start"], line_dash="dot",
+                              line_color="orange", annotation_text="Crisis Start")
+                if params.get("cri_duration", 0) > 0:
+                    cri_end_day = params["cri_start"] + params["cri_duration"]
+                    fig.add_vline(x=cri_end_day, line_dash="dash",
+                                  line_color="steelblue", annotation_text="Crisis End / Recovery")
+                fig.update_layout(template="plotly_white",
+                                  yaxis_title="Revenue (€, constant baseline prices)")
+                chart_spot.plotly_chart(fig, width='stretch')
+                progress.progress(day / params["days"], text=f"Day {day}/{params['days']}")
+                time.sleep(run_speed)
+
+        progress.progress(1.0, text="Complete ✓")
+        time.sleep(0.4)
+        progress.empty()
+
+        # Assemble SCM log
+        log_b = pd.DataFrame(model_base.truck.log)
+        log_c = pd.DataFrame(model_crisis.truck.log)
+        if not log_b.empty:
+            log_b["Scenario"] = "Baseline"
+        if not log_c.empty:
+            log_c["Scenario"] = "Crisis"
+
+        st.session_state.sim_results      = pd.DataFrame(results)
+        st.session_state.sim_stock        = pd.DataFrame(stock_rows)
+        st.session_state.sim_scm_log      = pd.concat([log_b, log_c], ignore_index=True)
+        st.session_state.sim_model_crisis = model_crisis
+
+        # Behavioural learning preference drift snapshots
+        pref_b = pd.DataFrame(getattr(model_base,   "_pref_snapshots", []))
+        pref_c = pd.DataFrame(getattr(model_crisis, "_pref_snapshots", []))
+        if not pref_b.empty:
+            pref_b["Scenario"] = "Baseline"
+        if not pref_c.empty:
+            pref_c["Scenario"] = "Crisis"
+        st.session_state.sim_pref_drift = pd.concat([pref_b, pref_c], ignore_index=True)
+
+        waste_b = pd.DataFrame(model_base.food_waste_log.records)
+        waste_c = pd.DataFrame(model_crisis.food_waste_log.records)
+        if not waste_b.empty:
+            waste_b["Scenario"] = "Baseline"
+        if not waste_c.empty:
+            waste_c["Scenario"] = "Crisis"
+        st.session_state.sim_waste = pd.concat([waste_b, waste_c], ignore_index=True)
+
+        st.success("Simulation complete — explore the other tabs for detailed analysis.")
+
+    if st.session_state.sim_results is None:
+        return
+
+    df         = st.session_state.sim_results
+    df_stock   = st.session_state.sim_stock
+    df_log     = st.session_state.sim_scm_log
+    model_cris = st.session_state.sim_model_crisis
+
+    sub1, sub2, sub3, sub4, sub5, sub6 = st.tabs(["📈 Financials", "👥 Footfall", "🚚 Logistics", "💥 Crisis Breakdown", "🧠 Behavioural Drift", "👤 By Buyer Type"])
+
+    with sub1:
+        # ── Helper: add crisis start/end vlines to any figure ────────────────
+        def _add_crisis_lines(fig):
+            if params.get("cri_start"):
+                fig.add_vline(x=params["cri_start"], line_dash="dot",
+                              line_color="orange", annotation_text="Crisis Start",
+                              annotation_position="top left")
+            cri_dur = params.get("cri_duration", 0)
+            if cri_dur and cri_dur > 0:
+                cri_end = params["cri_start"] + cri_dur
+                fig.add_vline(x=cri_end, line_dash="dash",
+                              line_color="steelblue", annotation_text="Recovery",
+                              annotation_position="top right")
+
+        # ── Recovery KPI banner (only shown when crisis_duration > 0) ────────
+        cri_dur = params.get("cri_duration", 0)
+        if cri_dur and cri_dur > 0:
+            cri_end = params["cri_start"] + cri_dur
+            df_base_c = df[(df["Scenario"] == "Baseline") & (df["Day"] > params["cri_start"])]
+            df_cris_a = df[(df["Scenario"] == "Crisis")   & (df["Day"] >= params["cri_start"]) & (df["Day"] < cri_end)]
+            df_cris_r = df[(df["Scenario"] == "Crisis")   & (df["Day"] >= cri_end)]
+            baseline_avg   = df_base_c["Revenue"].mean() if len(df_base_c) else 1
+            active_avg     = df_cris_a["Revenue"].mean() if len(df_cris_a) else 0
+            recovery_avg   = df_cris_r["Revenue"].mean() if len(df_cris_r) else 0
+            impact_pct     = round((active_avg   - baseline_avg) / max(0.01, baseline_avg) * 100, 1)
+            recovery_pct   = round((recovery_avg - baseline_avg) / max(0.01, baseline_avg) * 100, 1)
+            total_lost     = round((baseline_avg - active_avg) * cri_dur, 0)
+
+            st.info(
+                f"**Crisis Phase** ({params['cri_start']}→{cri_end}):  "
+                f"Avg revenue {impact_pct:+.1f}% vs baseline  |  "
+                f"**Estimated revenue loss: €{total_lost:,.0f}**  |  "
+                f"**Recovery Phase** (post day {cri_end}): "
+                f"Avg revenue {recovery_pct:+.1f}% vs baseline"
+            )
+
+        # ── Row 1: Revenue (constant prices) + Nominal Revenue ───────────────
+        c1, c2 = st.columns(2)
+        fig_rev = px.line(df, x="Day", y="Revenue", color="Scenario",
+                          title="Daily Revenue at Baseline Prices (€)  ↓ with inflation & disruption",
+                          color_discrete_map={"Baseline":"#2E8B57","Crisis":"#DC143C"})
+        fig_rev.update_layout(template="plotly_white",
+                              yaxis_title="Revenue (€, constant baseline prices)")
+        _add_crisis_lines(fig_rev)
+        c1.plotly_chart(fig_rev, width='stretch')
+
+        fig_nom = px.line(df, x="Day", y="NominalRevenue", color="Scenario",
+                          title="Nominal Revenue (€, inflated prices)  — store cash-flow view",
+                          color_discrete_map={"Baseline":"#2E8B57","Crisis":"#DC143C"})
+        fig_nom.update_layout(template="plotly_white",
+                              yaxis_title="Revenue (€, current prices)")
+        _add_crisis_lines(fig_nom)
+        c2.plotly_chart(fig_nom, width='stretch')
+
+        with st.expander("📊 Revenue Analysis", expanded=True):
+            st.markdown("**Constant-price Revenue** (demand signal — falls when consumers buy less)")
+            _render_analysis(df, "Revenue", params, prefix="€", decimals=0,
+                             higher_is_better=True)
+            st.markdown("**Nominal Revenue** (store cash-flow — can rise during inflation even as volume falls)")
+            _render_analysis(df, "NominalRevenue", params, prefix="€", decimals=0,
+                             higher_is_better=True)
+
+        # ── Row 2: Avg Price + Lost Sales ────────────────────────────────────
+        c3, c4 = st.columns(2)
+        fig_price = px.line(df, x="Day", y="AvgPrice", color="Scenario",
+                            title="Avg Product Price (€)  — rises with inflation, drops at recovery",
+                            color_discrete_map={"Baseline":"#2E8B57","Crisis":"#DC143C"})
+        fig_price.update_layout(template="plotly_white",
+                                yaxis_title="Mean price across catalogue (€)")
+        _add_crisis_lines(fig_price)
+        c3.plotly_chart(fig_price, width='stretch')
+
+        fig_lost = px.bar(df, x="Day", y="LostSales", color="Scenario", barmode="group",
+                          title="Lost Sales (€)",
+                          color_discrete_map={"Baseline":"#87CEEB","Crisis":"#8B0000"})
+        fig_lost.update_layout(template="plotly_white")
+        _add_crisis_lines(fig_lost)
+        c4.plotly_chart(fig_lost, width='stretch')
+
+        with st.expander("📊 Price & Lost-Sales Analysis", expanded=True):
+            st.markdown("**Average Product Price** — measures inflation pass-through and recovery speed")
+            _render_analysis(df, "AvgPrice", params, prefix="€", decimals=3,
+                             higher_is_better=False)
+            st.markdown("**Lost Sales** — revenue foregone due to stockouts or price refusals")
+            _render_analysis(df, "LostSales", params, prefix="€", decimals=1,
+                             higher_is_better=False)
+
+        # ── Row 3: Panic Level + Waste ────────────────────────────────────────
+        c5, c6 = st.columns(2)
+        fig_panic = px.line(df, x="Day", y="PanicLevel", color="Scenario",
+                            title="Global Panic Level  (decays during recovery)",
+                            color_discrete_map={"Baseline":"#2E8B57","Crisis":"#DC143C"})
+        fig_panic.update_layout(template="plotly_white")
+        _add_crisis_lines(fig_panic)
+        c5.plotly_chart(fig_panic, width='stretch')
+
+        fig_waste = px.bar(df, x="Day", y="Waste", color="Scenario", barmode="group",
+                           title="Daily Waste (units)",
+                           color_discrete_map={"Baseline":"#90EE90","Crisis":"#FF6347"})
+        fig_waste.update_layout(template="plotly_white")
+        _add_crisis_lines(fig_waste)
+        c6.plotly_chart(fig_waste, width='stretch')
+
+        with st.expander("📊 Panic & Waste Analysis", expanded=True):
+            st.markdown("**Global Panic Level** (0–1 scale) — driven by stockouts, crowding, and media")
+            _render_analysis(df, "PanicLevel", params, decimals=3, higher_is_better=False)
+            st.markdown("**Daily Food Waste** — units expired or refused due to storage overflow")
+            _render_analysis(df, "Waste", params, suffix=" units", decimals=1,
+                             higher_is_better=False)
+
+    with sub2:
+        df_base = df[df["Scenario"] == "Baseline"]
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Avg Daily Visitors",   f"{int(df_base['Consumers'].mean())}")
+        m2.metric("Total Simulation Visits", f"{int(df_base['Consumers'].sum())}")
+        m3.metric("Peak Day",             f"Day {df_base.loc[df_base['Consumers'].idxmax(), 'Day']}")
+        fig_foot = px.bar(df_base, x="Day", y="Consumers", title="Daily Footfall (Baseline)",
+                          color_discrete_sequence=["#4682B4"])
+        fig_foot.update_layout(template="plotly_white")
+        st.plotly_chart(fig_foot, width='stretch')
+        with st.expander("📊 Footfall Analysis", expanded=True):
+            st.markdown("**Daily Store Visitors** — footfall during the baseline (no-crisis) run")
+            _render_analysis(df, "Consumers", params, suffix=" visitors", decimals=0,
+                             higher_is_better=True)
+
+    with sub3:
+        if df_stock is None or df_stock.empty:
+            st.info("No stock data available.")
+        else:
+            # ── Info panel ────────────────────────────────────────────────
+            with st.expander("ℹ️  How to read this chart", expanded=False):
+                st.markdown("""
+**This chart shows the complete inventory lifecycle for one product across three panels:**
+
+| Panel | What it shows |
+|---|---|
+| 📦 **Shelf Stock** | Units currently visible and purchasable on the store shelf.  Falls as customers buy. Jumps up when staff move stock from the storage room. |
+| 🏪 **Storage Stock** | Units in the backroom.  Falls when the shelf is restocked.  Jumps up when a delivery arrives. |
+| 🚚 **Orders & Deliveries** | Orange bars = orders placed to the central warehouse.  Blue bars = deliveries received. |
+
+**Threshold lines**
+
+- 🟠 **Orange dashed line (Shelf)** — when shelf falls below **30 % of shelf capacity**, staff immediately move stock from storage to the shelf.
+- 🔴 **Red dashed line (Storage)** — when storage falls below the configured **Reorder Point**, a new order is placed automatically.  The delivery arrives after the configured **Lead Time** (days).
+
+**Markers**
+
+- ❌ **Red × on shelf panel** — units removed from the shelf because they reached their **expiry date** (counted as food waste).
+- 🟡 **Yellow ◆ on shelf panel** — units sold at **50 % discount** because they were within 2 days of expiry.
+- ⏳ **Dotted line on storage panel** — units already on order but not yet delivered (**pipeline stock**).
+
+> **Tip:** Hover over any point to see exact values.  Use the scenario toggle below to compare Baseline vs Crisis side by side.
+                """)
+
+            all_prods = sorted(df_stock["Product"].unique())
+            sel_prod  = st.selectbox("Select Product:", all_prods, key="demo_prod_sel")
+
+            # Infer capacity limits from the data for threshold lines
+            prod_rows   = df_stock[df_stock["Product"] == sel_prod]
+            max_shelf   = int(prod_rows["Shelf"].max())   if not prod_rows.empty else 20
+            max_storage = int(prod_rows["Storage"].max()) if not prod_rows.empty else 50
+            # Fallback: ensure sensible minimums
+            max_shelf   = max(max_shelf,   10)
+            max_storage = max(max_storage, 10)
+
+            shelf_trigger   = max_shelf   * 0.30
+            storage_trigger = max_storage * params["reorder"]
+
+            # Waste data for this product
+            df_waste_local = st.session_state.sim_waste
+
+            def draw_scm_v2(scenario: str, accent: str) -> go.Figure:
+                from plotly.subplots import make_subplots
+
+                d = df_stock[
+                    (df_stock["Product"]  == sel_prod) &
+                    (df_stock["Scenario"] == scenario)
+                ].copy()
+                if d.empty:
+                    return go.Figure()
+
+                fig = make_subplots(
+                    rows=3, cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.10,
+                    subplot_titles=(
+                        "📦 Shelf Stock (units available to customers)",
+                        "🏪 Storage Stock (backroom inventory)",
+                        "🚚 Orders Placed & Deliveries Received",
+                    ),
+                    row_heights=[0.38, 0.35, 0.27],
+                )
+
+                # ── ROW 1: Shelf ──────────────────────────────────────────
+                fig.add_trace(go.Scatter(
+                    x=d["Day"], y=d["Shelf"],
+                    mode="lines", fill="tozeroy",
+                    name="Shelf Stock",
+                    line=dict(color=accent, width=2.5),
+                    fillcolor=f"rgba({int(accent[1:3],16)},{int(accent[3:5],16)},{int(accent[5:7],16)},0.18)",
+                    hovertemplate=(
+                        "<b>Day %{x}</b><br>"
+                        "Shelf: <b>%{y} units</b><br>"
+                        "<extra></extra>"
+                    ),
+                ), row=1, col=1)
+
+                # Shelf refill threshold
+                fig.add_hline(
+                    y=shelf_trigger,
+                    line_dash="dash", line_color="orange", line_width=1.5,
+                    annotation_text=f"Shelf refill trigger ({int(shelf_trigger)} units)",
+                    annotation_position="top right",
+                    annotation_font_size=10,
+                    row=1, col=1,
+                )
+
+                # Waste events (expiry) on shelf panel
+                if df_waste_local is not None and not df_waste_local.empty:
+                    w = df_waste_local[
+                        (df_waste_local["Product"]  == sel_prod) &
+                        (df_waste_local["Scenario"] == scenario) &
+                        (df_waste_local["Reason"]   == "Expiry")
+                    ]
+                    if not w.empty:
+                        fig.add_trace(go.Scatter(
+                            x=w["Day"],
+                            y=[shelf_trigger * 0.5] * len(w),
+                            mode="markers",
+                            name="❌ Expiry Waste",
+                            marker=dict(color="red", size=11, symbol="x",
+                                        line=dict(width=2, color="darkred")),
+                            customdata=w["Quantity"].values,
+                            hovertemplate=(
+                                "<b>Day %{x}</b><br>"
+                                "⚠️ Expired & removed: <b>%{customdata} units</b><br>"
+                                "(counted as food waste)<extra></extra>"
+                            ),
+                        ), row=1, col=1)
+
+                # Near-expiry sold (50 % discount)
+                if "NearExpiry" in d.columns:
+                    ne = d[d["NearExpiry"] > 0]
+                    if not ne.empty:
+                        fig.add_trace(go.Scatter(
+                            x=ne["Day"], y=ne["Shelf"],
+                            mode="markers",
+                            name="🏷️ Near-Expiry Sold (−50 %)",
+                            marker=dict(color="#f39c12", size=9, symbol="diamond",
+                                        line=dict(width=1, color="#d35400")),
+                            customdata=ne["NearExpiry"].values,
+                            hovertemplate=(
+                                "<b>Day %{x}</b><br>"
+                                "Near-expiry units sold at 50 %% off: <b>%{customdata}</b>"
+                                "<extra></extra>"
+                            ),
+                        ), row=1, col=1)
+
+                # ── ROW 2: Storage ────────────────────────────────────────
+                fig.add_trace(go.Scatter(
+                    x=d["Day"], y=d["Storage"],
+                    mode="lines", fill="tozeroy",
+                    name="Storage Stock",
+                    line=dict(color="#2980b9", width=2.5),
+                    fillcolor="rgba(41,128,185,0.15)",
+                    hovertemplate=(
+                        "<b>Day %{x}</b><br>"
+                        "Storage: <b>%{y} units</b><br>"
+                        "<extra></extra>"
+                    ),
+                ), row=2, col=1)
+
+                # Pipeline (pending orders not yet delivered)
+                if "Pending" in d.columns:
+                    fig.add_trace(go.Scatter(
+                        x=d["Day"], y=d["Pending"],
+                        mode="lines",
+                        name="⏳ On Order (pipeline)",
+                        line=dict(color="#8e44ad", width=1.5, dash="dot"),
+                        hovertemplate=(
+                            "<b>Day %{x}</b><br>"
+                            "Units on order (not yet delivered): <b>%{y}</b>"
+                            "<extra></extra>"
+                        ),
+                    ), row=2, col=1)
+
+                # Storage reorder threshold
+                fig.add_hline(
+                    y=storage_trigger,
+                    line_dash="dash", line_color="red", line_width=1.5,
+                    annotation_text=f"Reorder trigger ({int(params['reorder']*100)} % = {int(storage_trigger)} units)",
+                    annotation_position="top right",
+                    annotation_font_size=10,
+                    row=2, col=1,
+                )
+
+                # ── ROW 3: Orders & Deliveries ────────────────────────────
+                if df_log is not None and not df_log.empty:
+                    dl = df_log[
+                        (df_log["Product"]  == sel_prod) &
+                        (df_log["Scenario"] == scenario)
+                    ]
+                    ords = dl[dl["Action"] == "Order"]
+                    devs = dl[dl["Action"] == "Delivery"]
+
+                    if not ords.empty:
+                        fig.add_trace(go.Bar(
+                            x=ords["Day"], y=ords["Quantity"],
+                            name="🛒 Order Placed",
+                            marker_color="#e67e22",
+                            hovertemplate=(
+                                "<b>Day %{x}</b><br>"
+                                "Order placed: <b>%{y} units</b><br>"
+                                f"(delivery in {params['lead']} day(s))"
+                                "<extra></extra>"
+                            ),
+                        ), row=3, col=1)
+
+                    if not devs.empty:
+                        fig.add_trace(go.Bar(
+                            x=devs["Day"], y=devs["Quantity"],
+                            name="📬 Delivery Received",
+                            marker_color="#2980b9",
+                            hovertemplate=(
+                                "<b>Day %{x}</b><br>"
+                                "Delivered: <b>%{y} units</b><br>"
+                                "<extra></extra>"
+                            ),
+                        ), row=3, col=1)
+
+                        # Highlight refused deliveries if present
+                        refused = devs[devs.get("Refused", pd.Series(0, index=devs.index)) > 0] \
+                            if "Refused" in devs.columns else pd.DataFrame()
+                        if not refused.empty:
+                            fig.add_trace(go.Bar(
+                                x=refused["Day"], y=refused["Refused"],
+                                name="🚫 Refused (storage full)",
+                                marker_color="#e74c3c",
+                                hovertemplate=(
+                                    "<b>Day %{x}</b><br>"
+                                    "Refused (storage full): <b>%{y} units</b>"
+                                    "<extra></extra>"
+                                ),
+                            ), row=3, col=1)
+
+                # ── Layout ────────────────────────────────────────────────
+                fig.update_layout(
+                    title=dict(
+                        text=f"<b>{scenario} Scenario — {sel_prod}</b>",
+                        font=dict(size=15),
+                        y=0.98,
+                    ),
+                    template="plotly_white",
+                    height=780,
+                    barmode="group",
+                    hovermode="x unified",
+                    legend=dict(
+                        orientation="h",
+                        yanchor="top",   y=-0.09,
+                        xanchor="center", x=0.5,
+                        font=dict(size=11),
+                        tracegroupgap=4,
+                        bgcolor="rgba(255,255,255,0.9)",
+                        bordercolor="#dee2e6",
+                        borderwidth=1,
+                    ),
+                    margin=dict(t=80, b=180, l=60, r=20),
+                )
+                fig.update_yaxes(title_text="Units on Shelf",   row=1, col=1, rangemode="tozero")
+                fig.update_yaxes(title_text="Units in Storage", row=2, col=1, rangemode="tozero")
+                fig.update_yaxes(title_text="Units",            row=3, col=1, rangemode="tozero")
+                fig.update_xaxes(title_text="Day",              row=3, col=1)
+                # Add crisis start line if applicable
+                if scenario == "Crisis" and params.get("cri_start"):
+                    for r in [1, 2, 3]:
+                        fig.add_vline(
+                            x=params["cri_start"],
+                            line_dash="dot", line_color="red", line_width=1,
+                            row=r, col=1,
+                        )
+                return fig
+
+            # Scenario tabs
+            sc_tab_b, sc_tab_c = st.tabs(["🟢 Baseline", "🔴 Crisis"])
+            with sc_tab_b:
+                st.plotly_chart(draw_scm_v2("Baseline", "#27ae60"), width='stretch')
+            with sc_tab_c:
+                st.plotly_chart(draw_scm_v2("Crisis", "#c0392b"), width='stretch')
+
+            # Quick summary table below the chart
+            st.markdown("##### 📋 Product Summary")
+            for sc in ["Baseline", "Crisis"]:
+                d_sum = df_stock[
+                    (df_stock["Product"] == sel_prod) & (df_stock["Scenario"] == sc)
+                ]
+                if d_sum.empty:
+                    continue
+                total_waste = (
+                    df_waste_local[
+                        (df_waste_local["Product"] == sel_prod) &
+                        (df_waste_local["Scenario"] == sc)
+                    ]["Quantity"].sum()
+                    if df_waste_local is not None and not df_waste_local.empty else 0
+                )
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric(f"[{sc}] Total Revenue",  f"€{d_sum['Revenue'].sum():,.2f}")
+                c2.metric("Units Sold",              f"{int(d_sum['Sales'].sum()):,}")
+                c3.metric("Lost Sales",              f"{int(d_sum['LostSales'].sum()):,}")
+                c4.metric("Avg Shelf Level",         f"{d_sum['Shelf'].mean():.1f}")
+                c5.metric("Total Waste",             f"{int(total_waste):,} units")
+
+    with sub4:
+        if model_cris is None:
+            st.info("Run the simulation first.")
+        else:
+            total_rev  = df[df["Scenario"] == "Crisis"]["Revenue"].sum()
+            lost_stock = model_cris.loss_reasons.get("Stockout", 0)
+            lost_price = model_cris.loss_reasons.get("Price",    0)
+
+            fig_sankey = go.Figure(data=[go.Sankey(
+                textfont=dict(size=13, color="black"),
+                node=dict(
+                    pad=20, thickness=25,
+                    label=["Potential Revenue", "Realised Revenue",
+                           "Lost: Out of Stock", "Lost: Price Too High"],
+                    color=["#1f77b4", "#2ca02c", "#d62728", "#ff7f0e"],
+                ),
+                link=dict(
+                    source=[0, 0, 0], target=[1, 2, 3],
+                    value=[max(0, total_rev), max(0, lost_stock), max(0, lost_price)],
+                ),
+            )])
+            fig_sankey.update_layout(title="Revenue Flow — Crisis Scenario", height=400)
+            st.plotly_chart(fig_sankey, width='stretch')
+
+            st.caption(
+                "The Sankey diagram shows how potential revenue was split between "
+                "realised sales, stockout losses, and price-driven refusals."
+            )
+
+    with sub5:
+        st.markdown(
+            "**Behavioural Drift** — how agent preferences evolve over the simulation "
+            "as a result of repeated purchase experience. Each archetype has a different "
+            "learning rule (see sidebar for details)."
+        )
+        df_drift = st.session_state.get("sim_pref_drift")
+        if df_drift is None or df_drift.empty:
+            st.info("Run the simulation first to see preference drift.")
+        else:
+            ARCHETYPE_COLORS_DRIFT = {
+                "price_champion":   "#e74c3c",
+                "green_buyer":      "#27ae60",
+                "health_optimizer": "#2980b9",
+                "habitual_buyer":   "#8e44ad",
+            }
+            scenarios  = df_drift["Scenario"].unique().tolist()
+            sel_sc_dr  = st.selectbox("Scenario:", scenarios, key="drift_scenario")
+            df_d       = df_drift[df_drift["Scenario"] == sel_sc_dr]
+
+            metrics = [
+                ("MeanPriceSensitivity", "Mean Price Sensitivity"),
+                ("MeanOrganicPref",      "Mean Organic Preference"),
+                ("MeanPreferredFat",     "Mean Preferred Fat %"),
+            ]
+            col_m1, col_m2 = st.columns(2)
+            col_m3, _      = st.columns(2)
+            for (metric, label), col in zip(metrics, [col_m1, col_m2, col_m3]):
+                fig_d = go.Figure()
+                for arch in df_d["Archetype"].unique():
+                    sub_d = df_d[df_d["Archetype"] == arch]
+                    fig_d.add_trace(go.Scatter(
+                        x=sub_d["Day"], y=sub_d[metric],
+                        name=arch, mode="lines",
+                        line=dict(color=ARCHETYPE_COLORS_DRIFT.get(arch, "#999")),
+                    ))
+                fig_d.update_layout(
+                    title=label, template="plotly_white",
+                    xaxis_title="Day", yaxis_title=label,
+                    legend=dict(orientation="h", y=-0.3),
+                )
+                col.plotly_chart(fig_d, width='stretch')
+
+            st.markdown(
+                "**How to read this:** Each line represents the mean preference value "
+                "across all agents of that archetype. Convergence toward a new level "
+                "signals that the population is collectively learning from experience. "
+                "Divergence between scenarios (Baseline vs Crisis) shows how the crisis "
+                "reshapes consumer behaviour over time."
+            )
+
+    with sub6:
+        df_drift6 = st.session_state.get("sim_pref_drift")
+        if df_drift6 is None or df_drift6.empty:
+            st.info("Run the simulation first to see per-buyer-type results.")
+        else:
+            _ARCH_COLORS6 = {
+                "price_champion":   "#e74c3c",
+                "green_buyer":      "#27ae60",
+                "health_optimizer": "#2980b9",
+                "habitual_buyer":   "#8e44ad",
+            }
+            _ARCH_LABELS6 = {
+                "price_champion":   "💸 Price Champion",
+                "green_buyer":      "🌿 Green Buyer",
+                "health_optimizer": "💪 Health Optimizer",
+                "habitual_buyer":   "🔁 Habitual Buyer",
+            }
+            _ARCH_ORDER = ["price_champion", "green_buyer", "health_optimizer", "habitual_buyer"]
+            _has_beh = "BudgetExhaustionRate" in df_drift6.columns
+
+            # ── Summary scorecards ────────────────────────────────────────────────
+            st.markdown("### Crisis impact by buyer type")
+            st.caption(
+                "Each card shows the **average across all simulation days** for that archetype. "
+                "The Δ arrow compares Crisis vs Baseline — red = worsened, green = improved."
+            )
+            _sc_cols = st.columns(4)
+            for _col, _arch in zip(_sc_cols, _ARCH_ORDER):
+                _base = df_drift6[(df_drift6["Archetype"] == _arch) & (df_drift6["Scenario"] == "Baseline")]
+                _cris = df_drift6[(df_drift6["Archetype"] == _arch) & (df_drift6["Scenario"] == "Crisis")]
+                with _col:
+                    st.markdown(
+                        f"<div style='border-left:4px solid {_ARCH_COLORS6[_arch]};padding:8px 12px;"
+                        f"background:#f8f9fa;border-radius:4px;margin-bottom:8px;color:#1a2035'>"
+                        f"<b>{_ARCH_LABELS6[_arch]}</b></div>",
+                        unsafe_allow_html=True,
+                    )
+                    if _has_beh and not _base.empty and not _cris.empty:
+                        for _metric, _label, _higher_bad in [
+                            ("MeanFulfillment",      "Basket Fulfillment",    False),
+                            ("BudgetExhaustionRate", "Budget Exhausted",      True),
+                            ("MeanPanicLevel",       "Panic Level",           True),
+                            ("MeanFIES",             "Food Insecurity (FIES)", True),
+                        ]:
+                            if _metric not in _base.columns:
+                                continue
+                            _b_val = _base[_metric].mean()
+                            _c_val = _cris[_metric].mean()
+                            _delta = _c_val - _b_val
+                            _arrow = "↑" if _delta > 0 else "↓"
+                            _color = ("#c0392b" if (_delta > 0) == _higher_bad else "#27ae60") if abs(_delta) > 0.005 else "#666"
+                            st.markdown(
+                                f"<div style='font-size:12px;margin:4px 0;color:#1a2035'>"
+                                f"<span style='color:#555'>{_label}</span><br>"
+                                f"<b style='font-size:15px'>{_b_val:.1%}</b>"
+                                f"&nbsp;<span style='color:{_color};font-weight:700'>"
+                                f"{_arrow} {abs(_delta):.1%}</span></div>",
+                                unsafe_allow_html=True,
+                            )
+                    elif not _base.empty:
+                        st.caption("Run both scenarios for comparison.")
+
+            st.divider()
+
+            if _has_beh:
+                # ── Grouped bar: Baseline vs Crisis for each behavioral metric ──────
+                st.markdown("### Behavioral outcomes — Baseline vs Crisis")
+                _beh_metrics = [
+                    ("MeanFulfillment",      "Basket Fulfillment (%)",    "Higher is better"),
+                    ("BudgetExhaustionRate", "Budget Exhaustion Rate (%)", "Lower is better"),
+                    ("MeanPanicLevel",       "Mean Panic Level",          "Lower is better"),
+                    ("MeanFIES",             "Food Insecurity Score (0–4)", "Lower is better"),
+                ]
+                _bar_c1, _bar_c2 = st.columns(2)
+                for (_bm, _bl, _note), _bcol in zip(_beh_metrics, [_bar_c1, _bar_c2, _bar_c1, _bar_c2]):
+                    if _bm not in df_drift6.columns:
+                        continue
+                    _rows = []
+                    for _arch in _ARCH_ORDER:
+                        for _sc in ["Baseline", "Crisis"]:
+                            _sub = df_drift6[(df_drift6["Archetype"] == _arch) & (df_drift6["Scenario"] == _sc)]
+                            if not _sub.empty:
+                                _rows.append({"Archetype": _ARCH_LABELS6.get(_arch, _arch),
+                                              "Scenario": _sc, _bl: _sub[_bm].mean()})
+                    if not _rows:
+                        continue
+                    _df_bar = pd.DataFrame(_rows)
+                    _fig_bar = px.bar(
+                        _df_bar, x="Archetype", y=_bl, color="Scenario", barmode="group",
+                        color_discrete_map={"Baseline": "#4a90d9", "Crisis": "#e74c3c"},
+                        title=f"{_bl}<br><sup style='color:#888'>{_note}</sup>",
+                    )
+                    _fig_bar.update_layout(
+                        template="plotly_white", height=320,
+                        legend=dict(orientation="h", y=-0.3),
+                        xaxis_title="", margin=dict(t=60, b=80),
+                    )
+                    _bcol.plotly_chart(_fig_bar, width='stretch')
+
+                st.divider()
+
+                # ── Panic & FIES trajectories over time ───────────────────────────
+                st.markdown("### Daily trajectories by archetype")
+                _traj_scenario = st.selectbox("Scenario for trajectory charts:", ["Baseline", "Crisis"],
+                                               key="buyer_traj_sc")
+                _df_traj = df_drift6[df_drift6["Scenario"] == _traj_scenario]
+                _t1, _t2 = st.columns(2)
+                for (_tm, _tl), _tcol in [
+                    (("MeanPanicLevel", "Panic Level"),      _t1),
+                    (("MeanFulfillment", "Basket Fulfillment"), _t2),
+                    (("BudgetExhaustionRate", "Budget Exhaustion Rate"), _t1),
+                    (("MeanFIES", "Food Insecurity Score"), _t2),
+                ]:
+                    if _tm not in _df_traj.columns:
+                        continue
+                    _fig_t = go.Figure()
+                    for _arch in _ARCH_ORDER:
+                        _sub_t = _df_traj[_df_traj["Archetype"] == _arch]
+                        if _sub_t.empty:
+                            continue
+                        _fig_t.add_trace(go.Scatter(
+                            x=_sub_t["Day"], y=_sub_t[_tm],
+                            name=_ARCH_LABELS6.get(_arch, _arch), mode="lines",
+                            line=dict(color=_ARCH_COLORS6.get(_arch, "#999"), width=2),
+                        ))
+                    if params.get("cri_start") and _traj_scenario == "Crisis":
+                        _fig_t.add_vline(x=params["cri_start"], line_dash="dot",
+                                         line_color="orange", annotation_text="Crisis")
+                    _fig_t.update_layout(
+                        title=_tl, template="plotly_white", height=300,
+                        xaxis_title="Day", legend=dict(orientation="h", y=-0.35),
+                        margin=dict(t=50, b=80),
+                    )
+                    _tcol.plotly_chart(_fig_t, width='stretch')
+
+                st.divider()
+
+                # ── Transition delta table ────────────────────────────────────────
+                st.markdown("### Who changed most? (Crisis − Baseline averages)")
+                _delta_rows = []
+                for _arch in _ARCH_ORDER:
+                    _b = df_drift6[(df_drift6["Archetype"] == _arch) & (df_drift6["Scenario"] == "Baseline")]
+                    _c = df_drift6[(df_drift6["Archetype"] == _arch) & (df_drift6["Scenario"] == "Crisis")]
+                    if _b.empty or _c.empty:
+                        continue
+                    _row = {"Buyer Type": _ARCH_LABELS6.get(_arch, _arch)}
+                    for _m, _lbl in [
+                        ("MeanPriceSensitivity", "Price Sens. Δ"),
+                        ("MeanOrganicPref",      "Organic Pref. Δ"),
+                        ("MeanSubTolerance",     "Sub. Tolerance Δ"),
+                        ("MeanFulfillment",      "Fulfillment Δ"),
+                        ("BudgetExhaustionRate", "Budget Exh. Δ"),
+                        ("MeanPanicLevel",       "Panic Δ"),
+                        ("MeanFIES",             "FIES Δ"),
+                    ]:
+                        if _m in _b.columns and _m in _c.columns:
+                            _row[_lbl] = round(_c[_m].mean() - _b[_m].mean(), 4)
+                    _delta_rows.append(_row)
+
+                if _delta_rows:
+                    _df_delta = pd.DataFrame(_delta_rows).set_index("Buyer Type")
+
+                    def _color_delta(val):
+                        if not isinstance(val, (int, float)):
+                            return ""
+                        color = "#c0392b" if val > 0.005 else ("#27ae60" if val < -0.005 else "#666")
+                        return f"color: {color}; font-weight: bold"
+
+                    st.dataframe(
+                        _df_delta.style.map(_color_delta),
+                        width=900,
+                    )
+                    _biggest = _df_delta.abs().sum(axis=1).idxmax()
+                    st.caption(
+                        f"**{_biggest}** showed the largest overall behavioral shift across "
+                        f"all metrics (sum of absolute deltas = "
+                        f"{_df_delta.abs().sum(axis=1).max():.3f})."
+                    )
+
+
+# ===========================================================================
+# 6. MONTE CARLO RUNNER
+# ===========================================================================
+
+def _run_mc_batch(n_runs: int, days: int, params: dict,
+                  is_crisis: bool, ai_recs=None,
+                  progress_label: str = "Running…") -> tuple[pd.DataFrame, dict]:
+    """
+    Run n_runs independent Monte Carlo replications and return:
+      (aggregate_dataframe, product_stats_dict)
+    """
+    agg_rows  = []
+    prod_stats: dict[str, dict] = {}
+
+    bar = st.progress(0, text=progress_label)
+    total = n_runs * days
+
+    for run_id in range(n_runs):
+        seed  = 1000 + run_id
+        model = _make_model(params, is_crisis=is_crisis, seed=seed, ai_recs=ai_recs)
+
+        for day in range(1, days + 1):
+            model.step()
+            agg, _ = _collect_model_day(model, day, "Crisis" if is_crisis else "Baseline",
+                                         collect_products=False)
+            agg["Run"] = run_id
+            agg_rows.append(agg)
+
+            for a in _product_agents(model):
+                if a.name not in prod_stats:
+                    prod_stats[a.name] = {
+                        "Category":    a.category,
+                        "ShelfLife":   a.max_shelf_life,
+                        "StorageCap":  a.max_storage_capacity,
+                        "AggSales":    0, "AggLost": 0, "AggWaste": 0,
+                    }
+                prod_stats[a.name]["AggSales"] += a.daily_sales
+                prod_stats[a.name]["AggLost"]  += a.daily_lost_sales
+                prod_stats[a.name]["AggWaste"] += a.daily_waste
+
+            step_done = run_id * days + day
+            if step_done % max(1, total // 50) == 0:
+                bar.progress(step_done / total, text=progress_label)
+
+    bar.progress(1.0, text="Complete ✓")
+    time.sleep(0.3)
+    bar.empty()
+
+    return pd.DataFrame(agg_rows), prod_stats
+
+
+# ===========================================================================
+# 7. TAB: SCIENTIFIC ANALYSIS
+# ===========================================================================
+
+def render_science_tab(params: dict):
+    st.header("🔬 Scientific Analysis (Monte Carlo Workflow)")
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Load data in the **🏠 Data & Population** tab first.")
+        return
+
+    n_runs = params["mc_runs"]
+    days   = params["days"]
+
+    # ---- STAGE 0: Run baseline ----
+    if st.session_state.mc_stage == 0:
+        st.markdown(
+            '<div class="step-card"><h3>Step 1 — Establish Baseline</h3>'
+            "<p>Simulate business-as-usual (no crisis) across "
+            f"{n_runs} independent runs to characterise normal performance "
+            "and identify inventory inefficiencies.</p></div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🚀 Run Baseline Analysis", type="primary"):
+            df_raw, prod_stats = _run_mc_batch(n_runs, days, params, is_crisis=False,
+                                                progress_label="Simulating Baseline…")
+            # Compute AI storage recommendations
+            total_periods = n_runs * days
+            new_recs = {}
+            for p_name, data in prod_stats.items():
+                avg_waste = data["AggWaste"] / total_periods
+                avg_lost  = data["AggLost"]  / total_periods
+                avg_sales = data["AggSales"] / total_periods
+                curr_cap  = data["StorageCap"]
+                rec_cap   = curr_cap
+                if avg_waste > 0.5:
+                    rec_cap = max(10, int((avg_sales + avg_lost) * data["ShelfLife"] * 0.55))
+                elif avg_lost > 0.5:
+                    rec_cap = min(300, max(int(curr_cap * 1.25),
+                                          int((avg_sales + avg_lost) * params["lead"] * 4)))
+                new_recs[p_name] = rec_cap
+
+            st.session_state.data_base_raw  = df_raw
+            st.session_state.ai_recs        = new_recs
+            st.session_state.prod_stats_raw = prod_stats
+            st.session_state.mc_stage       = 1
+            st.rerun()
+
+    # ---- STAGE 1: Review & optimise ----
+    elif st.session_state.mc_stage == 1:
+        st.markdown(
+            '<div class="step-card"><h3>Step 2 — Review AI Suggestions</h3>'
+            "<p>Inspect baseline performance and choose whether to apply "
+            "AI-recommended storage capacity adjustments.</p></div>",
+            unsafe_allow_html=True,
+        )
+        df_raw = st.session_state.data_base_raw
+        _plot_ci_band(df_raw, "Daily Revenue — Baseline (Raw) [95 % CI]",
+                      color="gray")
+
+        st.divider()
+        st.markdown("#### 🤖 AI Storage Capacity Recommendations")
+        recs_df = pd.DataFrame([
+            {"Product": p, "Current Capacity": st.session_state.prod_stats_raw[p]["StorageCap"],
+             "Recommended Capacity": c}
+            for p, c in st.session_state.ai_recs.items()
+        ])
+        st.dataframe(recs_df, width='stretch')
+
+        col1, col2 = st.columns(2)
+        if col1.button("✅ Accept AI Recommendations & Re-run Baseline"):
+            df_opt, _ = _run_mc_batch(n_runs, days, params, is_crisis=False,
+                                       ai_recs=st.session_state.ai_recs,
+                                       progress_label="Simulating Optimised Baseline…")
+            st.session_state.data_base_opt  = df_opt
+            st.session_state.active_baseline = "Baseline (Optimised)"
+            st.session_state.mc_stage       = 2
+            st.rerun()
+        if col2.button("⏩ Skip — Use Raw Baseline"):
+            st.session_state.data_base_opt   = None
+            st.session_state.active_baseline = "Baseline (Raw)"
+            st.session_state.mc_stage        = 2
+            st.rerun()
+
+    # ---- STAGE 2: Baseline comparison ----
+    elif st.session_state.mc_stage == 2:
+        st.markdown(
+            '<div class="step-card"><h3>Step 3 — Baseline Comparison</h3>'
+            "<p>Compare Raw vs Optimised baseline, then run the Crisis scenario.</p></div>",
+            unsafe_allow_html=True,
+        )
+
+        if st.session_state.data_base_opt is not None:
+            df_r = st.session_state.data_base_raw
+            df_o = st.session_state.data_base_opt
+            r_mean, r_min = df_r["Revenue"].mean(), df_r.groupby("Run")["Revenue"].min().mean()
+            o_mean, o_min = df_o["Revenue"].mean(), df_o.groupby("Run")["Revenue"].min().mean()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Avg Daily Rev (Raw)",  f"€{r_mean:,.1f}")
+            c2.metric("Avg Daily Rev (Opt)",  f"€{o_mean:,.1f}",
+                      f"{(o_mean-r_mean)/max(r_mean,0.01)*100:.1f}%")
+            c3.metric("Avg Min Rev (Raw)",    f"€{r_min:,.1f}")
+            c4.metric("Avg Min Rev (Opt)",    f"€{o_min:,.1f}",
+                      f"{(o_min-r_min)/max(r_min,0.01)*100:.1f}%")
+
+            r_waste = df_r["Waste"].sum() / n_runs
+            o_waste = df_o["Waste"].sum() / n_runs
+            r_lost  = df_r["LostSales"].sum() / n_runs
+            o_lost  = df_o["LostSales"].sum() / n_runs
+
+            fig_cmp = go.Figure()
+            fig_cmp.add_trace(go.Bar(name="Waste", x=["Raw","Optimised"], y=[r_waste, o_waste],
+                                     marker_color="salmon",
+                                     text=[f"{r_waste:.0f}", f"{o_waste:.0f}"], textposition="auto"))
+            fig_cmp.add_trace(go.Bar(name="Lost Sales", x=["Raw","Optimised"], y=[r_lost, o_lost],
+                                     marker_color="orange",
+                                     text=[f"{r_lost:.0f}", f"{o_lost:.0f}"], textposition="auto"))
+            fig_cmp.update_layout(barmode="group", title="Baseline Efficiency Comparison",
+                                  template="plotly_white", yaxis_title="Units (avg per run)")
+            st.plotly_chart(fig_cmp, width='stretch')
+        else:
+            st.info("Using Raw Baseline (optimisation skipped).")
+
+        st.divider()
+        st.markdown(f"✅ Ready to test **{st.session_state.active_baseline}** vs **Crisis**.")
+        if st.button("🔥 Run Crisis Simulation", type="primary"):
+            recs = st.session_state.ai_recs if st.session_state.data_base_opt is not None else None
+            df_cri, _ = _run_mc_batch(n_runs, days, params, is_crisis=True,
+                                       ai_recs=recs, progress_label="Simulating Crisis…")
+            st.session_state.data_crisis = df_cri
+            st.session_state.mc_stage    = 3
+            st.rerun()
+
+    # ---- STAGE 3: Final impact analysis ----
+    elif st.session_state.mc_stage == 3:
+        st.markdown(
+            '<div class="step-card"><h3>Step 4 — Impact Analysis</h3></div>',
+            unsafe_allow_html=True,
+        )
+
+        label_base = st.session_state.active_baseline
+        df_base = (st.session_state.data_base_opt
+                   if st.session_state.data_base_opt is not None
+                   else st.session_state.data_base_raw)
+        df_cri  = st.session_state.data_crisis
+
+        df_base = df_base.copy(); df_base["Scenario"] = label_base
+        df_cri  = df_cri.copy();  df_cri["Scenario"]  = "Crisis"
+        df_full = pd.concat([df_base, df_cri], ignore_index=True)
+
+        # Confidence interval plot
+        _plot_ci_dual(df_base, df_cri, label_base)
+        with st.expander("📊 Revenue Trend Analysis (CI)", expanded=True):
+            st.markdown("**Daily Revenue** — baseline vs crisis across all Monte Carlo runs")
+            _render_analysis(df_full, "Revenue", params, prefix="€", decimals=0,
+                             higher_is_better=True, baseline_label=label_base, crisis_label="Crisis")
+
+        # Key metrics
+        rev_base = df_base["Revenue"].sum() / n_runs
+        rev_cri  = df_cri["Revenue"].sum()  / n_runs
+        diff_pct = (rev_cri - rev_base) / max(rev_base, 0.01) * 100
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"Total Revenue ({label_base})", f"€{rev_base:,.0f}")
+        c2.metric("Total Revenue (Crisis)",         f"€{rev_cri:,.0f}",
+                  f"{diff_pct:.1f}%")
+        waste_drop = (df_cri["Waste"].sum() - df_base["Waste"].sum()) / n_runs
+        c3.metric("Extra Waste (Crisis)",           f"{waste_drop:+.0f} units/run")
+
+        # Distribution violin
+        fig_vio = px.violin(df_full, x="Scenario", y="Revenue", color="Scenario",
+                            box=True, points="outliers",
+                            title="Daily Revenue Distribution",
+                            color_discrete_map={label_base:"#2E8B57","Crisis":"#DC143C"})
+        fig_vio.update_layout(template="plotly_white")
+        st.plotly_chart(fig_vio, width='stretch')
+        with st.expander("📊 Revenue Distribution Analysis", expanded=True):
+            st.markdown("**Revenue Distribution** — spread and central tendency across all runs and days")
+            _render_analysis(df_full, "Revenue", params, prefix="€", decimals=0,
+                             higher_is_better=True, baseline_label=label_base, crisis_label="Crisis")
+
+        # Correlation heatmaps
+        st.subheader("📊 Correlation Analysis — Systemic Coupling")
+        c_base = df_base[["Revenue","Waste","LostSales"]].corr()
+        c_cri  = df_cri[["Revenue","Waste","LostSales"]].corr()
+
+        fig_heat, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+        fig_heat.patch.set_facecolor("white")
+        sns.heatmap(c_base, annot=True, cmap="Greens", ax=ax1, vmin=-1, vmax=1,
+                    fmt=".2f", annot_kws={"color": "black"})
+        ax1.set_title(label_base, color="black")
+        ax1.set_facecolor("white")
+        sns.heatmap(c_cri,  annot=True, cmap="Reds",   ax=ax2, vmin=-1, vmax=1,
+                    fmt=".2f", annot_kws={"color": "black"})
+        ax2.set_title("Crisis", color="black")
+        ax2.set_facecolor("white")
+        fig_heat.tight_layout()
+        st.pyplot(fig_heat)
+        plt.close(fig_heat)
+
+        # Downloads
+        st.divider()
+        csv_bytes = df_full.to_csv(index=False).encode("utf-8")
+        c_dl1, c_dl2, c_dl3 = st.columns(3)
+        c_dl1.download_button("📥 Download MC Data (CSV)", csv_bytes,
+                              "monte_carlo_results.csv", "text/csv")
+        if c_dl2.button("📄 Generate PDF Report"):
+            try:
+                pdf_bytes = _make_pdf_report(df_full, label_base, n_runs)
+                c_dl2.download_button("📥 Download PDF", pdf_bytes,
+                                      "GROCERYsim_Report.pdf", "application/pdf")
+            except Exception as e:
+                st.error(f"PDF generation failed: {e}")
+
+        if c_dl3.button("🔄 Reset Workflow"):
+            for k in ["mc_stage","data_base_raw","data_base_opt","data_crisis",
+                      "ai_recs","prod_stats_raw"]:
+                st.session_state[k] = 0 if k == "mc_stage" else None
+            st.rerun()
+
+
+def _plot_ci_band(df: pd.DataFrame, title: str, color: str = "steelblue"):
+    stats = df.groupby("Day")["Revenue"].agg(["mean","std"]).reset_index()
+    stats["upper"] = stats["mean"] + 1.96 * stats["std"]
+    stats["lower"] = stats["mean"] - 1.96 * stats["std"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=pd.concat([stats["Day"], stats["Day"][::-1]]),
+        y=pd.concat([stats["upper"], stats["lower"][::-1]]),
+        fill="toself", fillcolor=f"rgba(128,128,128,0.2)",
+        line=dict(color="rgba(255,255,255,0)"), showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(x=stats["Day"], y=stats["mean"],
+                             line=dict(color=color), name="Mean"))
+    fig.update_layout(title=title, template="plotly_white",
+                      xaxis_title="Day", yaxis_title="Revenue (€)")
+    st.plotly_chart(fig, width='stretch')
+
+
+def _plot_ci_dual(df_base: pd.DataFrame, df_cri: pd.DataFrame, label_base: str):
+    def ci_traces(df, name, color):
+        s = df.groupby("Day")["Revenue"].agg(["mean","std"]).reset_index()
+        s["u"] = s["mean"] + 1.96 * s["std"]
+        s["l"] = s["mean"] - 1.96 * s["std"]
+        return s, name, color
+
+    s_b, n_b, c_b = ci_traces(df_base, label_base, "#2E8B57")
+    s_c, n_c, c_c = ci_traces(df_cri,  "Crisis",   "#DC143C")
+
+    fig = go.Figure()
+    for s, n, c in [(s_b, n_b, c_b), (s_c, n_c, c_c)]:
+        r, g, b = (int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16))
+        fig.add_trace(go.Scatter(
+            x=pd.concat([s["Day"], s["Day"][::-1]]),
+            y=pd.concat([s["u"], s["l"][::-1]]),
+            fill="toself", fillcolor=f"rgba({r},{g},{b},0.15)",
+            line=dict(color="rgba(255,255,255,0)"), showlegend=False,
+        ))
+        fig.add_trace(go.Scatter(x=s["Day"], y=s["mean"],
+                                 line=dict(color=c), name=n))
+    fig.update_layout(title="Daily Revenue Trends [95 % CI]",
+                      xaxis_title="Day", yaxis_title="Revenue (€)",
+                      template="plotly_white")
+    st.plotly_chart(fig, width='stretch')
+
+
+# ===========================================================================
+# 8. TAB: FOOD WASTE
+# ===========================================================================
+
+def render_waste_tab():
+    st.header("♻️ Food Waste Dashboard")
+
+    if st.session_state.sim_waste is None:
+        st.info("Run the Interactive Demo simulation first to populate waste data.")
+        return
+
+    df = st.session_state.sim_waste
+    if df.empty:
+        st.success("No food waste recorded in this simulation run.")
+        return
+
+    scenarios = df["Scenario"].unique().tolist()
+    sel_sc = st.selectbox("Scenario:", scenarios, key="waste_scenario")
+    dfw = df[df["Scenario"] == sel_sc]
+
+    total_w = dfw["Quantity"].sum()
+    expiry  = dfw[dfw["Reason"] == "Expiry"]["Quantity"].sum()
+    refused = dfw[dfw["Reason"] == "Refused Delivery"]["Quantity"].sum()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Waste (units)", f"{total_w:,}")
+    c2.metric("Expiry Waste",        f"{expiry:,}", f"{expiry/max(total_w,1)*100:.0f}%")
+    c3.metric("Refused Delivery Waste", f"{refused:,}", f"{refused/max(total_w,1)*100:.0f}%")
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        by_cat = dfw.groupby("Category")["Quantity"].sum().reset_index()
+        fig_cat = px.bar(by_cat, x="Category", y="Quantity",
+                         title="Waste by Category",
+                         color="Category",
+                         color_discrete_sequence=px.colors.qualitative.Set2)
+        fig_cat.update_layout(template="plotly_white", showlegend=False)
+        st.plotly_chart(fig_cat, width='stretch')
+
+    with col_b:
+        by_reason = dfw.groupby("Reason")["Quantity"].sum().reset_index()
+        fig_rea = px.pie(by_reason, names="Reason", values="Quantity",
+                         title="Waste by Reason",
+                         color_discrete_sequence=["#e74c3c","#e67e22","#f1c40f"])
+        fig_rea.update_layout(template="plotly_white")
+        st.plotly_chart(fig_rea, width='stretch')
+
+    # Time series
+    daily_waste = dfw.groupby("Day")["Quantity"].sum().reset_index()
+    fig_time = px.area(daily_waste, x="Day", y="Quantity",
+                       title="Daily Waste Over Simulation",
+                       color_discrete_sequence=["#e74c3c"])
+    fig_time.update_layout(template="plotly_white")
+    st.plotly_chart(fig_time, width='stretch')
+    with st.expander("📊 Waste Trend Analysis", expanded=True):
+        st.markdown("**Daily Food Waste** — units discarded (expiry + refused deliveries) per day")
+        _waste_ts = daily_waste.copy()
+        _waste_ts["Scenario"] = sel_sc
+        _render_analysis(_waste_ts, "Quantity", {}, suffix=" units", decimals=1, higher_is_better=False)
+
+    # Heatmap: product × category waste
+    waste_pivot = dfw.groupby(["Product","Category"])["Quantity"].sum().reset_index()
+    top_waste   = waste_pivot.nlargest(20, "Quantity")
+    fig_hm = px.bar(top_waste, x="Quantity", y="Product", color="Category",
+                    orientation="h", title="Top 20 Products by Waste",
+                    color_discrete_sequence=px.colors.qualitative.Set2)
+    fig_hm.update_layout(template="plotly_white", yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig_hm, width='stretch')
+
+    # Download
+    st.download_button("📥 Download Waste Data (CSV)",
+                       dfw.to_csv(index=False).encode("utf-8"),
+                       "food_waste_data.csv", "text/csv")
+
+
+# ===========================================================================
+# 9. TAB: PER-PRODUCT
+# ===========================================================================
+
+def render_product_tab():
+    st.header("📦 Per-Product Deep Dive")
+
+    if st.session_state.sim_stock is None:
+        st.info("Run the Interactive Demo simulation first.")
+        return
+
+    df_stock = st.session_state.sim_stock
+    scenarios = sorted(df_stock["Scenario"].unique())
+    prods     = sorted(df_stock["Product"].unique())
+
+    c_sel1, c_sel2 = st.columns(2)
+    sel_prod = c_sel1.selectbox("Product:", prods, key="pp_product")
+    sel_sc   = c_sel2.selectbox("Scenario:", scenarios, key="pp_scenario")
+
+    df = df_stock[(df_stock["Product"] == sel_prod) & (df_stock["Scenario"] == sel_sc)]
+
+    if df.empty:
+        st.warning("No data for this selection.")
+        return
+
+    # KPIs
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Total Revenue",    f"€{df['Revenue'].sum():,.2f}")
+    k2.metric("Units Sold",       f"{int(df['Sales'].sum()):,}")
+    k3.metric("Lost Sales",       f"{int(df['LostSales'].sum()):,}")
+    k4.metric("Total Waste",      f"{int(df['Waste'].sum()):,}")
+    k5.metric("Avg Shelf Stock",  f"{df['Shelf'].mean():.1f}")
+
+    # Stock trajectory
+    fig_stock = go.Figure()
+    fig_stock.add_trace(go.Scatter(x=df["Day"], y=df["Storage"], name="Storage",
+                                   line=dict(color="#2980b9", width=2)))
+    fig_stock.add_trace(go.Scatter(x=df["Day"], y=df["Shelf"], name="Shelf",
+                                   line=dict(color="#27ae60", width=2, dash="dash")))
+    fig_stock.add_trace(go.Scatter(x=df["Day"], y=df["Storage"] + df["Pending"],
+                                   name="Total Pipeline",
+                                   line=dict(color="#8e44ad", width=1, dash="dot")))
+    fig_stock.update_layout(title=f"Stock Trajectory — {sel_prod}",
+                             template="plotly_white", xaxis_title="Day", yaxis_title="Units")
+    st.plotly_chart(fig_stock, width='stretch')
+    with st.expander("📊 Stock Analysis", expanded=True):
+        st.markdown("**Shelf Stock** — units available to customers each day")
+        _render_analysis(df, "Shelf", {}, suffix=" units", decimals=1, higher_is_better=True)
+        st.markdown("**Storage Stock** — backroom inventory each day")
+        _render_analysis(df, "Storage", {}, suffix=" units", decimals=1, higher_is_better=True)
+
+    col_r, col_w = st.columns(2)
+
+    with col_r:
+        fig_rev = px.bar(df, x="Day", y="Revenue",
+                         title="Daily Revenue",
+                         color_discrete_sequence=["#003399"])
+        fig_rev.update_layout(template="plotly_white")
+        st.plotly_chart(fig_rev, width='stretch')
+        with st.expander("📊 Revenue Analysis", expanded=True):
+            _render_analysis(df, "Revenue", {}, prefix="€", decimals=2, higher_is_better=True)
+
+    with col_w:
+        fig_waste = px.bar(df, x="Day", y="Waste",
+                           title="Daily Waste (units)",
+                           color_discrete_sequence=["#e74c3c"])
+        fig_waste.update_layout(template="plotly_white")
+        st.plotly_chart(fig_waste, width='stretch')
+        with st.expander("📊 Waste Analysis", expanded=True):
+            _render_analysis(df, "Waste", {}, suffix=" units", decimals=1, higher_is_better=False)
+
+    fig_price = px.line(df, x="Day", y="Price",
+                        title="Daily Selling Price",
+                        color_discrete_sequence=["#e67e22"])
+    fig_price.update_layout(template="plotly_white", yaxis_title="Price (€)")
+    st.plotly_chart(fig_price, width='stretch')
+    with st.expander("📊 Price Analysis", expanded=True):
+        st.markdown("**Selling Price** — price per unit each day (includes inflation pass-through and discounts)")
+        _render_analysis(df, "Price", {}, prefix="€", decimals=3, higher_is_better=False)
+
+    if "NearExpiry" in df.columns:
+        fig_ne = px.bar(df, x="Day", y="NearExpiry",
+                        title="Near-Expiry Units Sold (50 % discount)",
+                        color_discrete_sequence=["#f39c12"])
+        fig_ne.update_layout(template="plotly_white")
+        st.plotly_chart(fig_ne, width='stretch')
+        with st.expander("📊 Near-Expiry Analysis", expanded=True):
+            _render_analysis(df, "NearExpiry", {}, suffix=" units", decimals=1, higher_is_better=False)
+
+
+# ===========================================================================
+# 10. TAB: BEHAVIOURAL THEORY
+# ===========================================================================
+
+def render_behaviour_tab(params):
+    st.header("🧪 Behavioural Theory Dashboard")
+    st.markdown(
+        "Visualises how each embedded behavioural science theory shapes simulation "
+        "outcomes. All charts update after running the **Interactive Demo** simulation."
+    )
+
+    df = st.session_state.get("sim_results")
+    if df is None or df.empty:
+        st.info("Run the **Interactive Demo** simulation first to populate these charts.")
+        return
+
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    # ── Row 1: TPB + Prospect Theory ────────────────────────────────────────
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.subheader("👥 Theory of Planned Behaviour")
+        st.caption("Ajzen (1991) — Subjective Norm vs Panic Level over simulation days")
+        if "AvgSubjectiveNorm" in df.columns:
+            fig_tpb = go.Figure()
+            fig_tpb.add_trace(go.Scatter(
+                x=df["Day"], y=df["AvgSubjectiveNorm"],
+                mode="lines", name="Avg Subjective Norm",
+                line=dict(color="#92DDDB", width=2)
+            ))
+            fig_tpb.add_trace(go.Scatter(
+                x=df["Day"], y=df["PanicLevel"],
+                mode="lines", name="Global Panic",
+                line=dict(color="#DBA159", width=2, dash="dot")
+            ))
+            if "AvgTPBIntention" in df.columns:
+                fig_tpb.add_trace(go.Scatter(
+                    x=df["Day"], y=df["AvgTPBIntention"],
+                    mode="lines", name="TPB Purchase Intention",
+                    line=dict(color="#BCDC8B", width=2, dash="dash")
+                ))
+            fig_tpb.update_layout(
+                title="Theory of Planned Behaviour",
+                xaxis_title="Day", yaxis_title="Score (0–1)",
+                legend=dict(orientation="h", y=-0.25),
+                height=320, margin=dict(t=40, b=60),
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_tpb, width='stretch')
+            with st.expander("📊 TPB Analysis", expanded=False):
+                st.markdown("**Subjective Norm** — social influence driving purchase intention")
+                _render_analysis(df, "AvgSubjectiveNorm", params, decimals=3, higher_is_better=True)
+                if "AvgTPBIntention" in df.columns:
+                    st.markdown("**TPB Purchase Intention** — combined attitude + norm + PBC score")
+                    _render_analysis(df, "AvgTPBIntention", params, decimals=3, higher_is_better=True)
+        else:
+            st.warning("TPB columns not found in results. Re-run the simulation.")
+
+    with c2:
+        st.subheader("💰 Prospect Theory (Kahneman & Tversky 1979)")
+        st.caption("Loss aversion — share of consumers with exhausted budgets vs daily revenue")
+        if "BudgetExhaustionRate" in df.columns:
+            pct_exhausted = (df["BudgetExhaustionRate"] * 100).clip(0, 100)
+            fig_kt = go.Figure()
+            fig_kt.add_trace(go.Bar(
+                x=df["Day"], y=pct_exhausted,
+                name="Budget Exhausted (%)",
+                marker_color="#FCC995"
+            ))
+            if "Revenue" in df.columns:
+                fig_kt.add_trace(go.Scatter(
+                    x=df["Day"], y=df["Revenue"],
+                    mode="lines", name="Daily Revenue (€)",
+                    yaxis="y2",
+                    line=dict(color="#44A1A0", width=2)
+                ))
+                fig_kt.update_layout(
+                    yaxis2=dict(overlaying="y", side="right", title="Revenue (€)")
+                )
+            fig_kt.update_layout(
+                title="Prospect Theory — Loss Aversion",
+                xaxis_title="Day", yaxis_title="Budget Exhausted (%)",
+                legend=dict(orientation="h", y=-0.25),
+                height=320, margin=dict(t=40, b=60),
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_kt, width='stretch')
+            with st.expander("📊 Loss Aversion Analysis", expanded=False):
+                st.markdown("**Budget Exhaustion Rate** — share of consumers who ran out of budget (proxy for loss aversion)")
+                _render_analysis(df, "BudgetExhaustionRate", params, decimals=3, higher_is_better=False)
+        else:
+            st.warning("BudgetExhaustionRate not found. Re-run the simulation.")
+
+    st.divider()
+
+    # ── Row 2: Nudge (Gini) + FIES ──────────────────────────────────────────
+    c3, c4 = st.columns(2)
+
+    with c3:
+        st.subheader("⚖️ Nudge / Rationing — Gini Coefficient of Access")
+        st.caption("Thaler & Sunstein (2008) · Sen (1973) — Purchase equity over time")
+        if "GiniAccess" in df.columns:
+            fig_gini = go.Figure()
+            fig_gini.add_trace(go.Scatter(
+                x=df["Day"], y=df["GiniAccess"],
+                mode="lines+markers", name="Gini Access",
+                line=dict(color="#DBA159", width=2),
+                marker=dict(size=4)
+            ))
+            fig_gini.add_hrect(y0=0.0, y1=0.25, fillcolor="#BCDC8B", opacity=0.08,
+                               annotation_text="Equitable", annotation_position="top right")
+            fig_gini.add_hrect(y0=0.25, y1=0.50, fillcolor="#FCC995", opacity=0.08,
+                               annotation_text="Moderate inequality")
+            fig_gini.add_hrect(y0=0.50, y1=1.00, fillcolor="#FF5A5A", opacity=0.06,
+                               annotation_text="High inequality")
+            fig_gini.update_layout(
+                title="Gini Coefficient of Access",
+                xaxis_title="Day", yaxis_title="Gini (0=equal, 1=unequal)",
+                yaxis=dict(range=[0, 1]),
+                height=320, margin=dict(t=40, b=40),
+                template="plotly_white",
+            )
+            rationing_on = params.get("purchase_limit") is not None
+            st.plotly_chart(fig_gini, width='stretch')
+            with st.expander("📊 Gini Equity Analysis", expanded=False):
+                st.markdown("**Gini Access Coefficient** — 0 = perfectly equal access, 1 = one consumer gets everything")
+                _render_analysis(df, "GiniAccess", params, decimals=3, higher_is_better=False)
+            if rationing_on:
+                st.success(f"Purchase limit active: {params['purchase_limit']} units — check equity effect above.")
+            else:
+                st.info("Enable **Nudge — Purchase Limit** in the sidebar to see rationing effects.")
+        else:
+            st.warning("GiniAccess column not found. Re-run the simulation.")
+
+    with c4:
+        st.subheader("🍽️ FIES Food Security (FAO 2016)")
+        st.caption("Food Insecurity Experience Scale — % severely food-insecure by income bracket")
+        fies_cols = ["FIESSevere_Low", "FIESSevere_Mid", "FIESSevere_High"]
+        available = [c for c in fies_cols if c in df.columns]
+        if available:
+            fig_fies = go.Figure()
+            colors_fies = {"FIESSevere_Low": "#FF5A5A", "FIESSevere_Mid": "#FCC995", "FIESSevere_High": "#BCDC8B"}
+            labels_fies = {"FIESSevere_Low": "Low income", "FIESSevere_Mid": "Mid income", "FIESSevere_High": "High income"}
+            for col in available:
+                fig_fies.add_trace(go.Scatter(
+                    x=df["Day"], y=df[col] * 100,
+                    mode="lines", name=labels_fies.get(col, col),
+                    line=dict(color=colors_fies.get(col, "#92DDDB"), width=2)
+                ))
+            fig_fies.update_layout(
+                title="FIES Food Security by Income Bracket",
+                xaxis_title="Day", yaxis_title="Severely Food-Insecure (%)",
+                legend=dict(orientation="h", y=-0.25),
+                height=320, margin=dict(t=40, b=60),
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_fies, width='stretch')
+            with st.expander("📊 Food Security Analysis", expanded=False):
+                for _fc in available:
+                    _lbl = {"FIESSevere_Low": "Low-income severely food-insecure %",
+                            "FIESSevere_Mid": "Mid-income severely food-insecure %",
+                            "FIESSevere_High": "High-income severely food-insecure %"}.get(_fc, _fc)
+                    st.markdown(f"**{_lbl}**")
+                    _render_analysis(df, _fc, params, suffix=" (0–1)", decimals=3, higher_is_better=False)
+        else:
+            st.warning("FIES columns not found. Re-run the simulation.")
+
+    st.divider()
+
+    # ── Row 3: Stockpile Pressure + Media Channel ────────────────────────────
+    c5, c6 = st.columns(2)
+
+    with c5:
+        st.subheader("🏠 Temporal Discounting & Stockpiling")
+        st.caption("O'Donoghue & Rabin (1999) — β-δ quasi-hyperbolic discounting · stockpile pressure vs stockouts")
+        if "StockpilePressure" in df.columns:
+            fig_sp = go.Figure()
+            fig_sp.add_trace(go.Scatter(
+                x=df["Day"], y=df["StockpilePressure"],
+                mode="lines", name="Stockpile Pressure",
+                fill="tozeroy", fillcolor="rgba(220,161,89,0.15)",
+                line=dict(color="#DBA159", width=2)
+            ))
+            if "LostSales" in df.columns:
+                fig_sp.add_trace(go.Scatter(
+                    x=df["Day"], y=df["LostSales"],
+                    mode="lines", name="Lost Sales (€)",
+                    yaxis="y2",
+                    line=dict(color="#FF5A5A", width=2, dash="dot")
+                ))
+                fig_sp.update_layout(
+                    yaxis2=dict(overlaying="y", side="right", title="Lost Sales (€)")
+                )
+            fig_sp.update_layout(
+                title="Temporal Discounting & Stockpile Pressure",
+                xaxis_title="Day", yaxis_title="Avg Stockpile Pressure",
+                legend=dict(orientation="h", y=-0.25),
+                height=320, margin=dict(t=40, b=60),
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_sp, width='stretch')
+            with st.expander("📊 Stockpile Analysis", expanded=False):
+                st.markdown("**Stockpile Pressure** — avg urgency to accumulate pantry stock (β-δ discounting effect)")
+                _render_analysis(df, "StockpilePressure", params, decimals=3, higher_is_better=False)
+                if "LostSales" in df.columns:
+                    st.markdown("**Lost Sales** — demand unmet due to stockouts driven by hoarding")
+                    _render_analysis(df, "LostSales", params, prefix="€", decimals=1, higher_is_better=False)
+        else:
+            st.warning("StockpilePressure column not found. Re-run the simulation.")
+
+    with c6:
+        st.subheader("📡 Media / Communication Channel")
+        st.caption("McCombs & Shaw (1972) — Agenda-setting · media type effect on global panic")
+        if "MediaPanicEffect" in df.columns:
+            fig_media = go.Figure()
+            if "MediaType" in df.columns:
+                for mtype, color in [("panic", "#FF5A5A"), ("calming", "#BCDC8B"), ("neutral", "#92DDDB")]:
+                    mask = df["MediaType"] == mtype
+                    if mask.any():
+                        fig_media.add_trace(go.Scatter(
+                            x=df.loc[mask, "Day"], y=df.loc[mask, "MediaPanicEffect"],
+                            mode="markers", name=mtype.capitalize(),
+                            marker=dict(color=color, size=6, opacity=0.8)
+                        ))
+            else:
+                fig_media.add_trace(go.Scatter(
+                    x=df["Day"], y=df["MediaPanicEffect"],
+                    mode="lines", name="Media Panic Effect",
+                    line=dict(color="#92DDDB", width=2)
+                ))
+            fig_media.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.4)
+            fig_media.update_layout(
+                title="Media / Communication Channel (Agenda-Setting)",
+                xaxis_title="Day", yaxis_title="Panic Δ per day",
+                legend=dict(orientation="h", y=-0.25),
+                height=320, margin=dict(t=40, b=60),
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_media, width='stretch')
+            with st.expander("📊 Media Effect Analysis", expanded=False):
+                st.markdown("**Media Panic Effect** — daily change in global panic driven by media agenda-setting")
+                _render_analysis(df, "MediaPanicEffect", params, decimals=4, higher_is_better=False)
+            mtype = params.get("communication_type", "neutral")
+            mint = params.get("media_intensity", 0.0)
+            st.caption(f"Current setting: **{mtype.capitalize()}** at intensity **{mint:.2f}**")
+        else:
+            st.warning("MediaPanicEffect column not found. Re-run the simulation.")
+
+    st.divider()
+
+    # ── Row 4: Theory Reference Table ───────────────────────────────────────
+    st.subheader("📚 Embedded Behavioural Theory Reference")
+    import pandas as pd
+    theory_df = pd.DataFrame([
+        {
+            "Theory": "Prospect Theory",
+            "Authors": "Kahneman & Tversky (1979)",
+            "Key Parameter": "Loss aversion λ=2.25, α=0.88",
+            "Implementation": "KT value function replaces linear price disutility",
+            "Policy Relevance": "Price controls, subsidy framing"
+        },
+        {
+            "Theory": "Theory of Planned Behaviour",
+            "Authors": "Ajzen (1991)",
+            "Key Parameter": "Attitude (0.49), Norm (0.26), PBC (0.39)",
+            "Implementation": "TPB intention modulates utility threshold each step",
+            "Policy Relevance": "Social norms campaigns, messaging"
+        },
+        {
+            "Theory": "Nudge / Choice Architecture",
+            "Authors": "Thaler & Sunstein (2008)",
+            "Key Parameter": "Purchase limit (units/visit); Gini equity index",
+            "Implementation": "Per-product cap applied at purchase; Gini measured",
+            "Policy Relevance": "Rationing fairness, access equity"
+        },
+        {
+            "Theory": "FIES Food Security",
+            "Authors": "FAO (2016)",
+            "Key Parameter": "8-item scale (0=food-secure, 8=severely food-insecure)",
+            "Implementation": "Per-agent daily score (simplified 4-flag proxy); aggregated by income bracket",
+            "Policy Relevance": "Vulnerability targeting, food assistance"
+        },
+        {
+            "Theory": "Temporal Discounting / Stockpiling",
+            "Authors": "O'Donoghue & Rabin (1999)",
+            "Key Parameter": "β (present bias), stockpile_days horizon",
+            "Implementation": "β-δ quasi-hyperbolic model; pantry inventory tracking",
+            "Policy Relevance": "Stockpile caps, hoarding mitigation"
+        },
+        {
+            "Theory": "Media / Communication Channel",
+            "Authors": "McCombs & Shaw (1972)",
+            "Key Parameter": "media_intensity (0–1), type: neutral/panic/calming",
+            "Implementation": "Daily ±0.10–0.12 global panic adjustment",
+            "Policy Relevance": "Crisis communication strategy"
+        },
+    ])
+    st.dataframe(theory_df, width='stretch', hide_index=True)
+
+
+# ===========================================================================
+# 11. TAB: EXPORT
+# ===========================================================================
+
+def render_export_tab():
+    st.header("📥 Export Simulation Data")
+
+    sections = {
+        "Daily Aggregate (Baseline + Crisis)": "sim_results",
+        "Per-Product Stock History":           "sim_stock",
+        "Supply Chain Log (Orders + Deliveries)": "sim_scm_log",
+        "Food Waste Log":                      "sim_waste",
+        "Policy Comparison (Baseline)":        "policy_baseline",
+        "Policy Comparison (Policy Scenario)": "policy_scenario",
+    }
+
+    any_data = False
+    for label, key in sections.items():
+        df = st.session_state.get(key)
+        if df is not None and not df.empty:
+            any_data = True
+            with st.expander(f"📊 {label}", expanded=False):
+                st.dataframe(df.head(200), width='stretch')
+                st.download_button(
+                    f"📥 Download {label} (CSV)",
+                    df.to_csv(index=False).encode("utf-8"),
+                    f"{key}.csv",
+                    "text/csv",
+                    key=f"dl_{key}",
+                )
+
+    if not any_data:
+        st.info("Run the Interactive Demo simulation first to generate data for export.")
+
+    # --- Full simulation dump ---
+    if st.session_state.sim_results is not None:
+        st.divider()
+        st.markdown("### 📦 Full Simulation Bundle")
+        frames = {}
+        for label, key in sections.items():
+            df = st.session_state.get(key)
+            if df is not None and not df.empty:
+                frames[label] = df
+
+        if frames:
+            buf = io.StringIO()
+            for sheet_name, df in frames.items():
+                buf.write(f"### {sheet_name}\n")
+                df.to_csv(buf, index=False)
+                buf.write("\n\n")
+            st.download_button(
+                "📥 Download Full Bundle (all sheets, CSV)",
+                buf.getvalue().encode("utf-8"),
+                "GROCERYsim_full_export.csv",
+                "text/csv",
+                key="dl_full_bundle",
+            )
+
+
+# ===========================================================================
+# 11. PDF REPORT (simplified, encoding-safe)
+# ===========================================================================
+
+def _to_latin1(text: str) -> str:
+    """
+    Replace common non-latin-1 Unicode characters with safe ASCII equivalents,
+    then hard-encode to latin-1.  fpdf uses latin-1 internally, so any character
+    outside that range raises UnicodeEncodeError.
+    The final encode("latin-1", "replace") acts as a catch-all safety net for
+    any remaining non-latin-1 characters not listed in the table below.
+    """
+    _REPLACEMENTS = {
+        # Dashes & punctuation
+        "\u2014": "--",    # em dash
+        "\u2013": "-",     # en dash
+        "\u2012": "-",     # figure dash
+        "\u2015": "--",    # horizontal bar
+        "\u2019": "'",     # right single quotation mark
+        "\u2018": "'",     # left single quotation mark
+        "\u201c": '"',     # left double quotation mark
+        "\u201d": '"',     # right double quotation mark
+        "\u2026": "...",   # horizontal ellipsis
+        "\u2022": "*",     # bullet
+        "\u2023": ">",     # triangular bullet
+        "\u2020": "+",     # dagger
+        "\u2021": "++",    # double dagger
+        # Superscripts (latin-1 has only 1,2,3 as \xb9,\xb2,\xb3)
+        "\u00b2": "2",     # superscript 2
+        "\u00b3": "3",     # superscript 3
+        "\u00b9": "1",     # superscript 1
+        "\u2070": "0",     # superscript 0
+        "\u2074": "4",     # superscript 4
+        "\u2075": "5",     # superscript 5
+        "\u2076": "6",     # superscript 6
+        "\u2077": "7",     # superscript 7
+        "\u2078": "8",     # superscript 8
+        "\u2079": "9",     # superscript 9
+        # Subscripts (none are in latin-1)
+        "\u2080": "0",     # subscript 0
+        "\u2081": "1",     # subscript 1
+        "\u2082": "2",     # subscript 2  ← CO₂
+        "\u2083": "3",     # subscript 3
+        "\u2084": "4",     # subscript 4
+        "\u2085": "5",     # subscript 5
+        "\u2086": "6",     # subscript 6
+        "\u2087": "7",     # subscript 7
+        "\u2088": "8",     # subscript 8
+        "\u2089": "9",     # subscript 9
+        # Maths & units
+        "\u00b0": "deg",   # degree sign
+        "\u00d7": "x",     # multiplication sign
+        "\u00f7": "/",     # division sign
+        "\u00b1": "+/-",   # plus-minus
+        "\u2248": "~",     # almost equal
+        "\u2260": "!=",    # not equal
+        "\u2264": "<=",    # less-than or equal
+        "\u2265": ">=",    # greater-than or equal
+        "\u03b1": "alpha", # greek alpha
+        "\u03b2": "beta",  # greek beta
+        "\u03bc": "mu",    # greek mu
+        "\u03c3": "sigma", # greek sigma
+        # Arrows
+        "\u2192": "->",    # right arrow
+        "\u2190": "<-",    # left arrow
+        "\u2191": "^",     # up arrow
+        "\u2193": "v",     # down arrow
+        "\u21d2": "=>",    # double right arrow
+        # Currency
+        "\u20ac": "EUR",   # euro sign (not in ISO-8859-1)
+        "\u00a3": "GBP",   # pound sign (IS in latin-1 as \xa3, keep explicit)
+        # Misc Latin that fpdf may reject
+        "\u00e9": "\xe9",  # é  — keep as proper latin-1 byte
+        "\u00e8": "\xe8",  # è
+        "\u00e0": "\xe0",  # à
+        "\u00fc": "\xfc",  # ü
+        "\u00f6": "\xf6",  # ö
+        "\u00e4": "\xe4",  # ä
+        "\u00e5": "\xe5",  # å  (Finnish!)
+        "\u00f8": "\xf8",  # ø
+    }
+    for char, repl in _REPLACEMENTS.items():
+        text = text.replace(char, repl)
+    # Final safety net: replace any remaining non-latin-1 characters with '?'
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+class _PDF(FPDF):
+    def header(self):
+        self.set_font("Arial", "B", 13)
+        self.cell(0, 10, _to_latin1("GROCERYsim: Strategic Resilience Report"), 0, 1, "C")
+        self.ln(3)
+
+    def footer(self):
+        self.set_y(-14)
+        self.set_font("Arial", "I", 8)
+        self.cell(0, 10, f"Page {self.page_no()}", 0, 0, "C")
+
+    def section(self, title: str):
+        self.set_font("Arial", "B", 11)
+        self.set_fill_color(200, 220, 255)
+        self.cell(0, 9, _to_latin1(title), 0, 1, "L", True)
+        self.ln(3)
+
+    def body(self, text: str):
+        self.set_font("Arial", "", 9)
+        self.multi_cell(0, 5, _to_latin1(text))
+        self.ln(2)
+
+    def add_mpl(self, fig):
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            fig.savefig(tmp.name, dpi=90, bbox_inches="tight")
+            self.image(tmp.name, w=165)
+            self.ln(4)
+
+
+def _make_pdf_report(df: pd.DataFrame, baseline_name: str, n_runs: int) -> bytes:
+    """Standard crisis-vs-baseline report (used by Scientific Analysis tab)."""
+    pdf = _PDF()
+    stats = df.groupby("Scenario")[["Revenue","Waste","LostSales"]].mean()
+
+    base_rev   = stats.loc[baseline_name, "Revenue"]  if baseline_name in stats.index else 0
+    cris_rev   = stats.loc["Crisis",      "Revenue"]  if "Crisis"       in stats.index else 0
+    rev_drop   = (base_rev - cris_rev) / max(base_rev, 0.01) * 100
+    base_waste = stats.loc[baseline_name, "Waste"] if baseline_name in stats.index else 0
+    cris_waste = stats.loc["Crisis",      "Waste"] if "Crisis"       in stats.index else 0
+    waste_inc  = (cris_waste - base_waste) / max(base_waste, 0.01) * 100
+
+    pdf.add_page()
+    pdf.section("1. Executive Summary")
+    pdf.body(
+        f"Avg daily revenue: EUR {base_rev:,.2f} (Baseline) "
+        f"vs EUR {cris_rev:,.2f} (Crisis). "
+        f"Revenue contraction: {rev_drop:.1f} %. "
+        f"Food waste increased by {waste_inc:.1f} %."
+    )
+
+    pdf.add_page()
+    pdf.section("2. Cumulative Revenue Comparison")
+    df["CumRev"] = df.groupby(["Scenario","Run"])["Revenue"].cumsum()
+    fig, ax = plt.subplots(figsize=(9, 4))
+    for sc, color in [(baseline_name, "green"), ("Crisis", "red")]:
+        sub = df[df["Scenario"] == sc]
+        if not sub.empty:
+            daily_mean = sub.groupby("Day")["CumRev"].mean()
+            ax.plot(daily_mean.index, daily_mean.values, color=color, label=sc)
+    ax.set_xlabel("Day"); ax.set_ylabel("Cumulative Revenue (EUR)")
+    ax.set_title("Cumulative Revenue"); ax.legend(); ax.grid(alpha=0.3)
+    pdf.add_mpl(fig); plt.close(fig)
+
+    pdf.add_page()
+    pdf.section("3. Daily Revenue Distribution")
+    fig2, ax2 = plt.subplots(figsize=(9, 4))
+    for sc, color in [(baseline_name, "lightgreen"), ("Crisis", "salmon")]:
+        sub = df[df["Scenario"] == sc]["Revenue"]
+        if not sub.empty:
+            ax2.hist(sub, bins=30, alpha=0.6, color=color, label=sc)
+    ax2.set_xlabel("Revenue (EUR)"); ax2.set_ylabel("Frequency")
+    ax2.set_title("Distribution of Daily Revenue"); ax2.legend()
+    pdf.add_mpl(fig2); plt.close(fig2)
+
+    return pdf.output(dest="S").encode("latin-1")
+
+
+def _make_policy_pdf_brief(
+    df_base:    pd.DataFrame,
+    df_pol:     pd.DataFrame,
+    pol_label:  str,
+    narrative:  str,
+    policy_cfg: dict,
+) -> bytes:
+    """
+    Generate a policy brief PDF containing:
+    • Cover / title page
+    • Executive summary (narrative text)
+    • KPI comparison table
+    • Revenue, CO₂, and welfare time-series charts
+    • Income vulnerability table
+    • Methods note
+    """
+    pdf = _PDF()
+    days = int(df_base["Day"].max())
+
+    # ---- Cover ----
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 12, _to_latin1("GROCERYsim ABM -- Policy Impact Brief"), 0, 1, "C")
+    pdf.set_font("Arial", "I", 11)
+    pdf.cell(0, 8, _to_latin1(f"Policy scenario: {pol_label}"), 0, 1, "C")
+    pdf.cell(0, 8, _to_latin1(f"Simulation horizon: {days} days"), 0, 1, "C")
+    pdf.ln(6)
+
+    # ---- 1. Executive Summary ----
+    pdf.section("1. Executive Summary")
+    # Strip markdown bold markers for plain PDF text
+    clean_narrative = (narrative
+                       .replace("**", "")
+                       .replace("*", ""))
+    pdf.body(clean_narrative[:3000])   # truncate very long narratives
+
+    # ---- 2. KPI Comparison Table ----
+    pdf.add_page()
+    pdf.section("2. Key Performance Indicators")
+    kpi_defs = [
+        ("Revenue/day (EUR)",      "Revenue",              False),
+        ("Waste/day (units)",      "Waste",                False),
+        ("CO2 total/day (kg)",     "CO2Total",             False),
+        ("Import Dep. %",          "ImportDepPct",         False),
+        ("Budget Exhaustion %",    "BudgetExhaustionRate", True),
+        ("Food Stressed %",        "FoodStressedPct",      True),
+        ("Fulfillment %",          "FulfillmentRate",      True),
+        ("Mean Fat Purchased %",   "MeanFatPurchased",     False),
+    ]
+    pdf.set_font("Arial", "B", 9)
+    pdf.cell(70, 6, "Metric", 1); pdf.cell(35, 6, "Baseline", 1)
+    pdf.cell(35, 6, "Policy", 1); pdf.cell(35, 6, "Delta (%)", 1)
+    pdf.ln()
+    pdf.set_font("Arial", "", 9)
+    for label, col, is_pct in kpi_defs:
+        if col not in df_base.columns:
+            continue
+        b_val = df_base[col].mean() * (100 if is_pct else 1)
+        p_val = df_pol [col].mean() * (100 if is_pct else 1)
+        d_pct = (p_val - b_val) / max(abs(b_val), 1e-9) * 100
+        pdf.cell(70, 6, _to_latin1(label), 1)
+        pdf.cell(35, 6, f"{b_val:.2f}", 1)
+        pdf.cell(35, 6, f"{p_val:.2f}", 1)
+        pdf.cell(35, 6, f"{d_pct:+.1f}%", 1)
+        pdf.ln()
+
+    # ---- 3. Revenue chart ----
+    pdf.add_page()
+    pdf.section("3. Revenue — Baseline vs Policy")
+    fig, ax = plt.subplots(figsize=(9, 3.5))
+    ax.plot(df_base.groupby("Day")["Revenue"].mean(), color="steelblue",  label="Baseline")
+    ax.plot(df_pol .groupby("Day")["Revenue"].mean(), color="firebrick",  label="Policy")
+    ax.set_xlabel("Day"); ax.set_ylabel("Revenue (EUR)")
+    ax.legend(); ax.grid(alpha=0.3)
+    pdf.add_mpl(fig); plt.close(fig)
+
+    # ---- 4. CO2 chart ----
+    pdf.section("4. CO2 Footprint — Baseline vs Policy")
+    fig2, ax2 = plt.subplots(figsize=(9, 3.5))
+    ax2.plot(df_base.groupby("Day")["CO2Total"].mean(), color="seagreen",  label="Baseline")
+    ax2.plot(df_pol .groupby("Day")["CO2Total"].mean(), color="tomato",    label="Policy")
+    ax2.set_xlabel("Day"); ax2.set_ylabel("kg CO2-eq")
+    ax2.legend(); ax2.grid(alpha=0.3)
+    pdf.add_mpl(fig2); plt.close(fig2)
+
+    # ---- 5. Consumer Welfare chart ----
+    pdf.add_page()
+    pdf.section("5. Consumer Welfare — Budget Exhaustion & Food Stress")
+    fig3, axes = plt.subplots(1, 2, figsize=(9, 3.5))
+    for label_s, col_s, ax_s in [
+        ("Budget Exhaustion %", "BudgetExhaustionRate", axes[0]),
+        ("Food Stressed %",     "FoodStressedPct",      axes[1]),
+    ]:
+        if col_s in df_base.columns:
+            ax_s.plot(df_base.groupby("Day")[col_s].mean()*100, color="steelblue", label="Baseline")
+            ax_s.plot(df_pol .groupby("Day")[col_s].mean()*100, color="firebrick", label="Policy")
+        ax_s.set_title(label_s); ax_s.set_xlabel("Day"); ax_s.legend()
+        ax_s.grid(alpha=0.3)
+    plt.tight_layout()
+    pdf.add_mpl(fig3); plt.close(fig3)
+
+    # ---- 6. Income Vulnerability ----
+    pdf.section("6. Income Vulnerability (Budget Exhaustion by Bracket)")
+    brackets = ["Low", "Mid", "High"]
+    pdf.set_font("Arial", "B", 9)
+    pdf.cell(50, 6, "Income Group", 1); pdf.cell(45, 6, "Baseline Exh. %", 1)
+    pdf.cell(45, 6, "Policy Exh. %",  1); pdf.cell(35, 6, "Delta (pp)", 1)
+    pdf.ln()
+    pdf.set_font("Arial", "", 9)
+    for br in brackets:
+        col = f"BudgetExh_{br}"
+        if col not in df_base.columns:
+            continue
+        b_v = df_base[col].mean() * 100
+        p_v = df_pol [col].mean() * 100
+        pdf.cell(50, 6, f"{br} income", 1)
+        pdf.cell(45, 6, f"{b_v:.1f}%", 1)
+        pdf.cell(45, 6, f"{p_v:.1f}%", 1)
+        pdf.cell(35, 6, f"{p_v-b_v:+.2f}", 1)
+        pdf.ln()
+
+    # ---- 7. Methods ----
+    pdf.add_page()
+    pdf.section("7. Model Methods Note")
+    pdf.body(
+        "GROCERYsim ABM v2.0: Mesa-based agent-based model for Finnish dairy retail. "
+        "Consumer agents calibrated from DCE preference scores and questionnaire data. "
+        "K-Means archetype clustering (k=4); stratified bootstrap population pool. "
+        "Utility function: U = origin_bonus + organic_bonus + fat_match - price_disutility. "
+        "Agents update preferences via archetype-specific learning rules (rate=0.015/day). "
+        "Policy levers: fat tax surcharge, domestic/organic subsidy, domestic supply shock, "
+        "nutritional labelling preference boost. CO2 factors: Finnish organic=0.8, "
+        "Finnish conventional=1.2, Imported organic=1.5, Imported conventional=2.2 kg CO2-eq/unit. "
+        "SecureFood / Horizon Europe -- grant agreement No. 101136583."
+    )
+
+    return pdf.output(dest="S").encode("latin-1")
+
+
+# ===========================================================================
+# 11b. POLICY NARRATIVE GENERATOR
+# ===========================================================================
+
+def _generate_policy_narrative(
+    df_base: pd.DataFrame,
+    df_pol:  pd.DataFrame,
+    policy_cfg: dict,
+    pol_label: str,
+) -> str:
+    """
+    Return a plain-English paragraph (or several) interpreting the KPI deltas
+    between the baseline and policy simulation runs.
+    """
+
+    def mean_delta(col: str, pct: bool = True) -> tuple[float, float]:
+        """Returns (baseline_mean, policy_mean). pct=True means multiply by 100."""
+        b = df_base.groupby("Day")[col].mean().mean()
+        p = df_pol.groupby("Day")[col].mean().mean()
+        if pct:
+            return b * 100, p * 100
+        return b, p
+
+    def delta_pct(base: float, pol: float) -> float:
+        if abs(base) < 1e-9:
+            return 0.0
+        return (pol - base) / abs(base) * 100
+
+    sentences = []
+
+    # ---- Overview ----
+    active = [k for k in ["fat_tax_active","subsidy_active","domestic_shock_active","labelling_active"]
+              if policy_cfg.get(k)]
+    if not active:
+        return "No policy levers were active during this run, so results are identical to the baseline."
+
+    sentences.append(
+        f"This simulation evaluated the combined effect of **{pol_label}** compared to a "
+        f"no-policy baseline over {int(df_base['Day'].max())} simulated days."
+    )
+
+    # ---- Revenue ----
+    b_rev, p_rev = mean_delta("Revenue", pct=False)
+    rev_d = delta_pct(b_rev, p_rev)
+    if abs(rev_d) >= 1.0:
+        dir_rev = "increased" if rev_d > 0 else "decreased"
+        sentences.append(
+            f"Daily store revenue **{dir_rev} by {abs(rev_d):.1f}%** "
+            f"(from €{b_rev:.2f} to €{p_rev:.2f} per day on average)."
+        )
+
+    # ---- Waste ----
+    b_w, p_w = mean_delta("Waste", pct=False)
+    w_d = delta_pct(b_w, p_w)
+    if abs(w_d) >= 2.0:
+        dir_w = "increased" if w_d > 0 else "decreased"
+        sentences.append(
+            f"Food waste **{dir_w} by {abs(w_d):.1f}%** under the policy scenario "
+            f"({b_w:.1f} → {p_w:.1f} units wasted per day)."
+        )
+
+    # ---- Fat content ----
+    if "fat_tax_active" in active or "labelling_active" in active:
+        b_fat, p_fat = mean_delta("MeanFatPurchased", pct=False)
+        fat_d = delta_pct(b_fat, p_fat)
+        if abs(fat_d) >= 1.0:
+            dir_fat = "fell" if fat_d < 0 else "rose"
+            trigger = "fat tax" if "fat_tax_active" in active else "nutritional labelling"
+            sentences.append(
+                f"The average fat content of purchased products **{dir_fat} by {abs(fat_d):.1f}%** "
+                f"(from {b_fat:.2f}% to {p_fat:.2f}%), suggesting the **{trigger}** is shifting "
+                f"consumers toward lower-fat alternatives."
+            )
+        else:
+            sentences.append(
+                "Despite the policy, the average fat content of purchases changed by less than 1%, "
+                "indicating consumers have not substantially shifted their fat preferences yet — "
+                "a longer simulation horizon or higher tax rate may be needed."
+            )
+
+    # ---- CO2 ----
+    b_co2, p_co2 = mean_delta("CO2Total", pct=False)
+    co2_d = delta_pct(b_co2, p_co2)
+    if abs(co2_d) >= 1.0:
+        dir_co2 = "reduced" if co2_d < 0 else "increased"
+        sentences.append(
+            f"The total daily CO₂ footprint **{dir_co2} by {abs(co2_d):.1f}%** "
+            f"({b_co2:.1f} → {p_co2:.1f} kg CO₂-eq/day)."
+        )
+
+    # ---- Import dependency ----
+    b_imp, p_imp = mean_delta("ImportDepPct")
+    imp_d = delta_pct(b_imp, p_imp)
+    if abs(imp_d) >= 2.0:
+        dir_imp = "increased" if imp_d > 0 else "decreased"
+        cause = ""
+        if "domestic_shock_active" in active and imp_d > 0:
+            cause = " — driven by the domestic supply shock forcing greater reliance on imports"
+        elif "subsidy_active" in active and policy_cfg.get("subsidy_target") in ("domestic","both") and imp_d < 0:
+            cause = " — consistent with the domestic subsidy redirecting demand toward Finnish products"
+        sentences.append(
+            f"Import dependency **{dir_imp} by {abs(imp_d):.1f}%** "
+            f"({b_imp:.1f}% → {p_imp:.1f}% of sales){cause}."
+        )
+
+    # ---- Consumer welfare ----
+    b_bex, p_bex = mean_delta("BudgetExhaustionRate")
+    bex_d = delta_pct(b_bex, p_bex)
+    b_stress, p_stress = mean_delta("FoodStressedPct")
+    stress_d = delta_pct(b_stress, p_stress)
+
+    welfare_parts = []
+    if abs(bex_d) >= 2.0:
+        dir_bex = "rose" if bex_d > 0 else "fell"
+        welfare_parts.append(
+            f"the share of shoppers exhausting their budget **{dir_bex} by {abs(bex_d):.1f}%** "
+            f"({b_bex:.1f}% → {p_bex:.1f}% of daily visitors)"
+        )
+    if abs(stress_d) >= 2.0:
+        dir_s = "worsened" if stress_d > 0 else "improved"
+        welfare_parts.append(
+            f"food stress among low-income households **{dir_s} by {abs(stress_d):.1f}%** "
+            f"({b_stress:.1f}% → {p_stress:.1f}%)"
+        )
+    if welfare_parts:
+        sentences.append(
+            "On consumer welfare, " + ", and ".join(welfare_parts) + ". "
+            + ("This suggests the policy may disproportionately burden lower-income households "
+               "and could benefit from a compensating income transfer or targeted exemption."
+               if stress_d > 5 else "")
+        )
+
+    # ---- Fulfillment ----
+    b_ful, p_ful = mean_delta("FulfillmentRate")
+    ful_d = delta_pct(b_ful, p_ful)
+    if abs(ful_d) >= 1.0:
+        dir_ful = "improved" if ful_d > 0 else "declined"
+        sentences.append(
+            f"Basket fulfillment (items purchased vs. intended) **{dir_ful} by {abs(ful_d):.1f}%** "
+            f"({b_ful:.1f}% → {p_ful:.1f}%), "
+            + ("indicating better availability under the policy."
+               if ful_d > 0 else
+               "suggesting the policy may be pricing some consumers out of their planned purchases.")
+        )
+
+    # ---- Closing sentence ----
+    net_positive = sum([
+        rev_d > 0,
+        w_d < 0,
+        co2_d < 0,
+        imp_d < 0 if "subsidy_active" in active else imp_d <= 5,
+        bex_d <= 0,
+    ])
+    if net_positive >= 4:
+        sentences.append(
+            "**Overall**, the policy scenario shows broadly positive outcomes across economic, "
+            "environmental, and welfare dimensions. Stakeholders may consider scaling or extending it."
+        )
+    elif net_positive <= 1:
+        sentences.append(
+            "**Overall**, the policy scenario shows mixed-to-negative outcomes. "
+            "Consider re-calibrating the policy parameters or combining levers to mitigate trade-offs."
+        )
+    else:
+        sentences.append(
+            "**Overall**, the policy involves clear trade-offs: some dimensions improve while others "
+            "worsen. Targeted compensating measures (e.g. low-income exemptions) could improve equity."
+        )
+
+    return "\n\n".join(sentences)
+
+
+# ===========================================================================
+# 11b. TAB: POLICY ANALYSIS
+# ===========================================================================
+
+def render_policy_tab(params: dict):
+    st.header("🏛️ Policy Analysis")
+    st.markdown(
+        "Run a **Baseline vs Policy** comparison to quantify how each policy lever "
+        "affects revenue, food waste, consumer welfare, and environmental footprint. "
+        "All active policies are taken from the **🏛️ Policy Scenarios** sidebar section."
+    )
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Please upload and process data in the **🏠 Data & Population** tab first.")
+        return
+
+    policy_cfg = params.get("policy_cfg", {})
+    n_active = sum([
+        policy_cfg.get("fat_tax_active",         False),
+        policy_cfg.get("subsidy_active",          False),
+        policy_cfg.get("domestic_shock_active",   False),
+        policy_cfg.get("labelling_active",        False),
+    ])
+
+    if n_active == 0:
+        st.info(
+            "ℹ️ No policy levers are currently enabled.  "
+            "Turn on at least one lever in the **🏛️ Policy Scenarios** sidebar section, "
+            "then click **Run Policy Comparison** below."
+        )
+    else:
+        active_labels = []
+        if policy_cfg.get("fat_tax_active"):
+            active_labels.append(f"Fat Tax ({int(policy_cfg['fat_tax_rate']*100)}% on ≥{policy_cfg['fat_tax_threshold']}% fat)")
+        if policy_cfg.get("subsidy_active"):
+            active_labels.append(f"{policy_cfg['subsidy_target'].title()} Subsidy ({int(policy_cfg['subsidy_rate']*100)}% off)")
+        if policy_cfg.get("domestic_shock_active"):
+            active_labels.append(f"Supply Shock (day {policy_cfg['domestic_shock_day']}, {int(policy_cfg['domestic_shock_severity']*100)}% severity, {policy_cfg['domestic_shock_duration']} days)")
+        if policy_cfg.get("labelling_active"):
+            active_labels.append(f"Nutritional Labelling (from day {policy_cfg['labelling_day']})")
+        policy_label = " + ".join(active_labels)
+        st.success(f"**Active policies:** {policy_label}")
+
+    days = params["days"]
+    col_run, col_name, col_runs = st.columns([2, 2, 1])
+    with col_run:
+        run_btn = st.button("▶️ Run & Compare", type="primary", key="pol_run_btn")
+    with col_name:
+        scenario_name = st.text_input(
+            "Scenario name (for multi-comparison)",
+            value=policy_label if n_active > 0 else "Baseline",
+            key="pol_scenario_name",
+            help="Give this scenario a name so you can add more and compare them side-by-side.",
+        )
+    with col_runs:
+        pol_runs = st.number_input("Runs / scenario", 1, 30, 5, key="pol_mc_runs",
+                                   help="Average over N runs to reduce noise")
+
+    col_info, col_clear = st.columns([2, 1])
+    stored_count = len(st.session_state.get("policy_scenarios", []))
+    if stored_count:
+        col_info.caption(
+            f"**{stored_count}** scenario(s) saved. "
+            "Run more with different sidebar settings and a new name to compare them side-by-side (max 4)."
+        )
+    with col_clear:
+        if st.button("🗑️ Clear Saved Scenarios", key="pol_clear_btn"):
+            st.session_state.policy_scenarios = []
+            st.session_state.policy_baseline  = None
+            st.session_state.policy_scenario  = None
+            st.rerun()
+
+    if run_btn:
+        if st.session_state.config_data is None:
+            st.error("No data loaded.")
+            return
+
+        progress = st.progress(0, text="Initialising…")
+        total_steps = int(pol_runs) * 2 * days
+        step_counter = [0]
+
+        def tick(label=""):
+            step_counter[0] += 1
+            progress.progress(
+                min(step_counter[0] / total_steps, 1.0),
+                text=label,
+            )
+
+        baseline_records: list[dict] = []
+        policy_records:   list[dict] = []
+
+        for run_i in range(int(pol_runs)):
+            seed = 100 + run_i * 7
+
+            # ---- Baseline (no policy) ----
+            m_base = _make_model(params, False, seed, policy_cfg=None)
+            for d in range(1, days + 1):
+                m_base.step()
+                rec = m_base.daily_records[-1].copy()
+                rec["Run"] = run_i
+                rec["Scenario"] = "Baseline"
+                baseline_records.append(rec)
+                if d % 10 == 0:
+                    tick(f"Baseline run {run_i+1}/{pol_runs} · day {d}")
+
+            # ---- Policy scenario ----
+            m_pol = _make_model(params, False, seed, policy_cfg=policy_cfg)
+            for d in range(1, days + 1):
+                m_pol.step()
+                rec = m_pol.daily_records[-1].copy()
+                rec["Run"] = run_i
+                rec["Scenario"] = "Policy"
+                policy_records.append(rec)
+                if d % 10 == 0:
+                    tick(f"Policy run {run_i+1}/{pol_runs} · day {d}")
+
+        progress.empty()
+
+        df_base_new = pd.DataFrame(baseline_records)
+        df_pol_new  = pd.DataFrame(policy_records)
+        used_label  = scenario_name.strip() or (policy_label if n_active > 0 else "Baseline")
+
+        st.session_state.policy_baseline = df_base_new
+        st.session_state.policy_scenario = df_pol_new
+        st.session_state.policy_label    = used_label
+
+        # Add to multi-scenario store (cap at 4, replace if same name)
+        scenarios_store = st.session_state.policy_scenarios or []
+        scenarios_store = [s for s in scenarios_store if s["label"] != used_label]
+        scenarios_store.append({"label": used_label, "df": df_pol_new, "cfg": policy_cfg.copy()})
+        if len(scenarios_store) > 4:
+            scenarios_store = scenarios_store[-4:]  # keep most recent 4
+        st.session_state.policy_scenarios = scenarios_store
+        st.success(f"✅ Scenario **{used_label}** complete! ({len(scenarios_store)} scenario(s) stored)")
+
+    # ---- Display results ----
+    if st.session_state.policy_baseline is None:
+        st.info("Click **▶️ Run & Compare** to generate charts.")
+        return
+
+    df_base = st.session_state.policy_baseline
+    df_pol  = st.session_state.policy_scenario
+    pol_lbl = st.session_state.policy_label or "Policy"
+
+    # Combine for plotting
+    df_all = pd.concat([df_base, df_pol], ignore_index=True)
+
+    # ---- Smooth daily means across runs ----
+    def daily_mean(df: pd.DataFrame, scenario: str) -> pd.DataFrame:
+        return (
+            df[df["Scenario"] == scenario]
+            .groupby("Day")
+            .mean(numeric_only=True)
+            .reset_index()
+        )
+
+    base_d = daily_mean(df_all, "Baseline")
+    pol_d  = daily_mean(df_all, "Policy")
+
+    # =====================================================================
+    # Multi-scenario overlay (if more than 1 scenario stored)
+    # =====================================================================
+    stored_scenarios = st.session_state.get("policy_scenarios", [])
+    if len(stored_scenarios) >= 2:
+        st.subheader("📊 Multi-Scenario Comparison")
+        st.caption(
+            f"{len(stored_scenarios)} scenarios stored — run more with different sidebar settings "
+            "and a unique name to add them here. Up to 4 scenarios are kept."
+        )
+        _MULTI_COLORS = ["#e74c3c", "#2980b9", "#27ae60", "#8e44ad"]
+
+        ms_metric = st.selectbox(
+            "Compare by metric:",
+            ["Revenue", "Waste", "CO2Total", "ImportDepPct",
+             "BudgetExhaustionRate", "FulfillmentRate", "MeanFatPurchased"],
+            key="ms_metric_sel",
+        )
+        _BASELINE_KEY = "Baseline"
+
+        fig_ms = go.Figure()
+        # Baseline first
+        b_mean = df_base.groupby("Day")[ms_metric].mean().reset_index()
+        fig_ms.add_trace(go.Scatter(
+            x=b_mean["Day"], y=b_mean[ms_metric],
+            name="Baseline (no policy)", mode="lines",
+            line=dict(color="#555555", dash="dash"),
+        ))
+        for i, sc in enumerate(stored_scenarios):
+            sc_mean = sc["df"].groupby("Day")[ms_metric].mean().reset_index()
+            fig_ms.add_trace(go.Scatter(
+                x=sc_mean["Day"], y=sc_mean[ms_metric],
+                name=sc["label"], mode="lines",
+                line=dict(color=_MULTI_COLORS[i % len(_MULTI_COLORS)]),
+            ))
+        fig_ms.update_layout(
+            title=f"{ms_metric} — Baseline vs All Policy Scenarios",
+            xaxis_title="Day", template="plotly_white",
+            legend=dict(orientation="h", y=-0.25),
+        )
+        st.plotly_chart(fig_ms, width='stretch')
+
+        # Bar chart: mean value per scenario
+        bar_data = [{"Scenario": "Baseline (no policy)",
+                     ms_metric: df_base[ms_metric].mean()}]
+        for sc in stored_scenarios:
+            bar_data.append({"Scenario": sc["label"], ms_metric: sc["df"][ms_metric].mean()})
+        df_bar_ms = pd.DataFrame(bar_data)
+        fig_bar_ms = px.bar(
+            df_bar_ms, x="Scenario", y=ms_metric,
+            color="Scenario",
+            color_discrete_sequence=["#555555"] + _MULTI_COLORS,
+            title=f"Mean {ms_metric} by Scenario",
+        )
+        fig_bar_ms.update_layout(template="plotly_white", showlegend=False)
+        st.plotly_chart(fig_bar_ms, width='stretch')
+        st.divider()
+
+    # =====================================================================
+    # KPI summary cards
+    # =====================================================================
+    st.subheader("📊 KPI Summary")
+
+    def kpi_delta(base_val, pol_val, higher_is_better=True, fmt=".2f"):
+        delta = pol_val - base_val
+        pct   = (delta / abs(base_val) * 100) if base_val != 0 else 0.0
+        sign  = "+" if delta >= 0 else ""
+        color = "normal" if (delta >= 0) == higher_is_better else "inverse"
+        return f"{pol_val:{fmt}}", f"{sign}{pct:.1f}%", color
+
+    kpis = [
+        ("💰 Revenue/day",   base_d["Revenue"].mean(),   pol_d["Revenue"].mean(),   True,  ".2f"),
+        ("🗑️ Waste/day",     base_d["Waste"].mean(),     pol_d["Waste"].mean(),     False, ".1f"),
+        ("📦 Sales/day",     base_d["Sales"].mean(),     pol_d["Sales"].mean(),     True,  ".1f"),
+        ("🌍 CO₂/day (kg)",  base_d["CO2Total"].mean(),  pol_d["CO2Total"].mean(),  False, ".1f"),
+        ("🌐 Import Dep.%",  base_d["ImportDepPct"].mean(), pol_d["ImportDepPct"].mean(), False, ".1f"),
+        ("💸 Budget Exh.%",  base_d["BudgetExhaustionRate"].mean()*100,
+                             pol_d["BudgetExhaustionRate"].mean()*100, False, ".1f"),
+        ("🍔 Mean Fat%",     base_d["MeanFatPurchased"].mean(),
+                             pol_d["MeanFatPurchased"].mean(), False, ".2f"),
+        ("✅ Fulfillment%",  base_d["FulfillmentRate"].mean()*100,
+                             pol_d["FulfillmentRate"].mean()*100, True, ".1f"),
+    ]
+
+    cols = st.columns(4)
+    for i, (label, base_v, pol_v, hib, fmt) in enumerate(kpis):
+        val_str, delta_str, color = kpi_delta(base_v, pol_v, hib, fmt)
+        cols[i % 4].metric(
+            label=f"{label}",
+            value=val_str,
+            delta=f"{delta_str} vs baseline",
+            delta_color=color,
+        )
+
+    st.divider()
+
+    # =====================================================================
+    # Auto-generated narrative interpretation
+    # =====================================================================
+    st.subheader("📝 Policy Impact Summary")
+    with st.spinner("Generating narrative…"):
+        narrative = _generate_policy_narrative(
+            df_base, df_pol,
+            policy_cfg=params.get("policy_cfg", {}),
+            pol_label=pol_lbl,
+        )
+    st.markdown(narrative)
+
+    st.divider()
+
+    # =====================================================================
+    # Chart section
+    # =====================================================================
+    chart_tabs = st.tabs([
+        "💰 Economic", "🌍 Environmental", "👥 Consumer Welfare",
+        "📉 Income Vulnerability", "📊 Detailed Data"
+    ])
+
+    # ---- Economic ----
+    with chart_tabs[0]:
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            fig_rev = go.Figure()
+            for scen, color in [("Baseline", "#003399"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["Revenue"].mean().reset_index()
+                fig_rev.add_trace(go.Scatter(
+                    x=d["Day"], y=d["Revenue"], name=scen,
+                    line=dict(color=color), mode="lines"
+                ))
+            fig_rev.update_layout(
+                title="Daily Revenue — Baseline vs Policy",
+                xaxis_title="Day", yaxis_title="Revenue (€)",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_rev, width='stretch')
+            with st.expander("📊 Revenue Analysis", expanded=True):
+                _render_analysis(df_all, "Revenue", {}, prefix="€", decimals=0,
+                                 higher_is_better=True,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        with col_b:
+            fig_waste = go.Figure()
+            for scen, color in [("Baseline", "#003399"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["Waste"].mean().reset_index()
+                fig_waste.add_trace(go.Scatter(
+                    x=d["Day"], y=d["Waste"], name=scen,
+                    line=dict(color=color), mode="lines"
+                ))
+            fig_waste.update_layout(
+                title="Daily Waste — Baseline vs Policy",
+                xaxis_title="Day", yaxis_title="Wasted Units",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_waste, width='stretch')
+            with st.expander("📊 Waste Analysis", expanded=True):
+                _render_analysis(df_all, "Waste", {}, suffix=" units", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        # Revenue distribution box-plot
+        fig_box = px.box(
+            df_all.groupby(["Run","Scenario"])["Revenue"].sum().reset_index(),
+            x="Scenario", y="Revenue", color="Scenario",
+            color_discrete_map={"Baseline": "#003399", "Policy": "#e74c3c"},
+            title="Total Revenue Distribution Across Runs",
+        )
+        fig_box.update_layout(template="plotly_white", showlegend=False)
+        st.plotly_chart(fig_box, width='stretch')
+
+    # ---- Environmental ----
+    with chart_tabs[1]:
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            fig_co2 = go.Figure()
+            _CO2_FILL = {"Baseline": "rgba(39,174,96,0.10)", "Policy": "rgba(231,76,60,0.10)"}
+            for scen, color in [("Baseline", "#27ae60"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["CO2Total"].mean().reset_index()
+                fig_co2.add_trace(go.Scatter(
+                    x=d["Day"], y=d["CO2Total"], name=scen,
+                    line=dict(color=color), mode="lines", fill="tozeroy",
+                    fillcolor=_CO2_FILL[scen],
+                ))
+            fig_co2.update_layout(
+                title="Daily CO₂ Footprint (kg CO₂-eq) — Baseline vs Policy",
+                xaxis_title="Day", yaxis_title="kg CO₂-eq",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_co2, width='stretch')
+            with st.expander("📊 CO₂ Analysis", expanded=True):
+                _render_analysis(df_all, "CO2Total", {}, suffix=" kg CO₂-eq", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        with col_b:
+            fig_imp = go.Figure()
+            for scen, color in [("Baseline", "#27ae60"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["ImportDepPct"].mean().reset_index()
+                fig_imp.add_trace(go.Scatter(
+                    x=d["Day"], y=d["ImportDepPct"], name=scen,
+                    line=dict(color=color), mode="lines"
+                ))
+            fig_imp.update_layout(
+                title="Import Dependency (% of sales from imported products)",
+                xaxis_title="Day", yaxis_title="Import Dependency %",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_imp, width='stretch')
+            with st.expander("📊 Import Dependency Analysis", expanded=True):
+                _render_analysis(df_all, "ImportDepPct", {}, suffix="%", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        # CO2 breakdown: sales vs waste
+        co2_summary = df_all.groupby("Scenario")[["CO2Sales","CO2Waste"]].mean().reset_index()
+        fig_co2_break = px.bar(
+            co2_summary.melt(id_vars="Scenario", value_vars=["CO2Sales","CO2Waste"],
+                             var_name="Type", value_name="kg CO₂-eq/day"),
+            x="Scenario", y="kg CO₂-eq/day", color="Type",
+            barmode="stack",
+            color_discrete_map={"CO2Sales": "#27ae60", "CO2Waste": "#e74c3c"},
+            title="Average Daily CO₂ Breakdown: Sales vs Waste",
+        )
+        fig_co2_break.update_layout(template="plotly_white")
+        st.plotly_chart(fig_co2_break, width='stretch')
+
+    # ---- Consumer Welfare ----
+    with chart_tabs[2]:
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            fig_bex = go.Figure()
+            for scen, color in [("Baseline", "#003399"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["BudgetExhaustionRate"].mean().reset_index()
+                fig_bex.add_trace(go.Scatter(
+                    x=d["Day"], y=d["BudgetExhaustionRate"] * 100,
+                    name=scen, line=dict(color=color), mode="lines"
+                ))
+            fig_bex.update_layout(
+                title="Budget Exhaustion Rate (% consumers) — Baseline vs Policy",
+                xaxis_title="Day", yaxis_title="% Consumers",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_bex, width='stretch')
+            with st.expander("📊 Budget Exhaustion Analysis", expanded=True):
+                _render_analysis(df_all, "BudgetExhaustionRate", {}, suffix=" (0–1)", decimals=3,
+                                 higher_is_better=False,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        with col_b:
+            fig_stress = go.Figure()
+            for scen, color in [("Baseline", "#003399"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["FoodStressedPct"].mean().reset_index()
+                fig_stress.add_trace(go.Scatter(
+                    x=d["Day"], y=d["FoodStressedPct"] * 100,
+                    name=scen, line=dict(color=color), mode="lines"
+                ))
+            fig_stress.update_layout(
+                title="Food-Stressed Consumers (low-income + budget exhausted)",
+                xaxis_title="Day", yaxis_title="% Consumers",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_stress, width='stretch')
+            with st.expander("📊 Food Stress Analysis", expanded=True):
+                _render_analysis(df_all, "FoodStressedPct", {}, suffix=" (0–1)", decimals=3,
+                                 higher_is_better=False,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        col_c, col_d = st.columns(2)
+
+        with col_c:
+            fig_fat = go.Figure()
+            for scen, color in [("Baseline", "#003399"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["MeanFatPurchased"].mean().reset_index()
+                fig_fat.add_trace(go.Scatter(
+                    x=d["Day"], y=d["MeanFatPurchased"],
+                    name=scen, line=dict(color=color), mode="lines"
+                ))
+            fig_fat.update_layout(
+                title="Mean Fat Content of Purchased Products",
+                xaxis_title="Day", yaxis_title="Avg Fat% per unit bought",
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_fat, width='stretch')
+            with st.expander("📊 Dietary Analysis", expanded=True):
+                _render_analysis(df_all, "MeanFatPurchased", {}, suffix="%", decimals=2,
+                                 higher_is_better=False,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+        with col_d:
+            fig_ful = go.Figure()
+            for scen, color in [("Baseline", "#003399"), ("Policy", "#e74c3c")]:
+                d = df_all[df_all["Scenario"] == scen].groupby("Day")["FulfillmentRate"].mean().reset_index()
+                fig_ful.add_trace(go.Scatter(
+                    x=d["Day"], y=d["FulfillmentRate"] * 100,
+                    name=scen, line=dict(color=color), mode="lines"
+                ))
+            fig_ful.update_layout(
+                title="Basket Fulfillment Rate (items purchased / items wanted)",
+                xaxis_title="Day", yaxis_title="Fulfillment %",
+                yaxis_range=[0, 105],
+                template="plotly_white", legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(fig_ful, width='stretch')
+            with st.expander("📊 Fulfillment Analysis", expanded=True):
+                _render_analysis(df_all, "FulfillmentRate", {}, suffix=" (0–1)", decimals=3,
+                                 higher_is_better=True,
+                                 baseline_label="Baseline", crisis_label="Policy")
+
+    # ---- Income Vulnerability ----
+    with chart_tabs[3]:
+        st.markdown(
+            "How does the policy affect consumers differently across **income brackets**? "
+            "Brackets: **Low** (<€1 500/mo), **Mid** (€1 500–3 000/mo), **High** (>€3 000/mo). "
+            "Values shown are averages over all simulation days and runs."
+        )
+
+        BRACKETS  = ["Low", "Mid", "High"]
+        COLORS_B  = {"Baseline": "#003399", "Policy": "#e74c3c"}
+        BR_COLORS = {"Low": "#e74c3c", "Mid": "#f39c12", "High": "#27ae60"}
+
+        # ---- Budget exhaustion by bracket ----
+        bex_rows = []
+        for scen, df_s in [("Baseline", df_base), ("Policy", df_pol)]:
+            for br in BRACKETS:
+                val = df_s.groupby("Day")[f"BudgetExh_{br}"].mean().mean() * 100
+                bex_rows.append({"Scenario": scen, "Bracket": br, "Budget Exhaustion %": val})
+        df_bex_br = pd.DataFrame(bex_rows)
+
+        # ---- Fulfillment by bracket ----
+        ful_rows = []
+        for scen, df_s in [("Baseline", df_base), ("Policy", df_pol)]:
+            for br in BRACKETS:
+                val = df_s.groupby("Day")[f"Fulfillment_{br}"].mean().mean() * 100
+                ful_rows.append({"Scenario": scen, "Bracket": br, "Fulfillment %": val})
+        df_ful_br = pd.DataFrame(ful_rows)
+
+        # ---- Mean fat by bracket ----
+        fat_rows = []
+        for scen, df_s in [("Baseline", df_base), ("Policy", df_pol)]:
+            for br in BRACKETS:
+                val = df_s.groupby("Day")[f"MeanFat_{br}"].mean().mean()
+                fat_rows.append({"Scenario": scen, "Bracket": br, "Mean Fat %": val})
+        df_fat_br = pd.DataFrame(fat_rows)
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            fig_bex_br = px.bar(
+                df_bex_br, x="Bracket", y="Budget Exhaustion %",
+                color="Scenario", barmode="group",
+                color_discrete_map=COLORS_B,
+                title="Budget Exhaustion Rate by Income Bracket",
+                category_orders={"Bracket": BRACKETS},
+            )
+            fig_bex_br.update_layout(template="plotly_white",
+                                     legend=dict(orientation="h", y=-0.25))
+            st.plotly_chart(fig_bex_br, width='stretch')
+
+        with col_b:
+            fig_ful_br = px.bar(
+                df_ful_br, x="Bracket", y="Fulfillment %",
+                color="Scenario", barmode="group",
+                color_discrete_map=COLORS_B,
+                title="Basket Fulfillment Rate by Income Bracket",
+                category_orders={"Bracket": BRACKETS},
+            )
+            fig_ful_br.update_layout(template="plotly_white",
+                                     legend=dict(orientation="h", y=-0.25),
+                                     yaxis_range=[0, 105])
+            st.plotly_chart(fig_ful_br, width='stretch')
+
+        # ---- Mean fat grouped bar ----
+        fig_fat_br = px.bar(
+            df_fat_br, x="Bracket", y="Mean Fat %",
+            color="Scenario", barmode="group",
+            color_discrete_map=COLORS_B,
+            title="Mean Fat Content Purchased by Income Bracket",
+            category_orders={"Bracket": BRACKETS},
+        )
+        fig_fat_br.update_layout(template="plotly_white",
+                                 legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig_fat_br, width='stretch')
+
+        # ---- Delta heatmap: policy effect on each bracket ----
+        st.markdown("#### Policy Δ by Bracket (Policy − Baseline, percentage points)")
+        delta_data = []
+        for metric, col_tpl, label in [
+            ("BudgetExh_{}", True,  "Budget Exhaustion %"),
+            ("Fulfillment_{}", True, "Fulfillment %"),
+            ("MeanFat_{}", False,   "Mean Fat %"),
+        ]:
+            row = {"Metric": label}
+            for br in BRACKETS:
+                b_val = df_base.groupby("Day")[metric.format(br)].mean().mean()
+                p_val = df_pol .groupby("Day")[metric.format(br)].mean().mean()
+                mult  = 100 if col_tpl else 1
+                row[br] = round((p_val - b_val) * mult, 3)
+            delta_data.append(row)
+        df_delta = pd.DataFrame(delta_data).set_index("Metric")
+
+        def _color_delta(val):
+            # Red = worse (higher budget exh / fat, lower fulfillment); Green = better
+            # We invert for Fulfillment
+            return "color: #e74c3c" if val > 0 else ("color: #27ae60" if val < 0 else "")
+
+        # applymap → map in pandas ≥ 2.1; fall back gracefully
+        _styler = df_delta.style
+        try:
+            _styler = _styler.map(_color_delta)
+        except AttributeError:
+            _styler = _styler.applymap(_color_delta)
+        st.dataframe(
+            _styler.format("{:+.3f}"),
+            width='stretch',
+        )
+        st.caption(
+            "Red = policy made this metric worse for that income group | "
+            "Green = policy improved it | Values are percentage-point changes."
+        )
+
+        # ---- Narrative interpretation of vulnerability ----
+        vuln_sentences = []
+        for br in BRACKETS:
+            b_bex_br = df_base.groupby("Day")[f"BudgetExh_{br}"].mean().mean() * 100
+            p_bex_br = df_pol .groupby("Day")[f"BudgetExh_{br}"].mean().mean() * 100
+            d = p_bex_br - b_bex_br
+            if abs(d) >= 1.0:
+                dir_s = "increased" if d > 0 else "decreased"
+                vuln_sentences.append(
+                    f"**{br}-income households**: budget exhaustion {dir_s} by "
+                    f"{abs(d):.1f} pp ({b_bex_br:.1f}% → {p_bex_br:.1f}%)."
+                )
+        if vuln_sentences:
+            st.markdown("**Income vulnerability summary:**")
+            for s in vuln_sentences:
+                st.markdown(f"- {s}")
+
+            # Check for regressive pattern
+            low_d = (df_pol.groupby("Day")["BudgetExh_Low"].mean().mean()
+                   - df_base.groupby("Day")["BudgetExh_Low"].mean().mean()) * 100
+            high_d = (df_pol.groupby("Day")["BudgetExh_High"].mean().mean()
+                    - df_base.groupby("Day")["BudgetExh_High"].mean().mean()) * 100
+            if low_d > 0 and low_d > high_d + 2:
+                st.warning(
+                    "⚠️ **Regressive impact detected**: low-income households bear a "
+                    f"disproportionately larger increase in budget exhaustion "
+                    f"({low_d:+.1f} pp) compared to high-income households ({high_d:+.1f} pp). "
+                    "Consider adding a targeted low-income exemption or subsidy."
+                )
+            elif low_d < 0 and abs(low_d) > abs(high_d) + 2:
+                st.success(
+                    "✅ **Progressive impact**: low-income households benefit most from the policy "
+                    f"({low_d:+.1f} pp budget exhaustion change vs. {high_d:+.1f} pp for high-income)."
+                )
+
+    # ---- Detailed Data ----
+    with chart_tabs[4]:
+        st.markdown("### Mean daily metrics by scenario")
+        summary_cols = [
+            "Revenue","Waste","Sales","LostSales",
+            "CO2Total","ImportDepPct",
+            "BudgetExhaustionRate","FoodStressedPct","FulfillmentRate","MeanFatPurchased",
+        ]
+        summary = df_all.groupby("Scenario")[summary_cols].mean().T.round(4)
+        # Compute absolute delta and % change
+        if "Baseline" in summary.columns and "Policy" in summary.columns:
+            summary["Δ (Policy − Baseline)"] = summary["Policy"] - summary["Baseline"]
+            summary["Δ%"] = ((summary["Policy"] - summary["Baseline"]) / summary["Baseline"].abs().clip(lower=1e-9) * 100).round(2)
+        st.dataframe(summary, width='stretch')
+
+        st.markdown("### Download combined records")
+        dl_all = pd.concat([df_base, df_pol], ignore_index=True)
+        col_csv, col_pdf = st.columns(2)
+        col_csv.download_button(
+            "📥 Download Policy Comparison (CSV)",
+            dl_all.to_csv(index=False).encode("utf-8"),
+            "policy_comparison.csv",
+            "text/csv",
+            key="dl_policy",
+        )
+        with col_pdf:
+            with st.spinner("Generating PDF policy brief…"):
+                narrative_for_pdf = _generate_policy_narrative(
+                    df_base, df_pol,
+                    policy_cfg=params.get("policy_cfg", {}),
+                    pol_label=pol_lbl,
+                )
+                pdf_bytes = _make_policy_pdf_brief(
+                    df_base, df_pol,
+                    pol_label=pol_lbl,
+                    narrative=narrative_for_pdf,
+                    policy_cfg=params.get("policy_cfg", {}),
+                )
+            st.download_button(
+                "📄 Download Policy Brief (PDF)",
+                pdf_bytes,
+                "policy_brief.pdf",
+                "application/pdf",
+                key="dl_policy_pdf",
+            )
+
+
+# ===========================================================================
+# 11c. TAB: STAKEHOLDER VIEW
+# ===========================================================================
+
+def render_stakeholder_tab():
+    st.header("👔 Stakeholder View")
+    st.markdown(
+        "Three curated dashboards — each filtered to the metrics that matter most "
+        "for a specific audience. All data comes from the **Interactive Demo** simulation run."
+    )
+
+    if st.session_state.sim_results is None:
+        st.warning("⚠️ Run the **🎮 Interactive Demo** simulation first to populate this tab.")
+        return
+
+    df        = st.session_state.sim_results
+    df_stock  = st.session_state.sim_stock
+    df_waste  = st.session_state.sim_waste
+
+    view = st.radio(
+        "Select your role:",
+        ["🏪 Retailer", "📋 Policy Maker", "🔬 Researcher"],
+        horizontal=True,
+        key="stakeholder_view",
+    )
+
+    scenarios = df["Scenario"].unique().tolist()
+    sel_sc    = st.selectbox("Scenario:", scenarios, key="sh_scenario")
+    df_sc     = df[df["Scenario"] == sel_sc]
+
+    # -----------------------------------------------------------------------
+    if view == "🏪 Retailer":
+        st.subheader("🏪 Retailer Dashboard — Operations & Profitability")
+        st.markdown(
+            "Focus: **revenue, gross margin, waste cost, stockout losses, shelf availability**. "
+            "Key question: *Is the store running efficiently and profitably?*"
+        )
+
+        total_rev   = df_sc["Revenue"].sum()
+        total_waste = df_sc["Waste"].sum()
+        total_lost  = df_sc["LostSales"].sum()
+        total_sales = df_sc["Sales"].sum()
+        waste_pct   = total_waste / max(1, total_sales + total_waste) * 100
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Total Revenue",    f"€{total_rev:,.0f}")
+        k2.metric("Units Sold",       f"{total_sales:,}")
+        k3.metric("Waste Units",      f"{total_waste:,}", f"{waste_pct:.1f}% of stock")
+        k4.metric("Lost Sales Value", f"€{total_lost:,.0f}")
+        k5.metric("Avg Daily Consumers", f"{df_sc['Consumers'].mean():.0f}")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fig_r = px.area(df_sc, x="Day", y="Revenue",
+                            title="Daily Revenue Trend",
+                            color_discrete_sequence=["#2E8B57"])
+            fig_r.update_layout(template="plotly_white")
+            st.plotly_chart(fig_r, width='stretch')
+
+        with col_b:
+            fig_w = px.bar(df_sc, x="Day", y="Waste",
+                           title="Daily Waste (Units)",
+                           color_discrete_sequence=["#e74c3c"])
+            fig_w.update_layout(template="plotly_white")
+            st.plotly_chart(fig_w, width='stretch')
+
+        # Top 10 products by revenue
+        if df_stock is not None and not df_stock.empty:
+            df_stock_sc = df_stock[df_stock["Scenario"] == sel_sc]
+            top_rev = (df_stock_sc.groupby("Product")["Revenue"]
+                       .sum().nlargest(10).reset_index())
+            fig_top = px.bar(top_rev, x="Revenue", y="Product",
+                             orientation="h",
+                             title="Top 10 Products by Revenue",
+                             color_discrete_sequence=["#003399"])
+            fig_top.update_layout(template="plotly_white",
+                                  yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_top, width='stretch')
+
+            # Lost sales by product
+            top_lost = (df_stock_sc.groupby("Product")["LostSales"]
+                        .sum().nlargest(10).reset_index())
+            fig_lost = px.bar(top_lost, x="LostSales", y="Product",
+                              orientation="h",
+                              title="Top 10 Products by Lost Sales (Stockout + Price Refusal)",
+                              color_discrete_sequence=["#dc143c"])
+            fig_lost.update_layout(template="plotly_white",
+                                   yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_lost, width='stretch')
+
+    # -----------------------------------------------------------------------
+    elif view == "📋 Policy Maker":
+        st.subheader("📋 Policy Maker Dashboard — Welfare & Sustainability")
+        st.markdown(
+            "Focus: **food security, consumer affordability, CO₂ footprint, import dependency**. "
+            "Key question: *Is the food system delivering equitable, sustainable outcomes?*"
+        )
+
+        last_rec = df_sc.iloc[-1] if not df_sc.empty else {}
+
+        # Pull policy comparison data if available
+        pol_base = st.session_state.get("policy_baseline")
+        pol_scen = st.session_state.get("policy_scenario")
+
+        col_w1, col_w2, col_w3, col_w4 = st.columns(4)
+        col_w1.metric("Avg Budget Exhaustion",
+                      f"{df_sc['BudgetExhaustionRate'].mean()*100:.1f}%")
+        col_w2.metric("Avg Food Stress (low-income)",
+                      f"{df_sc['FoodStressedPct'].mean()*100:.1f}%")
+        col_w3.metric("Avg CO₂/day (kg)",
+                      f"{df_sc['CO2Total'].mean():.1f}")
+        col_w4.metric("Avg Import Dependency",
+                      f"{df_sc['ImportDepPct'].mean():.1f}%")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            fig_stress = px.area(df_sc, x="Day", y="FoodStressedPct",
+                                 title="Food-Stressed Consumers (% daily)",
+                                 color_discrete_sequence=["#e67e22"])
+            fig_stress.update_layout(template="plotly_white",
+                                     yaxis_tickformat=".0%")
+            st.plotly_chart(fig_stress, width='stretch')
+
+        with col_b:
+            fig_co2 = px.area(df_sc, x="Day", y="CO2Total",
+                              title="Daily CO₂ Footprint (kg CO₂-eq)",
+                              color_discrete_sequence=["#27ae60"])
+            fig_co2.update_layout(template="plotly_white")
+            st.plotly_chart(fig_co2, width='stretch')
+
+        col_c, col_d = st.columns(2)
+        with col_c:
+            fig_imp = px.line(df_sc, x="Day", y="ImportDepPct",
+                              title="Import Dependency % over Time",
+                              color_discrete_sequence=["#2980b9"])
+            fig_imp.update_layout(template="plotly_white")
+            st.plotly_chart(fig_imp, width='stretch')
+
+        with col_d:
+            fig_fat = px.line(df_sc, x="Day", y="MeanFatPurchased",
+                              title="Mean Fat Content Purchased",
+                              color_discrete_sequence=["#8e44ad"])
+            fig_fat.update_layout(template="plotly_white",
+                                  yaxis_title="Avg fat % per unit")
+            st.plotly_chart(fig_fat, width='stretch')
+
+        # Income vulnerability snapshot (from policy comparison if available)
+        if pol_base is not None and pol_scen is not None:
+            st.subheader("Income Vulnerability Snapshot (Policy vs Baseline)")
+            brackets = ["Low", "Mid", "High"]
+            vuln_data = []
+            for br in brackets:
+                b_val = pol_base[f"BudgetExh_{br}"].mean() * 100
+                p_val = pol_scen[f"BudgetExh_{br}"].mean() * 100
+                vuln_data.append({
+                    "Income Group": f"{br} (<€1.5k / €1.5-3k / >€3k)",
+                    "Baseline Budget Exh.%": round(b_val, 1),
+                    "Policy Budget Exh.%":   round(p_val, 1),
+                    "Δ (pp)": round(p_val - b_val, 2),
+                })
+            st.dataframe(pd.DataFrame(vuln_data), width='stretch', hide_index=True)
+        else:
+            st.info(
+                "Run a policy comparison in the **🏛️ Policy Analysis** tab to see "
+                "the income vulnerability snapshot here."
+            )
+
+    # -----------------------------------------------------------------------
+    elif view == "🔬 Researcher":
+        st.subheader("🔬 Researcher Dashboard — Full Metrics & Reproducibility")
+        st.markdown(
+            "Focus: **complete metric set, model configuration, reproducibility information**. "
+            "Key question: *Is this simulation valid, reproducible, and scientifically rigorous?*"
+        )
+
+        # Reproducibility card
+        with st.expander("📋 Model Reproducibility Card", expanded=True):
+            cfg = st.session_state.config_data or {}
+            stats = cfg.get("stats", {})
+            col_r1, col_r2 = st.columns(2)
+            with col_r1:
+                st.markdown("**Model configuration**")
+                st.json({
+                    "mesa_version": "2.3.4",
+                    "consumer_model": "utility-based (DCE-calibrated)",
+                    "archetype_clustering": "K-Means (k=4)",
+                    "population_pool_size": stats.get("pool_size", "N/A"),
+                    "real_participants": stats.get("n_real", "N/A"),
+                    "bootstrap_method": "stratified by archetype",
+                    "shelf_model": "FIFO batches with near-expiry discount",
+                    "learning": "adaptive preferences (rate=0.015/day)",
+                })
+            with col_r2:
+                st.markdown("**Simulation parameters**")
+                model_cris = st.session_state.get("sim_model_crisis")
+                if model_cris:
+                    st.json({
+                        "days_simulated":    model_cris.current_day,
+                        "base_consumers":    model_cris.base_consumers,
+                        "reorder_point":     model_cris.reorder_point,
+                        "target_stock":      model_cris.target_stock_level,
+                        "lead_time_days":    model_cris.lead_time_days,
+                        "scenario_start":    model_cris.scenario_start_day,
+                        "inflation_pct":     model_cris.inflation_percent,
+                        "disruption_days":   model_cris.supply_disruption_days,
+                        "panic_sensitivity": model_cris.panic_sensitivity,
+                        "fixed_seed":        model_cris.fixed_seed,
+                    })
+                else:
+                    st.info("Run the simulation to populate configuration details.")
+
+        # Full metrics table
+        st.markdown("### Full Daily Metrics Table")
+        display_cols = [c for c in df_sc.columns if c not in ("Scenario",)]
+        st.dataframe(df_sc[display_cols].round(4), width='stretch')
+
+        # Citation / methods note
+        st.markdown("### Methods Summary (cite-ready)")
+        st.markdown(
+            """
+            > **GROCERYsim ABM v2.0** is a Mesa-based agent-based model of dairy product retail.
+            > Consumer agents are calibrated from discrete choice experiment (DCE) responses and
+            > questionnaire data collected via a Unity-based task simulation. Agents are clustered
+            > into four behavioural archetypes (price_champion, green_buyer, health_optimizer,
+            > habitual_buyer) using K-Means (k=4) on eight preference dimensions. A stratified
+            > bootstrap generates the synthetic population pool. Purchase decisions follow a
+            > utility function: *U = origin_bonus + organic_bonus + fat_match − price_disutility*.
+            > Preferences update each day via archetype-specific learning rules (rate = 0.015).
+            > Supply chain uses FIFO shelf batches with near-expiry (50% off) discounting and
+            > reorder-point replenishment. Policy levers (fat tax, subsidy, supply shock,
+            > nutritional labelling) modify prices and delivery volumes. Environmental impact
+            > is tracked via product-level CO₂ emission factors. Consumer welfare is measured
+            > by budget exhaustion rate, food stress prevalence, and basket fulfillment.
+            > SecureFood / Horizon Europe — grant agreement No. 101136583.
+            """
+        )
+
+        st.download_button(
+            "📥 Download Full Metrics CSV",
+            df_sc.to_csv(index=False).encode("utf-8"),
+            f"grocerysim_{sel_sc.lower()}_full_metrics.csv",
+            "text/csv",
+            key="sh_dl_full",
+        )
+
+
+# ===========================================================================
+# 11d. TAB: SENSITIVITY ANALYSIS
+# ===========================================================================
+
+def render_sensitivity_tab(params: dict):
+    st.header("🎚️ Sensitivity Analysis")
+    st.markdown(
+        "**One-at-a-time (OAT) parameter sweep** — vary each model parameter across its "
+        "range while holding all others at their baseline value. The result shows which "
+        "parameters most influence the chosen output metric (tornado chart). "
+        "This is a lightweight alternative to Sobol indices for fast, interpretable results."
+    )
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Upload and process data in **🏠 Data & Population** first.")
+        return
+
+    # ---- Parameter definitions ----
+    PARAM_DEFS = {
+        "reorder_pt":    {"label": "Reorder Point",       "min": 0.10, "max": 0.60, "steps": 5, "key": "reorder"},
+        "target_stock":  {"label": "Restock Target",      "min": 0.60, "max": 0.99, "steps": 5, "key": "target"},
+        "lead_time":     {"label": "Lead Time (days)",     "min": 1,    "max": 10,   "steps": 5, "key": "lead"},
+        "base_consumers":{"label": "Base Consumers/day",  "min": 20,   "max": 300,  "steps": 5, "key": "base_con"},
+        "panic_sens":    {"label": "Panic Sensitivity",   "min": 0.10, "max": 0.90, "steps": 5, "key": "panic"},
+        "inflation":     {"label": "Inflation % (crisis)","min": 0,    "max": 100,  "steps": 5, "key": "inf"},
+        "fat_tax_rate":  {"label": "Fat Tax Rate",        "min": 0.0,  "max": 0.5,  "steps": 5, "key": None},
+        "shock_severity":{"label": "Shock Severity",     "min": 0.0,  "max": 1.0,  "steps": 5, "key": None},
+    }
+
+    OUTPUT_METRICS = {
+        "Revenue":               "Avg Daily Revenue (€)",
+        "Waste":                 "Avg Daily Waste (units)",
+        "CO2Total":              "Avg Daily CO₂ (kg)",
+        "ImportDepPct":          "Avg Import Dependency %",
+        "BudgetExhaustionRate":  "Avg Budget Exhaustion %",
+        "FulfillmentRate":       "Avg Fulfillment %",
+        "LostSales":             "Avg Lost Sales",
+    }
+
+    col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
+    with col_cfg1:
+        sa_days = st.slider("Days per run", 14, 365, 60, key="sa_days")
+    with col_cfg2:
+        sa_metric = st.selectbox("Output metric", list(OUTPUT_METRICS.keys()),
+                                  format_func=lambda k: OUTPUT_METRICS[k],
+                                  key="sa_metric")
+    with col_cfg3:
+        sa_include_policy = st.checkbox("Include policy params", True, key="sa_pol",
+                                        help="Include fat_tax_rate and shock_severity in the sweep")
+
+    selected_params = {k: v for k, v in PARAM_DEFS.items()
+                       if v["key"] is not None or sa_include_policy}
+
+    st.markdown(f"Will vary **{len(selected_params)}** parameters × {PARAM_DEFS['reorder_pt']['steps']} levels "
+                f"= **{len(selected_params)*5} simulation runs** of {sa_days} days each.")
+
+    run_sa = st.button("▶️ Run Sensitivity Analysis", type="primary", key="sa_run_btn")
+
+    if "sa_results" not in st.session_state:
+        st.session_state.sa_results = None
+
+    if run_sa:
+        base_policy_cfg = params.get("policy_cfg", {})
+        results = {}   # param_name → list of (param_value, metric_mean)
+
+        total_runs = len(selected_params) * 5
+        bar = st.progress(0, text="Starting…")
+        run_counter = [0]
+
+        def _run_one(override_params: dict, override_policy: dict = None) -> float:
+            p = {**params, **override_params}
+            m = _make_model(p, is_crisis=False, seed=42,
+                            policy_cfg=override_policy or {})
+            for _ in range(sa_days):
+                m.step()
+            vals = [r.get(sa_metric, 0) for r in m.daily_records]
+            return float(np.mean(vals)) if vals else 0.0
+
+        for pname, pdef in selected_params.items():
+            lo, hi, steps = pdef["min"], pdef["max"], pdef["steps"]
+            levels = np.linspace(lo, hi, steps).tolist()
+            results[pname] = []
+            for val in levels:
+                override = {}
+                override_pol = {}
+                if pdef["key"]:
+                    override[pdef["key"]] = val
+                elif pname == "fat_tax_rate":
+                    override_pol = {**base_policy_cfg,
+                                    "fat_tax_active": True,
+                                    "fat_tax_rate": val}
+                elif pname == "shock_severity":
+                    override_pol = {**base_policy_cfg,
+                                    "domestic_shock_active": True,
+                                    "domestic_shock_day": 10,
+                                    "domestic_shock_duration": sa_days,
+                                    "domestic_shock_severity": val}
+                metric_val = _run_one(override, override_pol or None)
+                results[pname].append((val, metric_val))
+                run_counter[0] += 1
+                bar.progress(run_counter[0] / total_runs,
+                             text=f"Varying {pdef['label']} — {run_counter[0]}/{total_runs}")
+
+        bar.empty()
+        st.session_state.sa_results = results
+        st.success(f"✅ Sensitivity analysis complete — {total_runs} runs.")
+
+    if st.session_state.sa_results is None:
+        st.info("Click **▶️ Run Sensitivity Analysis** to generate results.")
+        return
+
+    results = st.session_state.sa_results
+    metric_label = OUTPUT_METRICS.get(sa_metric, sa_metric)
+
+    # ---- Compute sensitivity index: (max − min) of metric across levels ----
+    sensitivity = {}
+    for pname, vals in results.items():
+        metric_vals = [v for _, v in vals]
+        sensitivity[pname] = max(metric_vals) - min(metric_vals)
+
+    df_tornado = pd.DataFrame([
+        {"Parameter": PARAM_DEFS[k]["label"], "Range (max-min)": v}
+        for k, v in sorted(sensitivity.items(), key=lambda x: -abs(x[1]))
+    ])
+
+    st.subheader(f"🌪️ Tornado Chart — Effect on {metric_label}")
+    fig_tor = px.bar(
+        df_tornado, x="Range (max-min)", y="Parameter",
+        orientation="h",
+        title=f"Parameter Sensitivity: Range of {metric_label} across 5 levels",
+        color="Range (max-min)",
+        color_continuous_scale=["#2980b9", "#e74c3c"],
+    )
+    fig_tor.update_layout(
+        template="plotly_white",
+        yaxis=dict(autorange="reversed"),
+        coloraxis_showscale=False,
+    )
+    st.plotly_chart(fig_tor, width='stretch')
+
+    st.caption(
+        "Bar length = max(metric) − min(metric) as each parameter sweeps its range. "
+        "Longer bars = higher influence on the output. Parameters at the top are the "
+        "key levers for this metric."
+    )
+
+    # ---- Individual parameter response curves ----
+    st.subheader("📈 Parameter Response Curves")
+    n_params = len(results)
+    cols_per_row = 3
+    param_items = [(k, PARAM_DEFS[k]["label"]) for k in results]
+    for row_start in range(0, n_params, cols_per_row):
+        cols = st.columns(cols_per_row)
+        for col_idx, (pname, plabel) in enumerate(param_items[row_start:row_start+cols_per_row]):
+            x_vals = [v for v, _ in results[pname]]
+            y_vals = [m for _, m in results[pname]]
+            fig_curve = go.Figure()
+            fig_curve.add_trace(go.Scatter(
+                x=x_vals, y=y_vals, mode="lines+markers",
+                line=dict(color="#003399"), marker=dict(size=6),
+            ))
+            fig_curve.update_layout(
+                title=plabel, template="plotly_white",
+                xaxis_title=plabel, yaxis_title=metric_label,
+                margin=dict(t=40, b=30),
+            )
+            cols[col_idx].plotly_chart(fig_curve, width='stretch')
+
+    # ---- Download ----
+    sa_rows = []
+    for pname, vals in results.items():
+        for pval, mval in vals:
+            sa_rows.append({
+                "Parameter": PARAM_DEFS[pname]["label"],
+                "ParameterValue": pval,
+                metric_label: mval,
+            })
+    st.download_button(
+        "📥 Download Sensitivity Data (CSV)",
+        pd.DataFrame(sa_rows).to_csv(index=False).encode("utf-8"),
+        "sensitivity_analysis.csv",
+        "text/csv",
+        key="dl_sa",
+    )
+
+
+# ===========================================================================
+# 12. MAIN ENTRY POINT
+# ===========================================================================
+
+def main():
+    params = build_sidebar_params()
+
+    st.title("🛒 GROCERYsim ABM v2.0")
+    st.markdown(
+        "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | "
+        "SecureFood / Horizon Europe — IAMO XR Lab"
+    )
+    st.divider()
+
+    tabs = st.tabs([
+        "🏠 Data & Population",
+        "🎮 Interactive Demo",
+        "🔬 Scientific Analysis",
+        "♻️ Food Waste",
+        "📦 Per-Product",
+        "🏛️ Policy Analysis",
+        "👔 Stakeholder View",
+        "🎚️ Sensitivity Analysis",
+        "🧪 Behavioural Theory",
+        "📥 Export",
+    ])
+
+    with tabs[0]:
+        render_data_tab()
+
+    with tabs[1]:
+        render_demo_tab(params)
+
+    with tabs[2]:
+        render_science_tab(params)
+
+    with tabs[3]:
+        render_waste_tab()
+
+    with tabs[4]:
+        render_product_tab()
+
+    with tabs[5]:
+        render_policy_tab(params)
+
+    with tabs[6]:
+        render_stakeholder_tab()
+
+    with tabs[7]:
+        render_sensitivity_tab(params)
+
+    with tabs[8]:
+        render_behaviour_tab(params)
+
+    with tabs[9]:
+        render_export_tab()
+
+    render_footer()
+
+
+if __name__ == "__main__":
+    page = st.session_state.get("page", "landing")
+    if page == "landing":
+        render_landing_page()
+    elif page == "case_studies":
+        render_case_studies_page()
+    else:
+        main()
