@@ -1637,19 +1637,42 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ---------------------------------------------------------------------------
-# Auto-load bundled data files on first run (no upload required)
+# Bundled data loader
 # ---------------------------------------------------------------------------
-_FIREBASE_PATH  = "/Users/itiamo/Downloads/food-finland-default-rtdb-export.json"
-_PRODUCTS_PATH  = "/Volumes/Windows/2026/ABM_NetLogo/ABM_Python/master_products.json"
+# Firebase export  → Streamlit Secrets  (st.secrets["firebase"]["data"])
+#                    Never committed to GitHub — paste your JSON in the
+#                    Streamlit Cloud dashboard: Settings → Secrets
+#
+# Product catalogue → data/master_products.json  (committed to GitHub,
+#                    not sensitive)
+# ---------------------------------------------------------------------------
+import pathlib as _pl
+
+_DATA_DIR      = _pl.Path(__file__).parent / "data"
+_PRODUCTS_PATH = str(_DATA_DIR / "master_products.json")
+
+def _load_bundled_data():
+    """Return (firebase_dict, products_dict) from Secrets + data/ folder.
+    Returns (None, None) if either source is unavailable."""
+    # ── Firebase: Streamlit Secrets ──────────────────────────────────────────
+    try:
+        firebase_dict = json.loads(st.secrets["firebase"]["data"])
+    except Exception:
+        firebase_dict = None
+
+    # ── Product catalogue: data/master_products.json ─────────────────────────
+    try:
+        prod_path = _DATA_DIR / "master_products.json"
+        products_dict = json.loads(prod_path.read_text(encoding="utf-8"))
+    except Exception:
+        products_dict = None
+
+    return firebase_dict, products_dict
 
 if st.session_state.config_data is None:
     try:
-        import pathlib
-        _fb_path   = pathlib.Path(_FIREBASE_PATH)
-        _prod_path = pathlib.Path(_PRODUCTS_PATH)
-        if _fb_path.exists() and _prod_path.exists():
-            _firebase_dict  = json.loads(_fb_path.read_text(encoding="utf-8"))
-            _products_dict  = json.loads(_prod_path.read_text(encoding="utf-8"))
+        _firebase_dict, _products_dict = _load_bundled_data()
+        if _firebase_dict is not None and _products_dict is not None:
             st.session_state.config_data = run_pipeline_from_data(
                 _firebase_dict, _products_dict, pool_size=2000, n_archetypes=4
             )
@@ -2243,10 +2266,9 @@ def render_data_tab():
     st.header("🏠 Data & Population")
 
     # ── Bundled-data status banner ────────────────────────────────────────────
-    import pathlib as _pl
-    _fb_ok   = _pl.Path(_FIREBASE_PATH).exists()
-    _prod_ok = _pl.Path(_PRODUCTS_PATH).exists()
-    if _fb_ok and _prod_ok and st.session_state.config_data is not None:
+    _has_secret  = "firebase" in st.secrets and "data" in st.secrets["firebase"]
+    _has_catalogue = (_DATA_DIR / "master_products.json").exists()
+    if st.session_state.config_data is not None:
         cfg_stats = st.session_state.config_data.get("stats", {})
         n_real  = cfg_stats.get("n_real", "?")
         n_pool  = cfg_stats.get("pool_size", "?")
@@ -2257,11 +2279,12 @@ def render_data_tab():
             "You can jump straight to **🎮 Interactive Demo**. "
             "Use the expander below only if you want to load a different dataset."
         )
-    elif not (_fb_ok and _prod_ok):
-        st.warning(
-            "⚠️ Default data files are not available. "
-            "Please upload your Firebase export and product catalogue below."
-        )
+    elif not (_has_secret and _has_catalogue):
+        missing = []
+        if not _has_secret:    missing.append("Firebase secret (add in Streamlit Cloud → Settings → Secrets)")
+        if not _has_catalogue: missing.append("product catalogue (data/master_products.json)")
+        st.warning("⚠️ Bundled data not fully configured. Missing: " + " · ".join(missing) +
+                   ". Upload files manually below or configure the missing source.")
 
     with st.expander("🔄 Reload / Override Data Files", expanded=(st.session_state.config_data is None)):
         st.markdown(
@@ -2315,18 +2338,20 @@ def render_data_tab():
 
         if col_btn2.button("♻️ Reload Bundled Files"):
             try:
-                _firebase_dict  = json.loads(_pl.Path(_FIREBASE_PATH).read_text(encoding="utf-8"))
-                _products_dict  = json.loads(_pl.Path(_PRODUCTS_PATH).read_text(encoding="utf-8"))
-                st.session_state.config_data = run_pipeline_from_data(
-                    _firebase_dict, _products_dict,
-                    pool_size=int(pool_size), n_archetypes=int(n_archetypes),
-                )
-                for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
-                          "sim_product_recs","sim_model_crisis",
-                          "mc_stage","data_base_raw","data_base_opt",
-                          "data_crisis","ai_recs","prod_stats_raw"]:
-                    st.session_state[k] = None if k != "mc_stage" else 0
-                st.success("✅ Reloaded from bundled files!")
+                _firebase_dict, _products_dict = _load_bundled_data()
+                if _firebase_dict is None or _products_dict is None:
+                    st.error("Bundled data not available. Firebase secret or product catalogue missing.")
+                else:
+                    st.session_state.config_data = run_pipeline_from_data(
+                        _firebase_dict, _products_dict,
+                        pool_size=int(pool_size), n_archetypes=int(n_archetypes),
+                    )
+                    for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
+                              "sim_product_recs","sim_model_crisis",
+                              "mc_stage","data_base_raw","data_base_opt",
+                              "data_crisis","ai_recs","prod_stats_raw"]:
+                        st.session_state[k] = None if k != "mc_stage" else 0
+                    st.success("✅ Reloaded from bundled files!")
             except Exception as e:
                 st.error(f"Reload failed: {e}")
 
