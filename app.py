@@ -1613,9 +1613,11 @@ def render_case_studies_page():
 </html>"""
 
     # Hidden nav triggers — clicked programmatically by the JS bridge below
-    if st.button("→main", key="main_nav_btn"):
-        st.session_state["page"] = "main"
-        st.rerun()
+    for _lc in ["en", "fi", "el", "pt"]:
+        if st.button(f"→main_{_lc}", key=f"main_nav_{_lc}"):
+            st.session_state["lang"] = _lc
+            st.session_state["page"] = "main"
+            st.rerun()
     if st.button("→back", key="back_nav_btn"):
         st.session_state["page"] = "landing"
         st.rerun()
@@ -1625,21 +1627,27 @@ def render_case_studies_page():
     # JS bridge: hide trigger buttons and route React postMessages to them
     components.html("""<script>
 (function(){
-  var NAV = {'launch_grocerysim': '→main', 'launch_back': '→back'};
+  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→back'];
   var obs = new MutationObserver(function(){
     window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
       var lbl = (c.querySelector('button p, button') || {}).textContent || '';
-      if(Object.values(NAV).some(function(v){ return lbl.trim() === v; }))
+      if(HIDE.some(function(v){ return lbl.trim() === v; }))
         c.style.display = 'none';
     });
   });
   try { obs.observe(window.parent.document.body, {childList:true, subtree:true}); } catch(e){}
   window.parent.addEventListener('message', function(e){
     if(!e.data) return;
-    if(NAV[e.data.type]){
-      var target = NAV[e.data.type];
+    if(e.data.type === 'launch_grocerysim'){
+      var lang = 'en';
+      try { lang = window.parent.sessionStorage.getItem('grocerysim_lang') || 'en'; } catch(e2){}
+      var target = '→main_' + lang;
       window.parent.document.querySelectorAll('button').forEach(function(b){
         if((b.textContent || '').trim() === target) b.click();
+      });
+    } else if(e.data.type === 'launch_back'){
+      window.parent.document.querySelectorAll('button').forEach(function(b){
+        if((b.textContent || '').trim() === '→back') b.click();
       });
     }
     if(e.data.type === 'grocerysim_resize' && e.data.height){
@@ -1659,6 +1667,7 @@ def render_case_studies_page():
 defaults = {
     "config_data":     None,
     "page":            "landing",
+    "lang":            "en",
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
@@ -1685,6 +1694,205 @@ defaults = {
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+# ===========================================================================
+# TRANSLATIONS — main application UI strings
+# ===========================================================================
+_MAIN_T = {
+    "en": {
+        "subtitle": "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | SecureFood / Horizon Europe — IAMO XR Lab",
+        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export"],
+        "sidebar_title": "⚙️ Simulation Parameters",
+        "sidebar_general": "📅 General",
+        "duration_days": "Duration (Days)",
+        "start_month": "Start Month",
+        "base_consumers": "Base Daily Consumers",
+        "sidebar_logistics": "🚚 Logistics",
+        "reorder_pt": "Reorder Point (% of max storage)",
+        "restock_target": "Restock Target (% of max storage)",
+        "lead_time": "Lead Time (Days)",
+        "sidebar_crisis": "🔴 Crisis Scenario",
+        "crisis_start": "Crisis Start Day",
+        "price_inflation": "Price Inflation (%)",
+        "supply_disruption": "Supply Disruption (Days)",
+        "crisis_duration": "Crisis Duration (Days)",
+        "sidebar_behaviour": "🧠 Consumer Behaviour",
+        "panic_sensitivity": "Panic Sensitivity",
+        "hoarding_factor": "Hoarding Factor",
+        "sidebar_interventions": "🛡️ Behavioural Interventions",
+        "sidebar_mc": "🔬 Monte Carlo",
+        "mc_runs": "Monte Carlo Runs (N)",
+        "sidebar_policy": "🏛️ Policy Scenarios",
+        "header_data": "🏠 Data & Population",
+        "header_demo": "🎮 Interactive Demo",
+        "header_science": "🔬 Scientific Analysis (Monte Carlo Workflow)",
+        "header_waste": "♻️ Food Waste Dashboard",
+        "header_product": "📦 Per-Product Deep Dive",
+        "header_behaviour": "🧪 Behavioural Theory Dashboard",
+        "header_export": "📥 Export Simulation Data",
+        "header_policy": "🏛️ Policy Analysis",
+        "header_stakeholder": "👔 Stakeholder View",
+        "header_sensitivity": "🎚️ Sensitivity Analysis",
+        "btn_run_demo": "▶️ Run Comparative Simulation",
+        "btn_run_baseline": "🚀 Run Baseline Analysis",
+        "btn_run_crisis": "🔥 Run Crisis Simulation",
+        "btn_run_policy": "▶️ Run & Compare",
+        "btn_run_sensitivity": "▶️ Run Sensitivity Analysis",
+        "demo_subtabs": ["📈 Financials", "👥 Footfall", "🚚 Logistics", "💥 Crisis Breakdown", "🧠 Behavioural Drift", "👤 By Buyer Type"],
+        "sub_demographics": "👥 Population Demographics",
+        "sub_archetypes": "🏷️ Behavioural Archetypes (Real Participants)",
+        "sub_dce": "🧠 DCE-Derived Preference Distributions",
+        "sub_catalogue": "🛒 Product Catalogue",
+        "animation_speed": "Animation Speed (delay per day, seconds)",
+        "securefood_btn": "📄 Get SecureFood Scenario Instructions",
+    },
+    "fi": {
+        "subtitle": "**Agenttipohjainen malli kuluttajakäyttäytymiseen & toimitusketjun stressitestaukseen** | SecureFood / Horizon Europe — IAMO XR Lab",
+        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti"],
+        "sidebar_title": "⚙️ Simulaatioparametrit",
+        "sidebar_general": "📅 Yleiset",
+        "duration_days": "Kesto (päivät)",
+        "start_month": "Aloituskuukausi",
+        "base_consumers": "Päivittäiset peruskuluttajat",
+        "sidebar_logistics": "🚚 Logistiikka",
+        "reorder_pt": "Tilausraja (% max varastosta)",
+        "restock_target": "Täydennystavoite (% max varastosta)",
+        "lead_time": "Toimitusaika (päivät)",
+        "sidebar_crisis": "🔴 Kriisiskenaario",
+        "crisis_start": "Kriisin alkupäivä",
+        "price_inflation": "Hintainflaatio (%)",
+        "supply_disruption": "Toimitushäiriö (päivät)",
+        "crisis_duration": "Kriisin kesto (päivät)",
+        "sidebar_behaviour": "🧠 Kuluttajakäyttäytyminen",
+        "panic_sensitivity": "Paniikkiherkkyys",
+        "hoarding_factor": "Hamstrauskerroin",
+        "sidebar_interventions": "🛡️ Käyttäytymisinterventiot",
+        "sidebar_mc": "🔬 Monte Carlo",
+        "mc_runs": "Monte Carlo -ajot (N)",
+        "sidebar_policy": "🏛️ Politiikkaskenaariot",
+        "header_data": "🏠 Data ja väestö",
+        "header_demo": "🎮 Interaktiivinen demo",
+        "header_science": "🔬 Tieteellinen analyysi (Monte Carlo -työnkulku)",
+        "header_waste": "♻️ Ruokahävikin kojelauta",
+        "header_product": "📦 Tuotekohtainen syväanalyysi",
+        "header_behaviour": "🧪 Käyttäytymisteorian kojelauta",
+        "header_export": "📥 Vie simulaatiodata",
+        "header_policy": "🏛️ Politiikka-analyysi",
+        "header_stakeholder": "👔 Sidosryhmänäkymä",
+        "header_sensitivity": "🎚️ Herkkyysanalyysi",
+        "btn_run_demo": "▶️ Suorita vertailusimulaatio",
+        "btn_run_baseline": "🚀 Suorita perusanalyysi",
+        "btn_run_crisis": "🔥 Suorita kriisisimulaatio",
+        "btn_run_policy": "▶️ Suorita ja vertaa",
+        "btn_run_sensitivity": "▶️ Suorita herkkyysanalyysi",
+        "demo_subtabs": ["📈 Talous", "👥 Kävijämäärä", "🚚 Logistiikka", "💥 Kriisianalyysi", "🧠 Käyttäytymismuutos", "👤 Ostajatyypin mukaan"],
+        "sub_demographics": "👥 Väestörakenne",
+        "sub_archetypes": "🏷️ Käyttäytymisarkkityypit (Oikeat osallistujat)",
+        "sub_dce": "🧠 DCE-johdetut preferenssijakaumat",
+        "sub_catalogue": "🛒 Tuoteluettelo",
+        "animation_speed": "Animaationopeus (viive päivää kohti, sekuntia)",
+        "securefood_btn": "📄 Hae SecureFood-skenaarion ohjeet",
+    },
+    "el": {
+        "subtitle": "**Μοντέλο Πράκτορα για Καταναλωτική Συμπεριφορά & Ανθεκτικότητα Αλυσίδας Εφοδιασμού** | SecureFood / Horizon Europe — IAMO XR Lab",
+        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή"],
+        "sidebar_title": "⚙️ Παράμετροι Προσομοίωσης",
+        "sidebar_general": "📅 Γενικά",
+        "duration_days": "Διάρκεια (ημέρες)",
+        "start_month": "Μήνας Έναρξης",
+        "base_consumers": "Βασικοί Ημερήσιοι Καταναλωτές",
+        "sidebar_logistics": "🚚 Εφοδιαστική",
+        "reorder_pt": "Σημείο Επαναπαραγγελίας (% μέγ. αποθήκευσης)",
+        "restock_target": "Στόχος Ανεφοδιασμού (% μέγ. αποθήκευσης)",
+        "lead_time": "Χρόνος Παράδοσης (ημέρες)",
+        "sidebar_crisis": "🔴 Σενάριο Κρίσης",
+        "crisis_start": "Ημέρα Έναρξης Κρίσης",
+        "price_inflation": "Πληθωρισμός Τιμών (%)",
+        "supply_disruption": "Διακοπή Εφοδιασμού (ημέρες)",
+        "crisis_duration": "Διάρκεια Κρίσης (ημέρες)",
+        "sidebar_behaviour": "🧠 Καταναλωτική Συμπεριφορά",
+        "panic_sensitivity": "Ευαισθησία Πανικού",
+        "hoarding_factor": "Συντελεστής Αποθεματισμού",
+        "sidebar_interventions": "🛡️ Συμπεριφορικές Παρεμβάσεις",
+        "sidebar_mc": "🔬 Monte Carlo",
+        "mc_runs": "Εκτελέσεις Monte Carlo (N)",
+        "sidebar_policy": "🏛️ Σενάρια Πολιτικής",
+        "header_data": "🏠 Δεδομένα & Πληθυσμός",
+        "header_demo": "🎮 Διαδραστικό Demo",
+        "header_science": "🔬 Επιστημονική Ανάλυση (Ροή Monte Carlo)",
+        "header_waste": "♻️ Πίνακας Απώλειας Τροφίμων",
+        "header_product": "📦 Βαθιά Ανάλυση ανά Προϊόν",
+        "header_behaviour": "🧪 Πίνακας Θεωρίας Συμπεριφοράς",
+        "header_export": "📥 Εξαγωγή Δεδομένων Προσομοίωσης",
+        "header_policy": "🏛️ Ανάλυση Πολιτικής",
+        "header_stakeholder": "👔 Προβολή Ενδιαφερομένων",
+        "header_sensitivity": "🎚️ Ανάλυση Ευαισθησίας",
+        "btn_run_demo": "▶️ Εκτέλεση Συγκριτικής Προσομοίωσης",
+        "btn_run_baseline": "🚀 Εκτέλεση Βασικής Ανάλυσης",
+        "btn_run_crisis": "🔥 Εκτέλεση Προσομοίωσης Κρίσης",
+        "btn_run_policy": "▶️ Εκτέλεση & Σύγκριση",
+        "btn_run_sensitivity": "▶️ Εκτέλεση Ανάλυσης Ευαισθησίας",
+        "demo_subtabs": ["📈 Οικονομικά", "👥 Επισκεψιμότητα", "🚚 Εφοδιαστική", "💥 Ανάλυση Κρίσης", "🧠 Συμπεριφορική Μεταβολή", "👤 Ανά Τύπο Αγοραστή"],
+        "sub_demographics": "👥 Δημογραφικά Στοιχεία",
+        "sub_archetypes": "🏷️ Αρχέτυπα Συμπεριφοράς (Πραγματικοί Συμμετέχοντες)",
+        "sub_dce": "🧠 Κατανομές Προτιμήσεων DCE",
+        "sub_catalogue": "🛒 Κατάλογος Προϊόντων",
+        "animation_speed": "Ταχύτητα Κινούμενης Εικόνας (καθυστέρηση ανά ημέρα, δευτ.)",
+        "securefood_btn": "📄 Λήψη Οδηγιών Σεναρίου SecureFood",
+    },
+    "pt": {
+        "subtitle": "**Modelo Baseado em Agentes para Comportamento do Consumidor & Cadeia de Abastecimento** | SecureFood / Horizon Europe — IAMO XR Lab",
+        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar"],
+        "sidebar_title": "⚙️ Parâmetros da Simulação",
+        "sidebar_general": "📅 Geral",
+        "duration_days": "Duração (dias)",
+        "start_month": "Mês de Início",
+        "base_consumers": "Consumidores Diários Base",
+        "sidebar_logistics": "🚚 Logística",
+        "reorder_pt": "Ponto de Reabastecimento (% do máx.)",
+        "restock_target": "Meta de Reabastecimento (% do máx.)",
+        "lead_time": "Prazo de Entrega (dias)",
+        "sidebar_crisis": "🔴 Cenário de Crise",
+        "crisis_start": "Dia de Início da Crise",
+        "price_inflation": "Inflação de Preços (%)",
+        "supply_disruption": "Interrupção de Fornecimento (dias)",
+        "crisis_duration": "Duração da Crise (dias)",
+        "sidebar_behaviour": "🧠 Comportamento do Consumidor",
+        "panic_sensitivity": "Sensibilidade ao Pânico",
+        "hoarding_factor": "Fator de Acumulação",
+        "sidebar_interventions": "🛡️ Intervenções Comportamentais",
+        "sidebar_mc": "🔬 Monte Carlo",
+        "mc_runs": "Execuções Monte Carlo (N)",
+        "sidebar_policy": "🏛️ Cenários de Política",
+        "header_data": "🏠 Dados & População",
+        "header_demo": "🎮 Demo Interativo",
+        "header_science": "🔬 Análise Científica (Fluxo Monte Carlo)",
+        "header_waste": "♻️ Painel de Desperdício Alimentar",
+        "header_product": "📦 Análise Detalhada por Produto",
+        "header_behaviour": "🧪 Painel de Teoria Comportamental",
+        "header_export": "📥 Exportar Dados da Simulação",
+        "header_policy": "🏛️ Análise de Políticas",
+        "header_stakeholder": "👔 Visão das Partes Interessadas",
+        "header_sensitivity": "🎚️ Análise de Sensibilidade",
+        "btn_run_demo": "▶️ Executar Simulação Comparativa",
+        "btn_run_baseline": "🚀 Executar Análise de Base",
+        "btn_run_crisis": "🔥 Executar Simulação de Crise",
+        "btn_run_policy": "▶️ Executar & Comparar",
+        "btn_run_sensitivity": "▶️ Executar Análise de Sensibilidade",
+        "demo_subtabs": ["📈 Financeiro", "👥 Afluência", "🚚 Logística", "💥 Análise da Crise", "🧠 Deriva Comportamental", "👤 Por Tipo de Comprador"],
+        "sub_demographics": "👥 Dados Demográficos",
+        "sub_archetypes": "🏷️ Arquétipos Comportamentais (Participantes Reais)",
+        "sub_dce": "🧠 Distribuições de Preferências DCE",
+        "sub_catalogue": "🛒 Catálogo de Produtos",
+        "animation_speed": "Velocidade de Animação (atraso por dia, segundos)",
+        "securefood_btn": "📄 Obter Instruções do Cenário SecureFood",
+    },
+}
+
+def _t(key: str) -> str:
+    """Return the translated string for `key` based on st.session_state['lang']."""
+    lang = st.session_state.get("lang", "en")
+    return _MAIN_T.get(lang, _MAIN_T["en"]).get(key, _MAIN_T["en"].get(key, key))
 
 # ---------------------------------------------------------------------------
 # Bundled data loader
@@ -2049,13 +2257,13 @@ def _render_analysis(
 # ===========================================================================
 
 def build_sidebar_params():
-    st.sidebar.title("⚙️ Simulation Parameters")
+    st.sidebar.title(_t("sidebar_title"))
 
-    st.sidebar.header("📅 General")
-    days_to_run    = st.sidebar.slider("Duration (Days)", 7, 1825, 60,
+    st.sidebar.header(_t("sidebar_general"))
+    days_to_run    = st.sidebar.slider(_t("duration_days"), 7, 1825, 60,
                                        help="1 year = 365 days | 5 years = 1825 days")
-    start_month    = st.sidebar.selectbox("Start Month", list(range(1, 13)), index=0)
-    base_consumers = st.sidebar.number_input("Base Daily Consumers", 10, 5000, 100,
+    start_month    = st.sidebar.selectbox(_t("start_month"), list(range(1, 13)), index=0)
+    base_consumers = st.sidebar.number_input(_t("base_consumers"), 10, 5000, 100,
                                               help="Approximate — actual count varies by weekday & season")
 
     # Auto-calibrated store tier display
@@ -2128,33 +2336,33 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
 | Sunday | 0.70 | | |
 """)
 
-    st.sidebar.header("🚚 Logistics")
-    reorder_pt  = st.sidebar.slider("Reorder Point (% of max storage)", 10, 90, 30) / 100.0
-    target_stock = st.sidebar.slider("Restock Target (% of max storage)", 50, 100, 90) / 100.0
-    lead_time   = st.sidebar.slider("Lead Time (Days)", 1, 14, 2)
+    st.sidebar.header(_t("sidebar_logistics"))
+    reorder_pt  = st.sidebar.slider(_t("reorder_pt"), 10, 90, 30) / 100.0
+    target_stock = st.sidebar.slider(_t("restock_target"), 50, 100, 90) / 100.0
+    lead_time   = st.sidebar.slider(_t("lead_time"), 1, 14, 2)
 
-    st.sidebar.header("🔴 Crisis Scenario")
-    cri_start    = st.sidebar.slider("Crisis Start Day", 1, max(2, days_to_run - 1),
+    st.sidebar.header(_t("sidebar_crisis"))
+    cri_start    = st.sidebar.slider(_t("crisis_start"), 1, max(2, days_to_run - 1),
                                      min(int(days_to_run / 2), days_to_run - 1))
-    inflation    = st.sidebar.slider("Price Inflation (%)", 0, 150, 25)
-    disruption   = st.sidebar.slider("Supply Disruption (Days)", 0, 30, 5)
+    inflation    = st.sidebar.slider(_t("price_inflation"), 0, 150, 25)
+    disruption   = st.sidebar.slider(_t("supply_disruption"), 0, 30, 5)
     # Crisis Duration: how many days the crisis lasts before conditions normalise.
     # 0 = indefinite (crisis runs to end of simulation — legacy behaviour).
     # >0 = crisis ends after this many days; prices revert, supply resumes,
     #      panic decays naturally → a full "crisis + recovery" arc is visible.
     max_dur      = max(1, days_to_run - cri_start)
     cri_duration = st.sidebar.slider(
-        "Crisis Duration (Days)", 0, max_dur, 0,
+        _t("crisis_duration"), 0, max_dur, 0,
         help="0 = crisis runs to end of simulation.  Set >0 to model a temporary "
              "shock (e.g. fuel price spike) — prices and supply return to normal "
              "after this many days so you can measure the full recovery arc."
     )
 
-    st.sidebar.header("🧠 Consumer Behaviour")
-    panic_sens   = st.sidebar.slider("Panic Sensitivity", 0.0, 1.0, 0.50, 0.05)
-    hoarding     = st.sidebar.slider("Hoarding Factor", 1.0, 3.0, 1.5, 0.1)
+    st.sidebar.header(_t("sidebar_behaviour"))
+    panic_sens   = st.sidebar.slider(_t("panic_sensitivity"), 0.0, 1.0, 0.50, 0.05)
+    hoarding     = st.sidebar.slider(_t("hoarding_factor"), 1.0, 3.0, 1.5, 0.1)
 
-    st.sidebar.header("🛡️ Behavioural Interventions")
+    st.sidebar.header(_t("sidebar_interventions"))
     st.sidebar.caption("These levers are visible in the 🧪 Behavioural Theory tab.")
 
     with st.sidebar.expander("🛒 Nudge — Purchase Limit", expanded=False):
@@ -2197,12 +2405,12 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
         )
         stockpile_days_override = stockpile_days_val if stockpile_days_on else None
 
-    st.sidebar.header("🔬 Monte Carlo")
-    mc_runs = st.sidebar.number_input("Monte Carlo Runs (N)", 3, 100, 10,
+    st.sidebar.header(_t("sidebar_mc"))
+    mc_runs = st.sidebar.number_input(_t("mc_runs"), 3, 100, 10,
                                        help="More runs = tighter confidence intervals")
 
     # -----------------------------------------------------------------------
-    st.sidebar.header("🏛️ Policy Scenarios")
+    st.sidebar.header(_t("sidebar_policy"))
     st.sidebar.caption("Configure policy levers for the Policy Analysis tab.")
 
     with st.sidebar.expander("🧀 Fat Tax", expanded=False):
@@ -2313,7 +2521,7 @@ def _make_model(
 # ===========================================================================
 
 def render_data_tab():
-    st.header("🏠 Data & Population")
+    st.header(_t("header_data"))
 
     # ── Bundled-data status banner ────────────────────────────────────────────
     _has_secret  = "firebase" in st.secrets and "data" in st.secrets["firebase"]
@@ -2428,7 +2636,7 @@ def render_data_tab():
         )
 
     st.divider()
-    st.subheader("👥 Population Demographics")
+    st.subheader(_t("sub_demographics"))
 
     real_profiles = [p for p in pool if p.get("is_real")]
     df_demo = pd.DataFrame(real_profiles)
@@ -2467,7 +2675,7 @@ def render_data_tab():
     # ---- Archetype distribution ----
     _arch_hdr, _arch_info = st.columns([8, 1])
     with _arch_hdr:
-        st.subheader("🏷️ Behavioural Archetypes (Real Participants)")
+        st.subheader(_t("sub_archetypes"))
     with _arch_info:
         with st.popover("ℹ️"):
             st.markdown("""
@@ -2536,7 +2744,7 @@ each participant via k-means clustering.
             st.plotly_chart(fig_radar, width='stretch')
 
     # ---- DCE preference distributions ----
-    st.subheader("🧠 DCE-Derived Preference Distributions")
+    st.subheader(_t("sub_dce"))
     pref_cols = {
         "finnish_preference": "Finnish Preference",
         "organic_preference": "Organic Preference",
@@ -2554,7 +2762,7 @@ each participant via k-means clustering.
             col_widget.plotly_chart(fig, width='stretch')
 
     # ---- Product catalogue preview ----
-    st.subheader("🛒 Product Catalogue")
+    st.subheader(_t("sub_catalogue"))
     df_prods = pd.DataFrame(prods)
     cols_show = [c for c in ["name","category","price","fat_content",
                              "is_bio","is_plant_based","shelf_life_days",
@@ -2570,7 +2778,7 @@ each participant via k-means clustering.
 # ===========================================================================
 
 def render_demo_tab(params: dict):
-    st.header("🎮 Interactive Demo")
+    st.header(_t("header_demo"))
     st.markdown(
         "Run a single paired simulation (Baseline vs Crisis) and watch the "
         "results update in real time."
@@ -2580,9 +2788,9 @@ def render_demo_tab(params: dict):
         st.warning("⚠️ Load data in the **🏠 Data & Population** tab first.")
         return
 
-    run_speed = st.slider("Animation Speed (delay per day, seconds)", 0.0, 0.2, 0.02, 0.01)
+    run_speed = st.slider(_t("animation_speed"), 0.0, 0.2, 0.02, 0.01)
 
-    if st.button("▶️ Run Comparative Simulation", type="primary"):
+    if st.button(_t("btn_run_demo"), type="primary"):
         SEED = 42
         model_base   = _make_model(params, is_crisis=False, seed=SEED)
         model_crisis = _make_model(params, is_crisis=True,  seed=SEED)
@@ -2672,7 +2880,7 @@ def render_demo_tab(params: dict):
     df_log     = st.session_state.sim_scm_log
     model_cris = st.session_state.sim_model_crisis
 
-    sub1, sub2, sub3, sub4, sub5, sub6 = st.tabs(["📈 Financials", "👥 Footfall", "🚚 Logistics", "💥 Crisis Breakdown", "🧠 Behavioural Drift", "👤 By Buyer Type"])
+    sub1, sub2, sub3, sub4, sub5, sub6 = st.tabs(_t("demo_subtabs"))
 
     with sub1:
         # ── Helper: add crisis start/end vlines to any figure ────────────────
@@ -3401,7 +3609,7 @@ def _run_mc_batch(n_runs: int, days: int, params: dict,
 # ===========================================================================
 
 def render_science_tab(params: dict):
-    st.header("🔬 Scientific Analysis (Monte Carlo Workflow)")
+    st.header(_t("header_science"))
 
     if st.session_state.config_data is None:
         st.warning("⚠️ Load data in the **🏠 Data & Population** tab first.")
@@ -3419,7 +3627,7 @@ def render_science_tab(params: dict):
             "and identify inventory inefficiencies.</p></div>",
             unsafe_allow_html=True,
         )
-        if st.button("🚀 Run Baseline Analysis", type="primary"):
+        if st.button(_t("btn_run_baseline"), type="primary"):
             df_raw, prod_stats = _run_mc_batch(n_runs, days, params, is_crisis=False,
                                                 progress_label="Simulating Baseline…")
             # Compute AI storage recommendations
@@ -3521,7 +3729,7 @@ def render_science_tab(params: dict):
 
         st.divider()
         st.markdown(f"✅ Ready to test **{st.session_state.active_baseline}** vs **Crisis**.")
-        if st.button("🔥 Run Crisis Simulation", type="primary"):
+        if st.button(_t("btn_run_crisis"), type="primary"):
             recs = st.session_state.ai_recs if st.session_state.data_base_opt is not None else None
             df_cri, _ = _run_mc_batch(n_runs, days, params, is_crisis=True,
                                        ai_recs=recs, progress_label="Simulating Crisis…")
@@ -3667,7 +3875,7 @@ def _plot_ci_dual(df_base: pd.DataFrame, df_cri: pd.DataFrame, label_base: str):
 # ===========================================================================
 
 def render_waste_tab():
-    st.header("♻️ Food Waste Dashboard")
+    st.header(_t("header_waste"))
 
     if st.session_state.sim_waste is None:
         st.info("Run the Interactive Demo simulation first to populate waste data.")
@@ -3743,7 +3951,7 @@ def render_waste_tab():
 # ===========================================================================
 
 def render_product_tab():
-    st.header("📦 Per-Product Deep Dive")
+    st.header(_t("header_product"))
 
     if st.session_state.sim_stock is None:
         st.info("Run the Interactive Demo simulation first.")
@@ -3833,7 +4041,7 @@ def render_product_tab():
 # ===========================================================================
 
 def render_behaviour_tab(params):
-    st.header("🧪 Behavioural Theory Dashboard")
+    st.header(_t("header_behaviour"))
     st.markdown(
         "Visualises how each embedded behavioural science theory shapes simulation "
         "outcomes. All charts update after running the **Interactive Demo** simulation."
@@ -4135,7 +4343,7 @@ def render_behaviour_tab(params):
 # ===========================================================================
 
 def render_export_tab():
-    st.header("📥 Export Simulation Data")
+    st.header(_t("header_export"))
 
     sections = {
         "Daily Aggregate (Baseline + Crisis)": "sim_results",
@@ -4669,7 +4877,7 @@ def _generate_policy_narrative(
 # ===========================================================================
 
 def render_policy_tab(params: dict):
-    st.header("🏛️ Policy Analysis")
+    st.header(_t("header_policy"))
     st.markdown(
         "Run a **Baseline vs Policy** comparison to quantify how each policy lever "
         "affects revenue, food waste, consumer welfare, and environmental footprint. "
@@ -4710,7 +4918,7 @@ def render_policy_tab(params: dict):
     days = params["days"]
     col_run, col_name, col_runs = st.columns([2, 2, 1])
     with col_run:
-        run_btn = st.button("▶️ Run & Compare", type="primary", key="pol_run_btn")
+        run_btn = st.button(_t("btn_run_policy"), type="primary", key="pol_run_btn")
     with col_name:
         scenario_name = st.text_input(
             "Scenario name (for multi-comparison)",
@@ -5332,7 +5540,7 @@ def render_policy_tab(params: dict):
 # ===========================================================================
 
 def render_stakeholder_tab():
-    st.header("👔 Stakeholder View")
+    st.header(_t("header_stakeholder"))
     st.markdown(
         "Three curated dashboards — each filtered to the metrics that matter most "
         "for a specific audience. All data comes from the **Interactive Demo** simulation run."
@@ -5578,7 +5786,7 @@ def render_stakeholder_tab():
 # ===========================================================================
 
 def render_sensitivity_tab(params: dict):
-    st.header("🎚️ Sensitivity Analysis")
+    st.header(_t("header_sensitivity"))
     st.markdown(
         "**One-at-a-time (OAT) parameter sweep** — vary each model parameter across its "
         "range while holding all others at their baseline value. The result shows which "
@@ -5629,7 +5837,7 @@ def render_sensitivity_tab(params: dict):
     st.markdown(f"Will vary **{len(selected_params)}** parameters × {PARAM_DEFS['reorder_pt']['steps']} levels "
                 f"= **{len(selected_params)*5} simulation runs** of {sa_days} days each.")
 
-    run_sa = st.button("▶️ Run Sensitivity Analysis", type="primary", key="sa_run_btn")
+    run_sa = st.button(_t("btn_run_sensitivity"), type="primary", key="sa_run_btn")
 
     if "sa_results" not in st.session_state:
         st.session_state.sa_results = None
@@ -5769,10 +5977,7 @@ def main():
     _title_col, _btn_col = st.columns([4, 1])
     with _title_col:
         st.title("🛒 GROCERYsim ABM v2.0")
-        st.markdown(
-            "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | "
-            "SecureFood / Horizon Europe — IAMO XR Lab"
-        )
+        st.markdown(_t("subtitle"))
     with _btn_col:
         st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
         _pdf_path = os.path.join(_STATIC_DIR, "GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf")
@@ -5780,7 +5985,7 @@ def main():
             with open(_pdf_path, "rb") as _f:
                 _pdf_bytes = _f.read()
             st.download_button(
-                label="📄 Get SecureFood Scenario Instructions",
+                label=_t("securefood_btn"),
                 data=_pdf_bytes,
                 file_name="GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf",
                 mime="application/pdf",
@@ -5814,18 +6019,7 @@ def main():
 </script>""", height=0)
     st.divider()
 
-    tabs = st.tabs([
-        "🏠 Data & Population",
-        "🎮 Interactive Demo",
-        "🔬 Scientific Analysis",
-        "♻️ Food Waste",
-        "📦 Per-Product",
-        "🏛️ Policy Analysis",
-        "👔 Stakeholder View",
-        "🎚️ Sensitivity Analysis",
-        "🧪 Behavioural Theory",
-        "📥 Export",
-    ])
+    tabs = st.tabs(_t("tabs"))
 
     with tabs[0]:
         render_data_tab()
