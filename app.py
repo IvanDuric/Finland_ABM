@@ -391,8 +391,11 @@ section { padding: clamp(80px, 14vh, 160px) 0; }
 .feature-tag { color: var(--teal-light); font-size: 9px; padding: 3px 8px; border: 1px solid var(--hairline-strong); border-radius: 2px; }
 .feature-card h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: var(--cream); line-height: 1.15; }
 .feature-card p { font-size: 14px; line-height: 1.6; color: var(--cream-dim); }
+section.features { padding: 28px 0 40px; }
+section.features .section-title { margin-bottom: 28px; }
 
 /* ── Partners ── */
+section.partners { padding-top: 40px; }
 .partner-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); }
 .partner-card { display: flex; align-items: center; gap: 16px; padding: 22px 20px; background: rgba(4, 32, 38, 0.6); transition: background 0.2s; }
 .partner-card:hover { background: rgba(7, 59, 76, 0.6); }
@@ -1068,7 +1071,6 @@ const App = () => {
       <Header lang={lang} setLang={setLang} />
       <main>
         <Hero t={t} />
-        <Overview t={t} />
         <Features t={t} />
         <Partners t={t} />
       </main>
