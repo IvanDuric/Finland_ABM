@@ -296,7 +296,7 @@ a { color: inherit; text-decoration: none; }
 .grain { position: absolute; inset: 0; opacity: 0.05; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); mix-blend-mode: overlay; }
 
 /* ── Layout ── */
-.page { position: relative; z-index: 1; }
+.page { position: relative; z-index: 1; isolation: isolate; }
 main { max-width: var(--max-width); margin: 0 auto; padding: 0 clamp(24px, 5vw, 80px); }
 
 /* ── Header ── */
@@ -384,17 +384,16 @@ section { padding: clamp(80px, 14vh, 160px) 0; }
 
 /* ── Features ── */
 .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.feature-card { padding: 32px 28px; background: rgba(7, 59, 76, 0.45); border: 1px solid var(--hairline); border-radius: 3px; transition: all 0.25s ease; display: flex; flex-direction: column; gap: 14px; min-height: 260px; }
-.feature-card:hover { border-color: var(--teal); background: rgba(7, 59, 76, 0.7); transform: translateY(-2px); }
+.feature-card { padding: 32px 28px; background: #073B4C; border: 1px solid rgba(146,221,219,0.28); border-radius: 3px; transition: border-color 0.25s ease, transform 0.25s ease; display: flex; flex-direction: column; gap: 14px; }
+.feature-card:hover { border-color: var(--teal); background: #0a4d63; transform: translateY(-2px); }
 .feature-head { display: flex; justify-content: space-between; align-items: center; }
 .feature-n { color: var(--amber); font-size: 11px; }
 .feature-tag { color: var(--teal-light); font-size: 9px; padding: 3px 8px; border: 1px solid var(--hairline-strong); border-radius: 2px; }
-.feature-card h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: var(--cream); line-height: 1.15; }
-.feature-card p { font-size: 14px; line-height: 1.6; color: var(--cream-dim); }
+.feature-card h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: #F4EFE6; line-height: 1.15; }
+.feature-card p { font-size: 14px; line-height: 1.6; color: rgba(244,239,230,0.85); }
 section.features { padding: 20px 0 40px; }
 section.features .section-head { display: none; }
 section.features .section-title { display: none; }
-.feature-card { min-height: auto; }
 
 /* ── Partners ── */
 section.partners { padding-top: 40px; }
