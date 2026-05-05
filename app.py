@@ -317,7 +317,7 @@ main { max-width: var(--max-width); margin: 0 auto; padding: 0 clamp(24px, 5vw, 
 .hero {
   display: grid; grid-template-columns: 1.1fr 1fr;
   gap: clamp(32px, 5vw, 80px);
-  padding: clamp(56px, 9vh, 110px) 0 clamp(80px, 14vh, 140px);
+  padding: clamp(56px, 9vh, 110px) 0 clamp(32px, 5vh, 56px);
   align-items: center;
 }
 .eyebrow { display: flex; align-items: center; gap: 14px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.14em; color: var(--teal-light); margin-bottom: 28px; text-transform: uppercase; }
@@ -391,8 +391,10 @@ section { padding: clamp(80px, 14vh, 160px) 0; }
 .feature-tag { color: var(--teal-light); font-size: 9px; padding: 3px 8px; border: 1px solid var(--hairline-strong); border-radius: 2px; }
 .feature-card h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: var(--cream); line-height: 1.15; }
 .feature-card p { font-size: 14px; line-height: 1.6; color: var(--cream-dim); }
-section.features { padding: 28px 0 40px; }
-section.features .section-title { margin-bottom: 28px; }
+section.features { padding: 20px 0 40px; }
+section.features .section-head { display: none; }
+section.features .section-title { display: none; }
+.feature-card { min-height: auto; }
 
 /* ── Partners ── */
 section.partners { padding-top: 40px; }
@@ -418,13 +420,13 @@ section.partners { padding-top: 40px; }
   .sim-frame { aspect-ratio: 16 / 11; max-height: 50vh; }
   .overview-grid { grid-template-columns: 1fr; }
   .overview-stats { border-left: none; border-top: 1px solid var(--hairline); padding-left: 0; padding-top: 24px; flex-direction: row; gap: 32px; flex-wrap: wrap; }
-  .feature-grid { grid-template-columns: 1fr; }
+  .feature-grid { grid-template-columns: repeat(3, 1fr); }
   .partner-grid { grid-template-columns: repeat(2, 1fr); }
   .hero-logos-row { grid-template-columns: repeat(4, 1fr); }
 
   main { padding: 0 clamp(16px, 4vw, 40px); }
   .site-header { padding: 0 clamp(16px, 4vw, 40px); }
-  .hero { padding: 48px 0 40px; }
+  .hero { padding: 48px 0 20px; }
   .hero-title { font-size: clamp(52px, 10vw, 96px); }
   .hero-actions { gap: 10px; }
   .btn { min-height: 44px; padding: 11px 22px; font-size: 14px; }
@@ -443,7 +445,8 @@ section.partners { padding-top: 40px; }
   .logo-slot img { max-height: 60px !important; max-width: 90px !important; }
   .logo-slot-label { font-size: 9px; }
 
-  .hero { padding: 32px 0 28px; }
+  .hero { padding: 32px 0 16px; }
+  .feature-grid { grid-template-columns: 1fr; }
   .hero-title { font-size: clamp(44px, 14vw, 72px); }
   .hero-lede { font-size: 15px; }
   .hero-sub { font-size: 13px; }
@@ -1520,7 +1523,7 @@ def render_landing_page():
         st.session_state["page"] = "case_studies"
         st.rerun()
 
-    components.html(landing_html, height=880)
+    components.html(landing_html, height=1200)
 
     # JS bridge: listen for postMessage from React iframe, then click the hidden button
     components.html("""<script>
