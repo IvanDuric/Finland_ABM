@@ -1104,15 +1104,15 @@ const CS_TRANS = {
       { title: 'Finland — Dairy Supply Chain',
         desc: 'Simulate dairy product availability, panic-buying dynamics and supply disruptions in the Finnish grocery market.',
         tag: 'DAIRY · NORTHERN EU', status: 'active' },
-      { title: 'Greece — Olive Oil Markets',
-        desc: 'Mediterranean supply chain stress-testing under drought and export restriction scenarios.',
-        tag: 'STAPLES · SOUTH EU', status: 'soon' },
-      { title: 'Portugal — Atlantic Food Corridor',
-        desc: 'Cross-border food security modelling across Atlantic trade routes and seasonal demand shifts.',
-        tag: 'TRADE · ATLANTIC', status: 'soon' },
-      { title: 'EU-Wide Stress Test',
-        desc: 'Multi-country ABM calibrated across 27 EU member states for coordinated crisis scenario analysis.',
-        tag: 'SYSTEMIC · ALL MARKETS', status: 'soon' },
+      { title: 'Greece — Dairy Supply Chain',
+        desc: 'Simulate dairy product availability, panic-buying dynamics and supply disruptions in the Greek grocery market.',
+        tag: 'DAIRY · SOUTH EU', status: 'soon' },
+      { title: 'Portugal — Fruits',
+        desc: 'Simulate fruit product availability, panic-buying dynamics and supply disruptions in the Portuguese grocery market.',
+        tag: 'FRUITS · WEST EU', status: 'soon' },
+      { title: 'Greece — Fish Supply Chain',
+        desc: 'Simulate fish product availability, panic-buying dynamics and supply disruptions in the Greek grocery market.',
+        tag: 'FISH · SOUTH EU', status: 'soon' },
     ],
   },
   fi: {
@@ -1126,15 +1126,15 @@ const CS_TRANS = {
       { title: 'Suomi — Maitotuoteketju',
         desc: 'Simuloi maitotuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä suomalaisessa ruokakaupassa.',
         tag: 'MAITOTUOTTEET · POHJ. EU', status: 'active' },
-      { title: 'Kreikka — Oliiviöljymarkkinat',
-        desc: 'Välimeren toimitusketjun stressitestaus kuivuuden ja vientirajoitusten oloissa.',
-        tag: 'PERUSELINTARVIKKEET · ET. EU', status: 'soon' },
-      { title: 'Portugali — Atlantin ruokakäytävä',
-        desc: 'Rajat ylittävä elintarviketurvamallinnus Atlantin kauppareittejä pitkin.',
-        tag: 'KAUPPA · ATLANTTI', status: 'soon' },
-      { title: 'EU-laajuinen stressitesti',
-        desc: 'Monimaainen ABM 27 EU-jäsenmaalle koordinoitua kriisianalyysia varten.',
-        tag: 'SYSTEEMINEN · KAIKKI MARKKINAT', status: 'soon' },
+      { title: 'Kreikka — Maitotuoteketju',
+        desc: 'Simuloi maitotuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä kreikkalaisessa ruokakaupassa.',
+        tag: 'MAITOTUOTTEET · ET. EU', status: 'soon' },
+      { title: 'Portugali — Hedelmät',
+        desc: 'Simuloi hedelmätuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä portugalilaisessa ruokakaupassa.',
+        tag: 'HEDELMÄT · LÄNSI-EU', status: 'soon' },
+      { title: 'Kreikka — Kalan toimitusketju',
+        desc: 'Simuloi kalatuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä kreikkalaisessa ruokakaupassa.',
+        tag: 'KALA · ET. EU', status: 'soon' },
     ],
   },
   el: {
@@ -1148,15 +1148,15 @@ const CS_TRANS = {
       { title: 'Φινλανδία — Αλυσίδα Γαλακτοκομικών',
         desc: 'Προσομοιώστε διαθεσιμότητα γαλακτοκομικών, αγορές πανικού και διαταραχές στη φινλανδική αγορά.',
         tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΒΟΡΕΙΑ ΕΕ', status: 'active' },
-      { title: 'Ελλάδα — Αγορές Ελαιόλαδου',
-        desc: 'Ανθεκτικότητα αλυσίδας Μεσογείου υπό ξηρασία και εξαγωγικούς περιορισμούς.',
-        tag: 'ΒΑΣΙΚΑ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
-      { title: 'Πορτογαλία — Ατλαντικός Διάδρομος',
-        desc: 'Διασυνοριακή μοντελοποίηση επισιτιστικής ασφάλειας κατά μήκος ατλαντικών εμπορικών διαδρόμων.',
-        tag: 'ΕΜΠΟΡΙΟ · ΑΤΛΑΝΤΙΚΟΣ', status: 'soon' },
-      { title: 'Πανευρωπαϊκό Stress Test',
-        desc: 'Πολυ-χώρο ABM βαθμονομημένο σε 27 κράτη-μέλη ΕΕ για ανάλυση κρίσεων.',
-        tag: 'ΣΥΣΤΗΜΙΚΟ · ΟΛΕΣ ΟΙ ΑΓΟΡΕΣ', status: 'soon' },
+      { title: 'Ελλάδα — Αλυσίδα Γαλακτοκομικών',
+        desc: 'Προσομοιώστε τη διαθεσιμότητα γαλακτοκομικών, αγορές πανικού και διαταραχές στην ελληνική αγορά.',
+        tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
+      { title: 'Πορτογαλία — Φρούτα',
+        desc: 'Προσομοιώστε τη διαθεσιμότητα φρούτων, αγορές πανικού και διαταραχές στην πορτογαλική αγορά.',
+        tag: 'ΦΡΟΥΤΑ · ΔΥΤΙΚΗ ΕΕ', status: 'soon' },
+      { title: 'Ελλάδα — Αλυσίδα Ψαριού',
+        desc: 'Προσομοιώστε τη διαθεσιμότητα ψαριών, αγορές πανικού και διαταραχές στην ελληνική αγορά.',
+        tag: 'ΨΑΡΙ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
     ],
   },
   pt: {
@@ -1170,22 +1170,23 @@ const CS_TRANS = {
       { title: 'Finlândia — Cadeia de Laticínios',
         desc: 'Simule disponibilidade de laticínios, compras em pânico e perturbações logísticas no mercado finlandês.',
         tag: 'LATICÍNIOS · NORTE UE', status: 'active' },
-      { title: 'Grécia — Mercados de Azeite',
-        desc: 'Teste de resiliência mediterrânica sob cenários de seca e restrições à exportação.',
-        tag: 'BÁSICOS · SUL UE', status: 'soon' },
-      { title: 'Portugal — Corredor Alimentar Atlântico',
-        desc: 'Modelação transfronteiriça de segurança alimentar pelas rotas comerciais atlânticas.',
-        tag: 'COMÉRCIO · ATLÂNTICO', status: 'soon' },
-      { title: 'UE — Stress Test Pan-Europeu',
-        desc: 'ABM multi-país calibrado em 27 estados-membros para análise coordenada de crises.',
-        tag: 'SISTÉMICO · TODOS OS MERCADOS', status: 'soon' },
+      { title: 'Grécia — Cadeia de Laticínios',
+        desc: 'Simule disponibilidade de laticínios, compras em pânico e perturbações logísticas no mercado grego.',
+        tag: 'LATICÍNIOS · SUL UE', status: 'soon' },
+      { title: 'Portugal — Frutas',
+        desc: 'Simule disponibilidade de frutas, compras em pânico e perturbações logísticas no mercado português.',
+        tag: 'FRUTAS · OESTE UE', status: 'soon' },
+      { title: 'Grécia — Cadeia de Peixe',
+        desc: 'Simule disponibilidade de peixe, compras em pânico e perturbações logísticas no mercado grego.',
+        tag: 'PEIXE · SUL UE', status: 'soon' },
     ],
   },
 };
 
-const CARD_FLAGS = ['🇫🇮', '🇬🇷', '🇵🇹', '🇪🇺'];
+const CARD_FLAGS = ['🇫🇮', '🇬🇷', '🇵🇹', '🇬🇷'];
 
-// ── Photo illustrations ───────────────────────────────────────────────────────
+// ── Icon illustrations ────────────────────────────────────────────────────────
+
 const PhotoFI = () => (
   <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" style={{display:'block'}}>
     <defs>
@@ -1195,20 +1196,13 @@ const PhotoFI = () => (
       </linearGradient>
     </defs>
     <rect width="400" height="300" fill="url(#fi-g)"/>
-    <path d="M0 200 C80 170 120 190 200 175 C280 160 330 185 400 165 L400 300 L0 300Z" fill="rgba(68,161,160,0.12)"/>
-    <path d="M0 225 C100 210 200 220 300 205 C360 196 390 212 400 208 L400 300 L0 300Z" fill="rgba(146,221,219,0.07)"/>
-    <circle cx="78" cy="72" r="42" fill="none" stroke="rgba(188,220,139,0.14)" strokeWidth="1"/>
-    <circle cx="78" cy="72" r="24" fill="none" stroke="rgba(188,220,139,0.2)" strokeWidth="1"/>
-    <line x1="78" y1="48" x2="78" y2="96" stroke="rgba(188,220,139,0.15)" strokeWidth="1"/>
-    <line x1="54" y1="72" x2="102" y2="72" stroke="rgba(188,220,139,0.15)" strokeWidth="1"/>
-    <path d="M172 105 Q182 92 200 90 Q218 92 228 105 L233 182 Q200 196 167 182Z" fill="none" stroke="rgba(146,221,219,0.35)" strokeWidth="1.5"/>
-    <rect x="180" y="132" width="40" height="28" rx="2" fill="rgba(146,221,219,0.06)" stroke="rgba(146,221,219,0.2)" strokeWidth="1"/>
-    <text x="200" y="151" textAnchor="middle" fill="rgba(146,221,219,0.45)" fontSize="8" fontFamily="monospace" letterSpacing="2">DAIRY</text>
-    <circle cx="312" cy="58" r="3" fill="rgba(188,220,139,0.5)"/>
-    <circle cx="342" cy="88" r="2" fill="rgba(188,220,139,0.4)"/>
-    <circle cx="292" cy="100" r="2.5" fill="rgba(188,220,139,0.3)"/>
-    <circle cx="352" cy="48" r="2" fill="rgba(188,220,139,0.6)"/>
-    <text x="200" y="262" textAnchor="middle" fill="rgba(146,221,219,0.2)" fontSize="10" fontFamily="monospace" letterSpacing="4">FINLAND · FI</text>
+    <ellipse cx="200" cy="148" rx="72" ry="72" fill="rgba(146,221,219,0.05)"/>
+    <rect x="184" y="66" width="32" height="14" rx="6" fill="rgba(188,220,139,0.25)" stroke="rgba(188,220,139,0.65)" strokeWidth="1.5"/>
+    <rect x="181" y="79" width="38" height="18" rx="3" fill="rgba(146,221,219,0.08)" stroke="rgba(146,221,219,0.5)" strokeWidth="1.5"/>
+    <path d="M181,97 C168,104 162,118 162,132 L162,208 Q162,222 176,222 L224,222 Q238,222 238,208 L238,132 C238,118 232,104 219,97 Z" fill="rgba(146,221,219,0.08)" stroke="rgba(146,221,219,0.55)" strokeWidth="1.8"/>
+    <path d="M164,175 Q182,168 200,172 Q218,176 236,170" fill="none" stroke="rgba(188,220,139,0.45)" strokeWidth="1.5" strokeLinecap="round"/>
+    <text x="200" y="200" textAnchor="middle" fill="rgba(188,220,139,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">DAIRY</text>
+    <text x="200" y="260" textAnchor="middle" fill="rgba(146,221,219,0.22)" fontSize="10" fontFamily="monospace" letterSpacing="4">FINLAND · FI</text>
   </svg>
 );
 
@@ -1221,13 +1215,13 @@ const PhotoGR = () => (
       </linearGradient>
     </defs>
     <rect width="400" height="300" fill="url(#gr-g)"/>
-    <path d="M30 200 Q80 185 150 195 Q200 200 250 190 Q330 175 400 195 L400 300 L0 300Z" fill="rgba(219,161,89,0.07)"/>
-    <path d="M100 60 Q150 20 200 60 Q250 100 300 60 Q330 40 340 80 L330 280 L270 300 L130 300 L70 280Z" fill="none" stroke="rgba(219,161,89,0.18)" strokeWidth="1.5"/>
-    <ellipse cx="200" cy="150" rx="14" ry="48" fill="rgba(219,161,89,0.08)" stroke="rgba(219,161,89,0.22)" strokeWidth="1"/>
-    <ellipse cx="166" cy="132" rx="9" ry="32" fill="rgba(219,161,89,0.06)" stroke="rgba(219,161,89,0.18)" strokeWidth="1" transform="rotate(-15 166 132)"/>
-    <ellipse cx="234" cy="132" rx="9" ry="32" fill="rgba(219,161,89,0.06)" stroke="rgba(219,161,89,0.18)" strokeWidth="1" transform="rotate(15 234 132)"/>
-    <circle cx="200" cy="95" r="17" fill="rgba(219,161,89,0.1)" stroke="rgba(219,161,89,0.28)" strokeWidth="1.5"/>
-    <text x="200" y="262" textAnchor="middle" fill="rgba(219,161,89,0.22)" fontSize="10" fontFamily="monospace" letterSpacing="4">GREECE · GR</text>
+    <ellipse cx="200" cy="148" rx="72" ry="72" fill="rgba(219,161,89,0.05)"/>
+    <rect x="184" y="66" width="32" height="14" rx="6" fill="rgba(219,161,89,0.22)" stroke="rgba(219,161,89,0.65)" strokeWidth="1.5"/>
+    <rect x="181" y="79" width="38" height="18" rx="3" fill="rgba(219,161,89,0.07)" stroke="rgba(219,161,89,0.5)" strokeWidth="1.5"/>
+    <path d="M181,97 C168,104 162,118 162,132 L162,208 Q162,222 176,222 L224,222 Q238,222 238,208 L238,132 C238,118 232,104 219,97 Z" fill="rgba(219,161,89,0.07)" stroke="rgba(219,161,89,0.55)" strokeWidth="1.8"/>
+    <path d="M164,175 Q182,168 200,172 Q218,176 236,170" fill="none" stroke="rgba(252,201,149,0.45)" strokeWidth="1.5" strokeLinecap="round"/>
+    <text x="200" y="200" textAnchor="middle" fill="rgba(252,201,149,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">DAIRY</text>
+    <text x="200" y="260" textAnchor="middle" fill="rgba(219,161,89,0.28)" fontSize="10" fontFamily="monospace" letterSpacing="4">GREECE · GR</text>
   </svg>
 );
 
@@ -1240,14 +1234,12 @@ const PhotoPT = () => (
       </linearGradient>
     </defs>
     <rect width="400" height="300" fill="url(#pt-g)"/>
-    <circle cx="320" cy="68" r="44" fill="none" stroke="rgba(252,201,149,0.14)" strokeWidth="1"/>
-    <circle cx="320" cy="68" r="32" fill="rgba(252,201,149,0.04)" stroke="rgba(252,201,149,0.18)" strokeWidth="1.5"/>
-    <path d="M0 180 Q50 160 100 170 Q150 180 200 160 Q260 140 320 165 Q370 180 400 170 L400 300 L0 300Z" fill="rgba(68,161,160,0.13)"/>
-    <path d="M0 205 Q80 190 160 205 Q240 220 320 200 Q370 190 400 204 L400 300 L0 300Z" fill="rgba(68,161,160,0.09)"/>
-    <path d="M0 232 Q100 222 200 237 Q300 252 400 232 L400 300 L0 300Z" fill="rgba(68,161,160,0.06)"/>
-    <path d="M130 195 Q150 175 170 195 Q180 205 190 195 Q200 185 210 195" fill="none" stroke="rgba(146,221,219,0.38)" strokeWidth="2" strokeLinecap="round"/>
-    <path d="M200 210 Q220 192 240 210 Q252 220 262 210 Q272 200 282 210" fill="none" stroke="rgba(146,221,219,0.28)" strokeWidth="2" strokeLinecap="round"/>
-    <text x="200" y="262" textAnchor="middle" fill="rgba(68,161,160,0.28)" fontSize="10" fontFamily="monospace" letterSpacing="4">PORTUGAL · PT</text>
+    <ellipse cx="200" cy="148" rx="72" ry="72" fill="rgba(68,161,160,0.05)"/>
+    <path d="M200,78 C196,74 192,72 188,74 C178,78 176,90 178,100 C165,98 155,104 152,115 C148,130 154,148 165,158 C172,164 182,168 192,168 L208,168 C218,168 228,164 235,158 C246,148 252,130 248,115 C245,104 235,98 222,100 C224,90 222,78 212,74 C208,72 204,74 200,78 Z" fill="rgba(68,161,160,0.1)" stroke="rgba(146,221,219,0.55)" strokeWidth="1.8"/>
+    <path d="M200,72 L200,62" stroke="rgba(146,221,219,0.5)" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M200,66 C206,60 218,60 222,68" fill="rgba(188,220,139,0.12)" stroke="rgba(188,220,139,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
+    <text x="200" y="200" textAnchor="middle" fill="rgba(146,221,219,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">FRUITS</text>
+    <text x="200" y="260" textAnchor="middle" fill="rgba(68,161,160,0.32)" fontSize="10" fontFamily="monospace" letterSpacing="4">PORTUGAL · PT</text>
   </svg>
 );
 
@@ -1260,15 +1252,16 @@ const PhotoEU = () => (
       </radialGradient>
     </defs>
     <rect width="400" height="300" fill="url(#eu-g)"/>
-    <circle cx="200" cy="138" r="92" fill="none" stroke="rgba(219,161,89,0.1)" strokeWidth="1"/>
-    <circle cx="200" cy="138" r="72" fill="none" stroke="rgba(219,161,89,0.13)" strokeWidth="1"/>
-    <circle cx="200" cy="138" r="50" fill="none" stroke="rgba(219,161,89,0.16)" strokeWidth="1"/>
-    {Array.from({length:12}).map((_,k) => {
-      const a = (k/12)*Math.PI*2 - Math.PI/2;
-      return <circle key={k} cx={200 + Math.cos(a)*72} cy={138 + Math.sin(a)*72} r="4" fill="rgba(219,161,89,0.48)"/>;
-    })}
-    <circle cx="200" cy="138" r="7" fill="rgba(219,161,89,0.14)" stroke="rgba(219,161,89,0.38)" strokeWidth="1.5"/>
-    <text x="200" y="262" textAnchor="middle" fill="rgba(219,161,89,0.22)" fontSize="10" fontFamily="monospace" letterSpacing="4">EUROPE · EU</text>
+    <ellipse cx="200" cy="140" rx="72" ry="72" fill="rgba(219,161,89,0.04)"/>
+    <ellipse cx="200" cy="140" rx="56" ry="36" fill="rgba(219,161,89,0.07)" stroke="rgba(219,161,89,0.45)" strokeWidth="1.8"/>
+    <polygon points="200,88 212,104 230,100 220,116 228,132 212,128 200,144 188,128 172,132 180,116 170,100 188,104" fill="none" stroke="rgba(219,161,89,0.55)" strokeWidth="1.5" strokeLinejoin="round"/>
+    <ellipse cx="200" cy="140" rx="8" ry="5" fill="rgba(219,161,89,0.18)" stroke="rgba(219,161,89,0.5)" strokeWidth="1.2"/>
+    <path d="M144,140 C152,152 168,162 184,165" fill="none" stroke="rgba(219,161,89,0.35)" strokeWidth="1.5" strokeLinecap="round"/>
+    <path d="M256,140 C248,152 232,162 216,165" fill="none" stroke="rgba(219,161,89,0.35)" strokeWidth="1.5" strokeLinecap="round"/>
+    <path d="M160,116 C168,124 180,130 200,132" fill="none" stroke="rgba(219,161,89,0.28)" strokeWidth="1.2" strokeLinecap="round"/>
+    <path d="M240,116 C232,124 220,130 200,132" fill="none" stroke="rgba(219,161,89,0.28)" strokeWidth="1.2" strokeLinecap="round"/>
+    <text x="200" y="200" textAnchor="middle" fill="rgba(252,201,149,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">FISH</text>
+    <text x="200" y="260" textAnchor="middle" fill="rgba(219,161,89,0.28)" fontSize="10" fontFamily="monospace" letterSpacing="4">GREECE · GR</text>
   </svg>
 );
 
