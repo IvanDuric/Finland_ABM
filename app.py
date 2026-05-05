@@ -436,7 +436,8 @@ section { padding: clamp(80px, 14vh, 160px) 0; }
 
   main { padding: 0 16px; }
   .site-header { padding: 0 16px; height: 52px; }
-  .logo-slot { max-width: 140px; }
+  .logo-slot { max-width: 80px; }
+  .logo-slot img { max-height: 60px !important; max-width: 90px !important; }
   .logo-slot-label { font-size: 9px; }
 
   .hero { padding: 32px 0 28px; }
@@ -1235,10 +1236,14 @@ const PhotoPT = () => (
     </defs>
     <rect width="400" height="300" fill="url(#pt-g)"/>
     <ellipse cx="200" cy="148" rx="72" ry="72" fill="rgba(68,161,160,0.05)"/>
-    <path d="M200,78 C196,74 192,72 188,74 C178,78 176,90 178,100 C165,98 155,104 152,115 C148,130 154,148 165,158 C172,164 182,168 192,168 L208,168 C218,168 228,164 235,158 C246,148 252,130 248,115 C245,104 235,98 222,100 C224,90 222,78 212,74 C208,72 204,74 200,78 Z" fill="rgba(68,161,160,0.1)" stroke="rgba(146,221,219,0.55)" strokeWidth="1.8"/>
-    <path d="M200,72 L200,62" stroke="rgba(146,221,219,0.5)" strokeWidth="2" strokeLinecap="round"/>
-    <path d="M200,66 C206,60 218,60 222,68" fill="rgba(188,220,139,0.12)" stroke="rgba(188,220,139,0.5)" strokeWidth="1.5" strokeLinecap="round"/>
-    <text x="200" y="200" textAnchor="middle" fill="rgba(146,221,219,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">FRUITS</text>
+    <circle cx="200" cy="150" r="58" fill="rgba(68,161,160,0.09)" stroke="rgba(146,221,219,0.55)" strokeWidth="1.8"/>
+    <line x1="200" y1="92" x2="200" y2="208" stroke="rgba(146,221,219,0.18)" strokeWidth="1"/>
+    <line x1="150" y1="121" x2="250" y2="179" stroke="rgba(146,221,219,0.18)" strokeWidth="1"/>
+    <line x1="150" y1="179" x2="250" y2="121" stroke="rgba(146,221,219,0.18)" strokeWidth="1"/>
+    <circle cx="200" cy="94" r="6" fill="rgba(68,161,160,0.15)" stroke="rgba(146,221,219,0.5)" strokeWidth="1.5"/>
+    <path d="M200,88 L200,76" stroke="rgba(146,221,219,0.5)" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M200,80 C208,71 222,72 226,81 C219,85 208,81 200,80 Z" fill="rgba(188,220,139,0.18)" stroke="rgba(188,220,139,0.55)" strokeWidth="1.4"/>
+    <text x="200" y="230" textAnchor="middle" fill="rgba(146,221,219,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">FRUITS</text>
     <text x="200" y="260" textAnchor="middle" fill="rgba(68,161,160,0.32)" fontSize="10" fontFamily="monospace" letterSpacing="4">PORTUGAL · PT</text>
   </svg>
 );
@@ -1252,16 +1257,18 @@ const PhotoEU = () => (
       </radialGradient>
     </defs>
     <rect width="400" height="300" fill="url(#eu-g)"/>
-    <ellipse cx="200" cy="140" rx="72" ry="72" fill="rgba(219,161,89,0.04)"/>
-    <ellipse cx="200" cy="140" rx="56" ry="36" fill="rgba(219,161,89,0.07)" stroke="rgba(219,161,89,0.45)" strokeWidth="1.8"/>
-    <polygon points="200,88 212,104 230,100 220,116 228,132 212,128 200,144 188,128 172,132 180,116 170,100 188,104" fill="none" stroke="rgba(219,161,89,0.55)" strokeWidth="1.5" strokeLinejoin="round"/>
-    <ellipse cx="200" cy="140" rx="8" ry="5" fill="rgba(219,161,89,0.18)" stroke="rgba(219,161,89,0.5)" strokeWidth="1.2"/>
-    <path d="M144,140 C152,152 168,162 184,165" fill="none" stroke="rgba(219,161,89,0.35)" strokeWidth="1.5" strokeLinecap="round"/>
-    <path d="M256,140 C248,152 232,162 216,165" fill="none" stroke="rgba(219,161,89,0.35)" strokeWidth="1.5" strokeLinecap="round"/>
-    <path d="M160,116 C168,124 180,130 200,132" fill="none" stroke="rgba(219,161,89,0.28)" strokeWidth="1.2" strokeLinecap="round"/>
-    <path d="M240,116 C232,124 220,130 200,132" fill="none" stroke="rgba(219,161,89,0.28)" strokeWidth="1.2" strokeLinecap="round"/>
-    <text x="200" y="200" textAnchor="middle" fill="rgba(252,201,149,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">FISH</text>
-    <text x="200" y="260" textAnchor="middle" fill="rgba(219,161,89,0.28)" fontSize="10" fontFamily="monospace" letterSpacing="4">GREECE · GR</text>
+    <ellipse cx="200" cy="140" rx="90" ry="70" fill="rgba(219,161,89,0.04)"/>
+    <path d="M118,140 C130,106 168,98 200,106 C232,98 268,108 278,140 C268,172 232,182 200,174 C168,182 130,174 118,140 Z" fill="rgba(219,161,89,0.08)" stroke="rgba(219,161,89,0.55)" strokeWidth="1.8"/>
+    <path d="M278,140 L312,114 L300,140 L312,166 Z" fill="rgba(219,161,89,0.12)" stroke="rgba(219,161,89,0.55)" strokeWidth="1.5" strokeLinejoin="round"/>
+    <path d="M162,108 C178,88 210,86 222,106" fill="rgba(219,161,89,0.06)" stroke="rgba(219,161,89,0.45)" strokeWidth="1.5" strokeLinecap="round"/>
+    <path d="M158,152 C164,164 175,168 182,162" fill="none" stroke="rgba(219,161,89,0.38)" strokeWidth="1.4" strokeLinecap="round"/>
+    <circle cx="150" cy="134" r="10" fill="rgba(219,161,89,0.1)" stroke="rgba(219,161,89,0.55)" strokeWidth="1.5"/>
+    <circle cx="150" cy="134" r="4" fill="rgba(219,161,89,0.4)"/>
+    <path d="M180,112 C186,124 186,156 180,168" fill="none" stroke="rgba(219,161,89,0.2)" strokeWidth="1" strokeLinecap="round"/>
+    <path d="M204,108 C210,122 210,158 204,172" fill="none" stroke="rgba(219,161,89,0.2)" strokeWidth="1" strokeLinecap="round"/>
+    <path d="M228,112 C233,126 233,154 228,168" fill="none" stroke="rgba(219,161,89,0.2)" strokeWidth="1" strokeLinecap="round"/>
+    <text x="195" y="222" textAnchor="middle" fill="rgba(252,201,149,0.7)" fontSize="9" fontFamily="monospace" letterSpacing="3" fontWeight="600">FISH</text>
+    <text x="195" y="260" textAnchor="middle" fill="rgba(219,161,89,0.28)" fontSize="10" fontFamily="monospace" letterSpacing="4">GREECE · GR</text>
   </svg>
 );
 
