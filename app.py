@@ -281,22 +281,25 @@ html, body {
 a { color: inherit; text-decoration: none; }
 
 /* ── Background ── */
-.bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+/* position:absolute avoids the iOS-Safari iframe bug where position:fixed
+   creates a new stacking context that renders over z-index:1 content */
+.bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; overflow: hidden; }
 .bg-gradient {
   background:
     radial-gradient(ellipse at 80% -10%, rgba(68,161,160,0.22), transparent 55%),
     radial-gradient(ellipse at -10% 80%, rgba(219,161,89,0.16), transparent 60%),
     linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-mid) 100%);
 }
-.aurora { position: absolute; border-radius: 50%; filter: blur(80px); opacity: 0.42; mix-blend-mode: screen; animation: drift 24s ease-in-out infinite alternate; }
+/* filter:blur removed — causes GPU compositing layer bugs in iOS Safari inside iframes */
+.aurora { position: absolute; border-radius: 50%; opacity: 0.35; animation: drift 24s ease-in-out infinite alternate; }
 .aurora.a1 { width: 700px; height: 700px; left: -10%; top: 5%; background: radial-gradient(circle, rgba(68,161,160,0.45), transparent 60%); animation-duration: 28s; }
 .aurora.a2 { width: 600px; height: 600px; right: -8%; top: 30%; background: radial-gradient(circle, rgba(146,221,219,0.22), transparent 60%); animation-duration: 32s; animation-delay: -8s; }
-.aurora.a3 { width: 800px; height: 800px; left: 30%; bottom: -20%; background: radial-gradient(circle, rgba(219,161,89,0.22), transparent 60%); animation-duration: 36s; animation-delay: -14s; }
+.aurora.a3 { width: 800px; height: 800px; left: 30%; bottom: 0%; background: radial-gradient(circle, rgba(219,161,89,0.22), transparent 60%); animation-duration: 36s; animation-delay: -14s; }
 @keyframes drift { 0% { transform: translate(0,0) scale(1); } 50% { transform: translate(40px,-30px) scale(1.08); } 100% { transform: translate(-30px,30px) scale(0.95); } }
-.grain { position: absolute; inset: 0; opacity: 0.05; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); mix-blend-mode: overlay; }
+.grain { position: absolute; inset: 0; opacity: 0.05; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); }
 
 /* ── Layout ── */
-.page { position: relative; z-index: 1; isolation: isolate; }
+.page { position: relative; z-index: 1; }
 main { max-width: var(--max-width); margin: 0 auto; padding: 0 clamp(24px, 5vw, 80px); }
 
 /* ── Header ── */
@@ -383,8 +386,8 @@ section { padding: clamp(80px, 14vh, 160px) 0; }
 .stat-label { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cream-mute); }
 
 /* ── Features ── */
-.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.feature-card { padding: 32px 28px; background: #073B4C; border: 1px solid rgba(146,221,219,0.28); border-radius: 3px; transition: border-color 0.25s ease, transform 0.25s ease; display: flex; flex-direction: column; gap: 14px; }
+.feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.feature-card { padding: 32px 28px; background: #073B4C; border: 1px solid rgba(146,221,219,0.28); border-radius: 3px; transition: border-color 0.25s ease, transform 0.25s ease; display: flex; flex-direction: column; gap: 14px; min-width: 0; overflow: hidden; }
 .feature-card:hover { border-color: var(--teal); background: #0a4d63; transform: translateY(-2px); }
 .feature-head { display: flex; justify-content: space-between; align-items: center; }
 .feature-n { color: var(--amber); font-size: 11px; }
@@ -419,7 +422,9 @@ section.partners { padding-top: 40px; }
   .sim-frame { aspect-ratio: 16 / 11; max-height: 50vh; }
   .overview-grid { grid-template-columns: 1fr; }
   .overview-stats { border-left: none; border-top: 1px solid var(--hairline); padding-left: 0; padding-top: 24px; flex-direction: row; gap: 32px; flex-wrap: wrap; }
-  .feature-grid { grid-template-columns: repeat(3, 1fr); }
+  .feature-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .feature-card h3 { font-size: 16px; }
+  .feature-card { padding: 20px 16px; gap: 10px; }
   .partner-grid { grid-template-columns: repeat(2, 1fr); }
   .hero-logos-row { grid-template-columns: repeat(4, 1fr); }
 
@@ -1074,7 +1079,6 @@ const App = () => {
       <main>
         <Hero t={t} />
         <Features t={t} />
-        <Partners t={t} />
       </main>
       <Footer t={t} />
     </div>
