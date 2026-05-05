@@ -1745,6 +1745,54 @@ _MAIN_T = {
         "sub_catalogue": "🛒 Product Catalogue",
         "animation_speed": "Animation Speed (delay per day, seconds)",
         "securefood_btn": "📄 Get SecureFood Scenario Instructions",
+        "sidebar_interventions_caption": "These levers are visible in the 🧪 Behavioural Theory tab.",
+        "exp_nudge": "🛒 Nudge — Purchase Limit",
+        "nudge_cap_on": "Enable per-visit purchase cap",
+        "nudge_cap_val": "Max units per product per visit",
+        "exp_media": "📡 Media / Communication",
+        "media_intensity": "Media intensity (0 = off)",
+        "comm_type": "Communication type",
+        "exp_stockpile": "🏠 Stockpile Horizon",
+        "stockpile_on": "Override stockpile horizon",
+        "stockpile_days": "Stockpile days (planning horizon)",
+        "sidebar_policy_caption": "Configure policy levers for the Policy Analysis tab.",
+        "exp_fat_tax": "🧀 Fat Tax",
+        "fat_tax_on": "Enable Fat Tax",
+        "fat_tax_threshold": "Fat% threshold",
+        "fat_tax_rate_lbl": "Surcharge rate (%)",
+        "exp_subsidy": "🌿 Domestic / Organic Subsidy",
+        "subsidy_on": "Enable Subsidy",
+        "subsidy_target": "Subsidy target",
+        "subsidy_rate": "Discount rate (%)",
+        "exp_shock": "🐄 Domestic Supply Shock",
+        "shock_on": "Enable Supply Shock",
+        "shock_start": "Shock Start Day",
+        "shock_duration": "Shock Duration (Days)",
+        "shock_severity": "Shock Severity (fraction blocked)",
+        "exp_labelling": "🏷️ Nutritional Labelling",
+        "labelling_on": "Enable Labelling",
+        "labelling_start": "Labelling Start Day",
+        "labelling_health": "Health preference boost",
+        "labelling_organic": "Organic preference boost",
+        "chart_age": "Age Distribution",
+        "label_age": "Age",
+        "label_count": "Count",
+        "chart_gender": "Gender Distribution",
+        "chart_income": "Income Groups",
+        "participants": "participants",
+        "chart_radar_title": "Mean Questionnaire Factor Scores by Archetype",
+        "factor_labels": ["Price", "Health", "Environment", "Animal Welfare", "Sensory/Habit"],
+        "pref_finnish": "Finnish Preference",
+        "pref_organic": "Organic Preference",
+        "pref_price": "Price Sensitivity",
+        "pref_fat": "Preferred Fat %",
+        "arch_names": {
+            "price_champion":  "💸 Price Champion",
+            "green_buyer":     "🌿 Green Buyer",
+            "health_optimizer":"💪 Health Optimizer",
+            "habitual_buyer":  "🔁 Habitual Buyer",
+            "price_conscious": "💰 Price Conscious",
+        },
     },
     "fi": {
         "subtitle": "**Agenttipohjainen malli kuluttajakäyttäytymiseen & toimitusketjun stressitestaukseen** | SecureFood / Horizon Europe — IAMO XR Lab",
@@ -1792,6 +1840,54 @@ _MAIN_T = {
         "sub_catalogue": "🛒 Tuoteluettelo",
         "animation_speed": "Animaationopeus (viive päivää kohti, sekuntia)",
         "securefood_btn": "📄 Hae SecureFood-skenaarion ohjeet",
+        "sidebar_interventions_caption": "Nämä vipuvarret näkyvät 🧪 Käyttäytymisteoria-välilehdellä.",
+        "exp_nudge": "🛒 Kehotus — Ostorajoitus",
+        "nudge_cap_on": "Ota käyttöön käyntikohtainen ostorajoitus",
+        "nudge_cap_val": "Enimmäismäärä per tuote per käynti",
+        "exp_media": "📡 Media / Viestintä",
+        "media_intensity": "Mediaintensiteetti (0 = pois)",
+        "comm_type": "Viestintätyyppi",
+        "exp_stockpile": "🏠 Varastointihorisontti",
+        "stockpile_on": "Ohita varastointihorisontti",
+        "stockpile_days": "Varastopäivät (suunnitteluhorisontti)",
+        "sidebar_policy_caption": "Aseta politiikkavipuvarret Politiikka-analyysi-välilehdelle.",
+        "exp_fat_tax": "🧀 Rasvaavero",
+        "fat_tax_on": "Ota rasvaavero käyttöön",
+        "fat_tax_threshold": "Rasva%-raja",
+        "fat_tax_rate_lbl": "Lisämaksuprosentti (%)",
+        "exp_subsidy": "🌿 Kotimainen / Luomutuki",
+        "subsidy_on": "Ota tuki käyttöön",
+        "subsidy_target": "Tuen kohde",
+        "subsidy_rate": "Alennusprosentti (%)",
+        "exp_shock": "🐄 Kotimainen tarjontashokki",
+        "shock_on": "Ota tarjontashokki käyttöön",
+        "shock_start": "Shokin alkupäivä",
+        "shock_duration": "Shokin kesto (päivät)",
+        "shock_severity": "Shokin vakavuus (osuus estetty)",
+        "exp_labelling": "🏷️ Ravintoarvojen merkintä",
+        "labelling_on": "Ota merkintä käyttöön",
+        "labelling_start": "Merkinnän alkupäivä",
+        "labelling_health": "Terveysmieltymyksen lisäys",
+        "labelling_organic": "Luomomieltymyksen lisäys",
+        "chart_age": "Ikäjakauma",
+        "label_age": "Ikä",
+        "label_count": "Määrä",
+        "chart_gender": "Sukupuolijakauma",
+        "chart_income": "Tuloryhmät",
+        "participants": "osallistujaa",
+        "chart_radar_title": "Keskimääräiset kyselytekijäpisteet arkkityypin mukaan",
+        "factor_labels": ["Hinta", "Terveys", "Ympäristö", "Eläinten hyvinvointi", "Aistimus/Tapa"],
+        "pref_finnish": "Suomalaisuusmieltymys",
+        "pref_organic": "Luomomieltymys",
+        "pref_price": "Hintaherkkyys",
+        "pref_fat": "Suosittu rasva %",
+        "arch_names": {
+            "price_champion":  "💸 Hintataistelija",
+            "green_buyer":     "🌿 Vihreä ostaja",
+            "health_optimizer":"💪 Terveysoptimoija",
+            "habitual_buyer":  "🔁 Tottumuksen ostaja",
+            "price_conscious": "💰 Hintatietoinen",
+        },
     },
     "el": {
         "subtitle": "**Μοντέλο Πράκτορα για Καταναλωτική Συμπεριφορά & Ανθεκτικότητα Αλυσίδας Εφοδιασμού** | SecureFood / Horizon Europe — IAMO XR Lab",
@@ -1839,6 +1935,54 @@ _MAIN_T = {
         "sub_catalogue": "🛒 Κατάλογος Προϊόντων",
         "animation_speed": "Ταχύτητα Κινούμενης Εικόνας (καθυστέρηση ανά ημέρα, δευτ.)",
         "securefood_btn": "📄 Λήψη Οδηγιών Σεναρίου SecureFood",
+        "sidebar_interventions_caption": "Αυτές οι ρυθμίσεις εμφανίζονται στην καρτέλα 🧪 Θεωρία Συμπεριφοράς.",
+        "exp_nudge": "🛒 Ώθηση — Όριο Αγοράς",
+        "nudge_cap_on": "Ενεργοποίηση ορίου αγοράς ανά επίσκεψη",
+        "nudge_cap_val": "Μέγ. τεμάχια ανά προϊόν ανά επίσκεψη",
+        "exp_media": "📡 Μέσα / Επικοινωνία",
+        "media_intensity": "Ένταση μέσων (0 = απενεργ.)",
+        "comm_type": "Τύπος επικοινωνίας",
+        "exp_stockpile": "🏠 Ορίζοντας Αποθεμάτων",
+        "stockpile_on": "Παράκαμψη ορίζοντα αποθεμάτων",
+        "stockpile_days": "Ημέρες αποθεμάτων (ορίζοντας)",
+        "sidebar_policy_caption": "Ρυθμίστε τις πολιτικές για την καρτέλα Ανάλυσης Πολιτικής.",
+        "exp_fat_tax": "🧀 Φόρος Λίπους",
+        "fat_tax_on": "Ενεργοποίηση φόρου λίπους",
+        "fat_tax_threshold": "Όριο λίπους %",
+        "fat_tax_rate_lbl": "Ποσοστό προσαύξησης (%)",
+        "exp_subsidy": "🌿 Εγχώρια / Βιολογική Επιδότηση",
+        "subsidy_on": "Ενεργοποίηση επιδότησης",
+        "subsidy_target": "Στόχος επιδότησης",
+        "subsidy_rate": "Ποσοστό έκπτωσης (%)",
+        "exp_shock": "🐄 Εγχώριο Σοκ Εφοδιασμού",
+        "shock_on": "Ενεργοποίηση σοκ εφοδιασμού",
+        "shock_start": "Ημέρα έναρξης σοκ",
+        "shock_duration": "Διάρκεια σοκ (ημέρες)",
+        "shock_severity": "Σοβαρότητα σοκ (κλάσμα αποκλεισμού)",
+        "exp_labelling": "🏷️ Διατροφική Επισήμανση",
+        "labelling_on": "Ενεργοποίηση επισήμανσης",
+        "labelling_start": "Ημέρα έναρξης επισήμανσης",
+        "labelling_health": "Ενίσχυση υγιεινής προτίμησης",
+        "labelling_organic": "Ενίσχυση βιολογικής προτίμησης",
+        "chart_age": "Κατανομή Ηλικίας",
+        "label_age": "Ηλικία",
+        "label_count": "Πλήθος",
+        "chart_gender": "Κατανομή Φύλου",
+        "chart_income": "Ομάδες Εισοδήματος",
+        "participants": "συμμετέχοντες",
+        "chart_radar_title": "Μέσες Βαθμολογίες Παραγόντων Ερωτηματολογίου ανά Αρχέτυπο",
+        "factor_labels": ["Τιμή", "Υγεία", "Περιβάλλον", "Ευζωία Ζώων", "Αισθητικό/Συνήθεια"],
+        "pref_finnish": "Προτίμηση Φινλανδικών",
+        "pref_organic": "Βιολογική Προτίμηση",
+        "pref_price": "Ευαισθησία στην Τιμή",
+        "pref_fat": "Προτιμώμενο Λίπος %",
+        "arch_names": {
+            "price_champion":  "💸 Κυνηγός Τιμών",
+            "green_buyer":     "🌿 Πράσινος Αγοραστής",
+            "health_optimizer":"💪 Υγειομανής",
+            "habitual_buyer":  "🔁 Συνήθης Αγοραστής",
+            "price_conscious": "💰 Τιμοσυνείδητος",
+        },
     },
     "pt": {
         "subtitle": "**Modelo Baseado em Agentes para Comportamento do Consumidor & Cadeia de Abastecimento** | SecureFood / Horizon Europe — IAMO XR Lab",
@@ -1886,6 +2030,54 @@ _MAIN_T = {
         "sub_catalogue": "🛒 Catálogo de Produtos",
         "animation_speed": "Velocidade de Animação (atraso por dia, segundos)",
         "securefood_btn": "📄 Obter Instruções do Cenário SecureFood",
+        "sidebar_interventions_caption": "Estas alavancas são visíveis no separador 🧪 Teoria Comportamental.",
+        "exp_nudge": "🛒 Incentivo — Limite de Compra",
+        "nudge_cap_on": "Ativar limite de compra por visita",
+        "nudge_cap_val": "Máx. unidades por produto por visita",
+        "exp_media": "📡 Média / Comunicação",
+        "media_intensity": "Intensidade dos média (0 = desligado)",
+        "comm_type": "Tipo de comunicação",
+        "exp_stockpile": "🏠 Horizonte de Acumulação",
+        "stockpile_on": "Substituir horizonte de acumulação",
+        "stockpile_days": "Dias de acumulação (horizonte)",
+        "sidebar_policy_caption": "Configure as alavancas de política para o separador de Análise de Políticas.",
+        "exp_fat_tax": "🧀 Imposto sobre Gordura",
+        "fat_tax_on": "Ativar imposto sobre gordura",
+        "fat_tax_threshold": "Limiar de gordura %",
+        "fat_tax_rate_lbl": "Taxa de sobretaxa (%)",
+        "exp_subsidy": "🌿 Subsídio Doméstico / Biológico",
+        "subsidy_on": "Ativar subsídio",
+        "subsidy_target": "Alvo do subsídio",
+        "subsidy_rate": "Taxa de desconto (%)",
+        "exp_shock": "🐄 Choque de Fornecimento Doméstico",
+        "shock_on": "Ativar choque de fornecimento",
+        "shock_start": "Dia de início do choque",
+        "shock_duration": "Duração do choque (dias)",
+        "shock_severity": "Gravidade do choque (fração bloqueada)",
+        "exp_labelling": "🏷️ Rotulagem Nutricional",
+        "labelling_on": "Ativar rotulagem",
+        "labelling_start": "Dia de início da rotulagem",
+        "labelling_health": "Aumento de preferência saudável",
+        "labelling_organic": "Aumento de preferência biológica",
+        "chart_age": "Distribuição por Idade",
+        "label_age": "Idade",
+        "label_count": "Contagem",
+        "chart_gender": "Distribuição por Género",
+        "chart_income": "Grupos de Rendimento",
+        "participants": "participantes",
+        "chart_radar_title": "Pontuações Médias dos Fatores do Questionário por Arquétipo",
+        "factor_labels": ["Preço", "Saúde", "Ambiente", "Bem-estar Animal", "Sensorial/Hábito"],
+        "pref_finnish": "Preferência Finlandesa",
+        "pref_organic": "Preferência Biológica",
+        "pref_price": "Sensibilidade ao Preço",
+        "pref_fat": "Gordura % Preferida",
+        "arch_names": {
+            "price_champion":  "💸 Caçador de Preços",
+            "green_buyer":     "🌿 Comprador Verde",
+            "health_optimizer":"💪 Otimizador de Saúde",
+            "habitual_buyer":  "🔁 Comprador Habitual",
+            "price_conscious": "💰 Consciente do Preço",
+        },
     },
 }
 
@@ -1893,6 +2085,12 @@ def _t(key: str) -> str:
     """Return the translated string for `key` based on st.session_state['lang']."""
     lang = st.session_state.get("lang", "en")
     return _MAIN_T.get(lang, _MAIN_T["en"]).get(key, _MAIN_T["en"].get(key, key))
+
+def _arch_name(arch_key: str) -> str:
+    """Return the translated archetype display name."""
+    lang = st.session_state.get("lang", "en")
+    names = _MAIN_T.get(lang, _MAIN_T["en"]).get("arch_names", _MAIN_T["en"]["arch_names"])
+    return names.get(arch_key, arch_key.replace("_", " ").title())
 
 # ---------------------------------------------------------------------------
 # Bundled data loader
@@ -2363,28 +2561,28 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
     hoarding     = st.sidebar.slider(_t("hoarding_factor"), 1.0, 3.0, 1.5, 0.1)
 
     st.sidebar.header(_t("sidebar_interventions"))
-    st.sidebar.caption("These levers are visible in the 🧪 Behavioural Theory tab.")
+    st.sidebar.caption(_t("sidebar_interventions_caption"))
 
-    with st.sidebar.expander("🛒 Nudge — Purchase Limit", expanded=False):
+    with st.sidebar.expander(_t("exp_nudge"), expanded=False):
         purchase_limit_on = st.checkbox(
-            "Enable per-visit purchase cap", False, key="nudge_limit_on",
+            _t("nudge_cap_on"), False, key="nudge_limit_on",
             help="Rationing: cap the number of units any one consumer can buy per product per visit."
         )
         purchase_limit_val = st.slider(
-            "Max units per product per visit", 1, 20, 3,
+            _t("nudge_cap_val"), 1, 20, 3,
             key="nudge_limit_val",
             help="Thaler & Sunstein (2008): a purchase cap reduces panic-hoarding but may lower equity."
         )
         purchase_limit = purchase_limit_val if purchase_limit_on else None
 
-    with st.sidebar.expander("📡 Media / Communication", expanded=False):
+    with st.sidebar.expander(_t("exp_media"), expanded=False):
         media_intensity = st.slider(
-            "Media intensity (0 = off)", 0.0, 1.0, 0.0, 0.05,
+            _t("media_intensity"), 0.0, 1.0, 0.0, 0.05,
             key="media_intensity",
             help="How strongly media amplifies or dampens panic each day."
         )
         communication_type = st.selectbox(
-            "Communication type", ["neutral", "panic", "calming"],
+            _t("comm_type"), ["neutral", "panic", "calming"],
             key="comm_type",
             help=(
                 "panic = sensationalist coverage (raises global panic); "
@@ -2393,13 +2591,13 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
             ),
         )
 
-    with st.sidebar.expander("🏠 Stockpile Horizon", expanded=False):
+    with st.sidebar.expander(_t("exp_stockpile"), expanded=False):
         stockpile_days_on = st.checkbox(
-            "Override stockpile horizon", False, key="stockpile_on",
+            _t("stockpile_on"), False, key="stockpile_on",
             help="Override the agent's default stockpile planning horizon (β-δ quasi-hyperbolic model)."
         )
         stockpile_days_val = st.slider(
-            "Stockpile days (planning horizon)", 1, 14, 3,
+            _t("stockpile_days"), 1, 14, 3,
             key="stockpile_days_val",
             help="O'Donoghue & Rabin (1999): agents plan to hold this many days of supply at home."
         )
@@ -2411,38 +2609,38 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
 
     # -----------------------------------------------------------------------
     st.sidebar.header(_t("sidebar_policy"))
-    st.sidebar.caption("Configure policy levers for the Policy Analysis tab.")
+    st.sidebar.caption(_t("sidebar_policy_caption"))
 
-    with st.sidebar.expander("🧀 Fat Tax", expanded=False):
-        fat_tax_active    = st.checkbox("Enable Fat Tax", False, key="pol_fat_active")
-        fat_tax_threshold = st.slider("Fat% threshold", 0.5, 5.0, 3.5, 0.5,
+    with st.sidebar.expander(_t("exp_fat_tax"), expanded=False):
+        fat_tax_active    = st.checkbox(_t("fat_tax_on"), False, key="pol_fat_active")
+        fat_tax_threshold = st.slider(_t("fat_tax_threshold"), 0.5, 5.0, 3.5, 0.5,
                                       key="pol_fat_thresh",
                                       help="Products with fat_content ≥ this value are taxed")
-        fat_tax_rate      = st.slider("Surcharge rate (%)", 5, 50, 20, 5,
+        fat_tax_rate      = st.slider(_t("fat_tax_rate_lbl"), 5, 50, 20, 5,
                                       key="pol_fat_rate") / 100.0
 
-    with st.sidebar.expander("🌿 Domestic / Organic Subsidy", expanded=False):
-        sub_active = st.checkbox("Enable Subsidy", False, key="pol_sub_active")
-        sub_target = st.selectbox("Subsidy target", ["domestic", "organic", "both"],
+    with st.sidebar.expander(_t("exp_subsidy"), expanded=False):
+        sub_active = st.checkbox(_t("subsidy_on"), False, key="pol_sub_active")
+        sub_target = st.selectbox(_t("subsidy_target"), ["domestic", "organic", "both"],
                                   key="pol_sub_target")
-        sub_rate   = st.slider("Discount rate (%)", 5, 40, 15, 5,
+        sub_rate   = st.slider(_t("subsidy_rate"), 5, 40, 15, 5,
                                 key="pol_sub_rate") / 100.0
 
-    with st.sidebar.expander("🐄 Domestic Supply Shock", expanded=False):
-        shock_active   = st.checkbox("Enable Supply Shock", False, key="pol_shock_active")
-        shock_day      = st.slider("Shock Start Day", 1, max(2, days_to_run - 1),
+    with st.sidebar.expander(_t("exp_shock"), expanded=False):
+        shock_active   = st.checkbox(_t("shock_on"), False, key="pol_shock_active")
+        shock_day      = st.slider(_t("shock_start"), 1, max(2, days_to_run - 1),
                                    min(30, max(1, days_to_run // 2)), key="pol_shock_day")
-        shock_duration = st.slider("Shock Duration (Days)", 1, 120, 30, key="pol_shock_dur")
-        shock_severity = st.slider("Shock Severity (fraction blocked)", 0.1, 1.0, 0.70, 0.05,
+        shock_duration = st.slider(_t("shock_duration"), 1, 120, 30, key="pol_shock_dur")
+        shock_severity = st.slider(_t("shock_severity"), 0.1, 1.0, 0.70, 0.05,
                                    key="pol_shock_sev")
 
-    with st.sidebar.expander("🏷️ Nutritional Labelling", expanded=False):
-        lab_active        = st.checkbox("Enable Labelling", False, key="pol_lab_active")
-        lab_day           = st.slider("Labelling Start Day", 1, max(2, days_to_run - 1),
+    with st.sidebar.expander(_t("exp_labelling"), expanded=False):
+        lab_active        = st.checkbox(_t("labelling_on"), False, key="pol_lab_active")
+        lab_day           = st.slider(_t("labelling_start"), 1, max(2, days_to_run - 1),
                                       1, key="pol_lab_day")
-        lab_health_boost  = st.slider("Health preference boost", 0.0, 0.4, 0.15, 0.05,
+        lab_health_boost  = st.slider(_t("labelling_health"), 0.0, 0.4, 0.15, 0.05,
                                       key="pol_lab_health")
-        lab_organic_boost = st.slider("Organic preference boost", 0.0, 0.3, 0.10, 0.05,
+        lab_organic_boost = st.slider(_t("labelling_organic"), 0.0, 0.3, 0.10, 0.05,
                                       key="pol_lab_organic")
 
     policy_cfg = {
@@ -2645,10 +2843,10 @@ def render_data_tab():
 
     with col_a:
         if "age" in df_demo:
-            fig_age = px.histogram(df_demo, x="age", nbins=10, title="Age Distribution",
+            fig_age = px.histogram(df_demo, x="age", nbins=10, title=_t("chart_age"),
                                    color_discrete_sequence=["#003399"])
             fig_age.update_layout(template="plotly_white", showlegend=False,
-                                  xaxis_title="Age", yaxis_title="Count")
+                                  xaxis_title=_t("label_age"), yaxis_title=_t("label_count"))
             st.plotly_chart(fig_age, width='stretch')
 
     with col_b:
@@ -2656,7 +2854,7 @@ def render_data_tab():
             gender_counts = df_demo["gender"].value_counts().reset_index()
             gender_counts.columns = ["Gender", "Count"]
             fig_gen = px.pie(gender_counts, names="Gender", values="Count",
-                             title="Gender Distribution",
+                             title=_t("chart_gender"),
                              color_discrete_sequence=px.colors.qualitative.Set2)
             fig_gen.update_layout(template="plotly_white")
             st.plotly_chart(fig_gen, width='stretch')
@@ -2666,7 +2864,7 @@ def render_data_tab():
             inc_counts = df_demo["income_group"].value_counts().reset_index()
             inc_counts.columns = ["Income", "Count"]
             fig_inc = px.bar(inc_counts, x="Income", y="Count",
-                             title="Income Groups",
+                             title=_t("chart_income"),
                              color_discrete_sequence=["#003399"])
             fig_inc.update_layout(template="plotly_white", xaxis_title="",
                                   xaxis_tickangle=-30)
@@ -2709,8 +2907,8 @@ each participant via k-means clustering.
                     f'<div style="margin:6px 0; padding:8px 12px; '
                     f'border-left:4px solid {color}; border-radius:4px; '
                     f'background:#f8f9fa; color:#1a2035;">'
-                    f'{emoji} <b>{a.replace("_"," ").title()}</b>: '
-                    f'{n} participants ({pct:.0f}%)</div>',
+                    f'<b>{_arch_name(a)}</b>: '
+                    f'{n} {_t("participants")} ({pct:.0f}%)</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -2718,7 +2916,7 @@ each participant via k-means clustering.
             # Radar chart of mean factor scores per archetype
             factor_cols = ["q_price", "q_health", "q_environment",
                            "q_animal_welfare", "q_sensory_habit"]
-            factor_labels = ["Price", "Health", "Environment", "Animal Welfare", "Sensory/Habit"]
+            factor_labels = _t("factor_labels")
             df_real = pd.DataFrame(real_profiles)
 
             fig_radar = go.Figure()
@@ -2733,12 +2931,12 @@ each participant via k-means clustering.
                 labels_loop = factor_labels + factor_labels[:1]
                 fig_radar.add_trace(go.Scatterpolar(
                     r=means, theta=labels_loop,
-                    fill="toself", name=arch.replace("_", " ").title(),
+                    fill="toself", name=_arch_name(arch),
                     line_color=ARCHETYPE_COLORS.get(arch, "#999"),
                 ))
             fig_radar.update_layout(
                 polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-                title="Mean Questionnaire Factor Scores by Archetype",
+                title=_t("chart_radar_title"),
                 template="plotly_white",
             )
             st.plotly_chart(fig_radar, width='stretch')
@@ -2746,10 +2944,10 @@ each participant via k-means clustering.
     # ---- DCE preference distributions ----
     st.subheader(_t("sub_dce"))
     pref_cols = {
-        "finnish_preference": "Finnish Preference",
-        "organic_preference": "Organic Preference",
-        "price_sensitivity":  "Price Sensitivity",
-        "preferred_fat":      "Preferred Fat %",
+        "finnish_preference": _t("pref_finnish"),
+        "organic_preference": _t("pref_organic"),
+        "price_sensitivity":  _t("pref_price"),
+        "preferred_fat":      _t("pref_fat"),
     }
     cols_pref = st.columns(4)
     df_all = pd.DataFrame(pool)
@@ -2758,7 +2956,7 @@ each participant via k-means clustering.
             fig = px.histogram(df_all, x=col_key, nbins=15, title=col_label,
                                color_discrete_sequence=["#2980b9"])
             fig.update_layout(template="plotly_white", showlegend=False,
-                              xaxis_title="", yaxis_title="Count", height=250)
+                              xaxis_title="", yaxis_title=_t("label_count"), height=250)
             col_widget.plotly_chart(fig, width='stretch')
 
     # ---- Product catalogue preview ----
