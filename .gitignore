@@ -4,6 +4,7 @@
 # Private data files — never commit
 *firebase*.json
 *export*.json
+data/food-finland-enriched.json
 
 # Python cache
 __pycache__/

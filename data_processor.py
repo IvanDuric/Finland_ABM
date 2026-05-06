@@ -188,8 +188,9 @@ def parse_dce_choices(choices: list) -> dict:
         fat_chosen.append(chosen_attrs["fat"])
 
         # Price sensitivity: did they pick the cheaper option?
-        lp = DCE_PRICES.get(left_code, 1.5)
-        rp = DCE_PRICES.get(right_code, 1.5)
+        # Use actual prices from the enriched dataset if available; fall back to lookup table
+        lp = float(c.get("leftItem",  {}).get("price") or DCE_PRICES.get(left_code,  1.5))
+        rp = float(c.get("rightItem", {}).get("price") or DCE_PRICES.get(right_code, 1.5))
         if abs(lp - rp) > 0.05:
             price_decisions += 1
             chosen_price = lp if choice == "left" else rp
