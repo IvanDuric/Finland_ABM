@@ -256,35 +256,34 @@ _TOUR_STEPS = [
         ),
     },
     {
-        "title": "🏠 Tab 1 — Data & Population",
+        "title": "🏠 Card 1 — Data & Setup",
         "body": (
-            "Start here. Load your participant cohort from Firebase or upload CSV/JSON files. "
-            "The simulation matches real consumer baskets against your product catalogue "
-            "before each run."
+            "Start here. Click the card to load your participant cohort from Firebase or upload "
+            "CSV/JSON files. The simulation matches real consumer baskets against your product "
+            "catalogue before each run."
         ),
     },
     {
-        "title": "🎮 Tab 2 — Interactive Demo",
+        "title": "🔬 Card 2 — Simulation",
         "body": (
-            "Run a single simulation with live chart updates. "
-            "Perfect for quickly exploring how parameter changes affect day-by-day revenue, "
-            "stock levels, and consumer behaviour archetypes."
+            "Choose Interactive Demo for live day-by-day charts, or Scientific Analysis for "
+            "Monte Carlo runs with p10–p90 confidence bands and AI-driven parameter recommendations."
         ),
     },
     {
-        "title": "🔬 Tab 3 — Scientific Analysis",
+        "title": "📊 Card 3 — Analysis",
         "body": (
-            "Run multiple simulations (Monte Carlo) for statistically robust results "
-            "with percentile confidence bands (p10–p90). "
-            "Uses AI to recommend optimal parameters and compares baseline vs. crisis scenarios."
+            "Six deep-dive sections: Food Waste, Per-Product stock, Behavioural Theory (Prospect "
+            "Theory, TPB, FIES), Sensitivity sweeps, Scenario Comparison, and the Agent Replay "
+            "viewer for day-level individual agent decisions."
         ),
     },
     {
-        "title": "🏛️ Tab 6 — Policy Analysis",
+        "title": "🏛️ Card 4 — Policy & Strategy",
         "body": (
-            "Test policy interventions: fat taxes, subsidies, purchase caps, labelling. "
-            "See how each policy shifts consumer behaviour and revenue "
-            "across the four consumer archetypes."
+            "Test fat taxes, subsidies, purchase caps, and labelling in Policy Analysis. "
+            "Run automated stress tests, simulate multi-store networks with panic contagion, "
+            "and explore the Finnish regional food-security map."
         ),
     },
     {
@@ -298,10 +297,8 @@ _TOUR_STEPS = [
     {
         "title": "✅ You're all set!",
         "body": (
-            "Explore the remaining tabs: ♻️ Food Waste, 📦 Per-Product deep-dives, "
-            "👔 Stakeholder View, 🎚️ Sensitivity Analysis, and 🧪 Behavioural Theory. "
-            "Use the 📥 Export tab to download all results as CSV. "
-            "Click the '🎓 Tour' button in the sidebar to replay this tour any time."
+            "Use Card 5 — Export to download all results as CSV bundles or generate a branded "
+            "PDF report. Click the '🎓 Tour' button in the sidebar to replay this tour any time."
         ),
     },
 ]
@@ -2618,6 +2615,8 @@ defaults = {
     "policy_scenarios": [],
     # Onboarding tour (1 = first step, 0 = hidden)
     "tour_step": 1,
+    # Card navigation: which section is currently active (None = home)
+    "nav_section": None,
     # Saved scenarios for compare feature
     "saved_scenarios": [],
     # Stress-test results cache
@@ -8950,6 +8949,235 @@ def render_multistore_tab(params: dict):
 
 
 # ===========================================================================
+# 16. CARD NAVIGATION
+# ===========================================================================
+
+_NAV_CARDS = [
+    {
+        "id":       "setup",
+        "icon":     "🏠",
+        "title":    "Data & Setup",
+        "subtitle": "Load population & catalogue",
+        "color":    "#DBA159",
+        "sections": [
+            {"key": "data",    "label": "🏠 Data & Population",
+             "desc": "Load cohort from Firebase or upload CSV/JSON"},
+        ],
+    },
+    {
+        "id":       "simulation",
+        "icon":     "🔬",
+        "title":    "Simulation",
+        "subtitle": "Run the ABM",
+        "color":    "#44A1A0",
+        "sections": [
+            {"key": "demo",    "label": "🎮 Interactive Demo",
+             "desc": "Live day-by-day simulation with animated charts"},
+            {"key": "science", "label": "🔬 Scientific Analysis",
+             "desc": "Monte Carlo · percentile CI bands · AI recommendations"},
+        ],
+    },
+    {
+        "id":       "analysis",
+        "icon":     "📊",
+        "title":    "Analysis",
+        "subtitle": "Deep-dive results",
+        "color":    "#27AE60",
+        "sections": [
+            {"key": "waste",       "label": "♻️ Food Waste",
+             "desc": "Waste log, drivers, and environmental impact"},
+            {"key": "product",     "label": "📦 Per-Product",
+             "desc": "Stock, sales, CO₂ per SKU"},
+            {"key": "behaviour",   "label": "🧪 Behavioural Theory",
+             "desc": "Prospect theory, TPB, FIES food security"},
+            {"key": "sensitivity", "label": "🎚️ Sensitivity Analysis",
+             "desc": "One-at-a-time parameter sweeps"},
+            {"key": "compare",     "label": "📊 Compare Scenarios",
+             "desc": "Side-by-side saved simulation runs"},
+            {"key": "agent",       "label": "🎬 Agent Replay",
+             "desc": "Day-level individual shopper decisions"},
+        ],
+    },
+    {
+        "id":       "policy",
+        "icon":     "🏛️",
+        "title":    "Policy & Strategy",
+        "subtitle": "Interventions & networks",
+        "color":    "#8E44AD",
+        "sections": [
+            {"key": "policy",      "label": "🏛️ Policy Analysis",
+             "desc": "Fat tax · subsidy · purchase cap · labelling"},
+            {"key": "stakeholder", "label": "👔 Stakeholder View",
+             "desc": "Policy briefs and KPI dashboards"},
+            {"key": "stress",      "label": "🚨 Stress Test",
+             "desc": "Automated 6-scenario resilience battery"},
+            {"key": "multistore",  "label": "🏪 Multi-Store Network",
+             "desc": "N stores with panic contagion & redistribution"},
+            {"key": "map",         "label": "🗺️ Regional Map",
+             "desc": "Finnish store network + food-security overlay"},
+        ],
+    },
+    {
+        "id":       "export",
+        "icon":     "📤",
+        "title":    "Export",
+        "subtitle": "Download all results",
+        "color":    "#2471A3",
+        "sections": [
+            {"key": "export", "label": "📥 Export & PDF Report",
+             "desc": "CSV bundles · full branded PDF report"},
+        ],
+    },
+]
+
+# Flat lookup: section key → {card, section} for breadcrumb rendering
+_SECTION_META: dict = {
+    sec["key"]: {"card": card, "section": sec}
+    for card in _NAV_CARDS
+    for sec in card["sections"]
+}
+
+
+def _build_section_renderers(params: dict) -> dict:
+    """Return a {key: callable} map for every navigable section."""
+    return {
+        "data":        render_data_tab,
+        "demo":        lambda: render_demo_tab(params),
+        "science":     lambda: render_science_tab(params),
+        "waste":       render_waste_tab,
+        "product":     render_product_tab,
+        "behaviour":   lambda: render_behaviour_tab(params),
+        "sensitivity": lambda: render_sensitivity_tab(params),
+        "compare":     render_scenario_compare_tab,
+        "agent":       render_agent_replay_tab,
+        "policy":      lambda: render_policy_tab(params),
+        "stakeholder": render_stakeholder_tab,
+        "stress":      lambda: render_stress_tab(params),
+        "multistore":  lambda: render_multistore_tab(params),
+        "map":         render_regional_map_tab,
+        "export":      render_export_tab,
+    }
+
+
+def render_nav_home():
+    """Render the 5-card navigation grid (shown when no section is active)."""
+
+    # ── Status banner ─────────────────────────────────────────────────────────
+    data_ok = st.session_state.get("config_data") is not None
+    sim_ok  = st.session_state.get("sim_results") is not None
+
+    if not data_ok:
+        st.info(
+            "👆 **Start here:** click **🏠 Data & Population** in the card below "
+            "to load your participant cohort, then head to **🔬 Simulation** to run the model."
+        )
+    else:
+        _parts = ["✅ Data loaded"]
+        if sim_ok:
+            _parts.append("✅ Simulation results ready")
+        else:
+            _parts.append("⬜ No simulation run yet")
+        st.success("  ·  ".join(_parts))
+
+    st.markdown(
+        "<h4 style='margin:18px 0 4px 0;'>📍 Where would you like to go?</h4>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Card CSS (scoped to nav home; doesn't persist into section views) ─────
+    st.markdown(
+        """
+        <style>
+        /* Card header strip */
+        .nav-card-hdr {
+            border-radius: 10px 10px 0 0;
+            padding: 14px 14px 10px;
+            color: white;
+            margin-bottom: 0;
+        }
+        .nav-card-hdr .nav-icon  { font-size: 1.6rem; line-height: 1; }
+        .nav-card-hdr .nav-title { font-weight: 700; font-size: 0.92rem;
+                                   margin-top: 6px; line-height: 1.2; }
+        .nav-card-hdr .nav-sub   { font-size: 0.70rem; opacity: 0.88;
+                                   margin-top: 3px; }
+        /* Card body wrapper */
+        .nav-card-body {
+            border: 1px solid #E8DEC8;
+            border-top: none;
+            border-radius: 0 0 10px 10px;
+            padding: 6px 4px 10px;
+            background: #FFFFFF;
+            box-shadow: 0 3px 10px rgba(4,32,38,0.07);
+            margin-bottom: 12px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cols = st.columns(5, gap="small")
+    for col, card in zip(cols, _NAV_CARDS):
+        with col:
+            # Extract values to avoid nested-quote issues in f-strings
+            _c_color    = card["color"]
+            _c_icon     = card["icon"]
+            _c_title    = card["title"]
+            _c_subtitle = card["subtitle"]
+            # Coloured header
+            st.markdown(
+                f"<div class='nav-card-hdr' style='background:{_c_color};'>"
+                f"<div class='nav-icon'>{_c_icon}</div>"
+                f"<div class='nav-title'>{_c_title}</div>"
+                f"<div class='nav-sub'>{_c_subtitle}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+            # White card body border opener
+            st.markdown("<div class='nav-card-body'>", unsafe_allow_html=True)
+
+            for section in card["sections"]:
+                if st.button(
+                    section["label"],
+                    key=f"nav_{section['key']}",
+                    use_container_width=True,
+                    help=section.get("desc", ""),
+                ):
+                    st.session_state["nav_section"] = section["key"]
+                    st.rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_nav_breadcrumb(section_key: str):
+    """Render breadcrumb bar + 'Back to menu' button above a section."""
+    meta    = _SECTION_META.get(section_key, {})
+    card    = meta.get("card",    {})
+    section = meta.get("section", {})
+
+    left_col, right_col = st.columns([9, 1])
+    with left_col:
+        _bc_color   = card.get("color", "#444")
+        _bc_icon    = card.get("icon",  "")
+        _bc_ctitle  = card.get("title", "")
+        _bc_slabel  = section.get("label", "")
+        st.markdown(
+            f"<div style='padding:4px 0 2px;color:#666;font-size:0.84rem;'>"
+            f"<span style='color:#DBA159;font-weight:600;'>🏠 Menu</span>"
+            f"&nbsp;›&nbsp;"
+            f"<span style='color:{_bc_color};font-weight:600;'>"
+            f"{_bc_icon} {_bc_ctitle}</span>"
+            f"&nbsp;›&nbsp;"
+            f"<strong style='color:#042026;'>{_bc_slabel}</strong>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with right_col:
+        if st.button("🏠 Menu", key="nav_back_btn", use_container_width=True):
+            st.session_state["nav_section"] = None
+            st.rerun()
+
+
+# ===========================================================================
 # 12. MAIN ENTRY POINT
 # ===========================================================================
 
@@ -9004,52 +9232,20 @@ def main():
                     pass
     st.divider()
 
-    tabs = st.tabs(_t("tabs"))
+    _nav_section = st.session_state.get("nav_section")
 
-    with tabs[0]:
-        render_data_tab()
-
-    with tabs[1]:
-        render_demo_tab(params)
-
-    with tabs[2]:
-        render_science_tab(params)
-
-    with tabs[3]:
-        render_waste_tab()
-
-    with tabs[4]:
-        render_product_tab()
-
-    with tabs[5]:
-        render_policy_tab(params)
-
-    with tabs[6]:
-        render_stakeholder_tab()
-
-    with tabs[7]:
-        render_sensitivity_tab(params)
-
-    with tabs[8]:
-        render_behaviour_tab(params)
-
-    with tabs[9]:
-        render_export_tab()
-
-    with tabs[10]:
-        render_scenario_compare_tab()
-
-    with tabs[11]:
-        render_stress_tab(params)
-
-    with tabs[12]:
-        render_agent_replay_tab()
-
-    with tabs[13]:
-        render_regional_map_tab()
-
-    with tabs[14]:
-        render_multistore_tab(params)
+    if _nav_section is None:
+        render_nav_home()
+    else:
+        _render_nav_breadcrumb(_nav_section)
+        st.divider()
+        _renderers = _build_section_renderers(params)
+        _fn = _renderers.get(_nav_section)
+        if _fn is not None:
+            _fn()
+        else:
+            st.error(f"Unknown section: {_nav_section}")
+            st.session_state["nav_section"] = None
 
     render_footer()
 
