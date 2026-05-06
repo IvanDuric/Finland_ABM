@@ -1547,6 +1547,11 @@ class SupermarketModel(Model):
                 "MeanItemsUnmet":       sum(a.items_unmet for a in _agents) / _n,
             }
 
+        # ---- Expose agent list for per-agent analytics (app.py reads this) ----
+        # Objects remain alive in memory after removal; app.py collects snapshots
+        # by calling _collect_agent_snapshot() immediately after model.step().
+        self.last_daily_agents = daily_agents
+
         # ---- Remove daily consumer agents ----
         for c in daily_agents:
             self.schedule.remove(c)

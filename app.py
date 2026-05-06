@@ -2626,6 +2626,8 @@ defaults = {
     "_generated_pdf": None,
     # Last sidebar params (for PDF report)
     "_last_params": None,
+    # Agent-level replay log (list → DataFrame)
+    "agent_log": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -2637,7 +2639,7 @@ for k, v in defaults.items():
 _MAIN_T = {
     "en": {
         "subtitle": "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export", "📊 Compare Scenarios", "🚨 Stress Test"],
+        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export", "📊 Compare Scenarios", "🚨 Stress Test", "🎬 Agent Replay", "🗺️ Regional Map"],
         "sidebar_title": "⚙️ Simulation Parameters",
         "sidebar_general": "📅 General",
         "duration_days": "Duration (Days)",
@@ -2732,7 +2734,7 @@ _MAIN_T = {
     },
     "fi": {
         "subtitle": "**Agenttipohjainen malli kuluttajakäyttäytymiseen & toimitusketjun stressitestaukseen** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti", "📊 Vertaile Skenaarioita", "🚨 Stressitesti"],
+        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti", "📊 Vertaile Skenaarioita", "🚨 Stressitesti", "🎬 Agenttitoisinto", "🗺️ Aluekartta"],
         "sidebar_title": "⚙️ Simulaatioparametrit",
         "sidebar_general": "📅 Yleiset",
         "duration_days": "Kesto (päivät)",
@@ -2827,7 +2829,7 @@ _MAIN_T = {
     },
     "el": {
         "subtitle": "**Μοντέλο Πράκτορα για Καταναλωτική Συμπεριφορά & Ανθεκτικότητα Αλυσίδας Εφοδιασμού** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή", "📊 Σύγκριση Σεναρίων", "🚨 Δοκιμή Αντοχής"],
+        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή", "📊 Σύγκριση Σεναρίων", "🚨 Δοκιμή Αντοχής", "🎬 Αναπαραγωγή Πρακτόρων", "🗺️ Περιφερειακός Χάρτης"],
         "sidebar_title": "⚙️ Παράμετροι Προσομοίωσης",
         "sidebar_general": "📅 Γενικά",
         "duration_days": "Διάρκεια (ημέρες)",
@@ -2922,7 +2924,7 @@ _MAIN_T = {
     },
     "pt": {
         "subtitle": "**Modelo Baseado em Agentes para Comportamento do Consumidor & Cadeia de Abastecimento** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar", "📊 Comparar Cenários", "🚨 Teste de Stress"],
+        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar", "📊 Comparar Cenários", "🚨 Teste de Stress", "🎬 Repetição de Agentes", "🗺️ Mapa Regional"],
         "sidebar_title": "⚙️ Parâmetros da Simulação",
         "sidebar_general": "📅 Geral",
         "duration_days": "Duração (dias)",
@@ -3942,6 +3944,7 @@ def render_demo_tab(params: dict):
 
         results      = []
         stock_rows   = []
+        agent_rows   = []
         progress     = st.progress(0, text="Simulating…")
         chart_spot   = st.empty()
 
@@ -3959,6 +3962,10 @@ def render_demo_tab(params: dict):
             results.append(agg_c)
             stock_rows.extend(prod_b)
             stock_rows.extend(prod_c)
+
+            # Agent-level snapshot (for Agent Replay tab)
+            agent_rows.extend(_collect_agent_snapshot(model_base,   day, "Baseline"))
+            agent_rows.extend(_collect_agent_snapshot(model_crisis, day, "Crisis"))
 
             if day % max(1, params["days"] // 100) == 0 or day == params["days"]:
                 df_live = pd.DataFrame(results)
@@ -3997,6 +4004,7 @@ def render_demo_tab(params: dict):
         st.session_state.sim_stock        = pd.DataFrame(stock_rows)
         st.session_state.sim_scm_log      = pd.concat([log_b, log_c], ignore_index=True)
         st.session_state.sim_model_crisis = model_crisis
+        st.session_state.agent_log        = pd.DataFrame(agent_rows) if agent_rows else None
 
         # Behavioural learning preference drift snapshots
         pref_b = pd.DataFrame(getattr(model_base,   "_pref_snapshots", []))
@@ -7950,6 +7958,500 @@ def render_stress_tab(params: dict):
 
 
 # ===========================================================================
+# 13. AGENT REPLAY VIEWER
+# ===========================================================================
+
+_ARCHETYPE_COLORS = {
+    "price_champion":   "#E87722",   # amber
+    "green_buyer":      "#44A1A0",   # teal
+    "health_optimizer": "#27AE60",   # green
+    "habitual_buyer":   "#8E44AD",   # purple
+}
+_ARCHETYPE_LABELS = {
+    "price_champion":   "💰 Price Champion",
+    "green_buyer":      "🌿 Green Buyer",
+    "health_optimizer": "🥗 Health Optimizer",
+    "habitual_buyer":   "🛒 Habitual Buyer",
+}
+_INCOME_BRACKETS = {
+    (0,     1500):  "Low",
+    (1500,  3000):  "Mid",
+    (3000,  99999): "High",
+}
+
+
+def _income_bracket(midpoint: float) -> str:
+    for (lo, hi), label in _INCOME_BRACKETS.items():
+        if lo <= midpoint < hi:
+            return label
+    return "Mid"
+
+
+def _collect_agent_snapshot(model, day: int, scenario: str) -> list[dict]:
+    """
+    Capture a lightweight per-agent snapshot AFTER model.step().
+
+    model.last_daily_agents holds the ConsumerAgent objects that just ran.
+    Objects are removed from the Mesa schedule but remain alive in memory.
+    """
+    rows = []
+    for agent in getattr(model, "last_daily_agents", []):
+        fulfillment = (agent.items_purchased / max(1, agent.items_wanted)
+                       if agent.items_wanted > 0 else 1.0)
+        rows.append({
+            "Day":             day,
+            "Scenario":        scenario,
+            "Archetype":       agent.archetype,
+            "IncomeBracket":   _income_bracket(agent.income_midpoint),
+            "IncomeMidpoint":  round(agent.income_midpoint, 0),
+            "ItemsWanted":     agent.items_wanted,
+            "ItemsPurchased":  agent.items_purchased,
+            "Fulfillment":     round(fulfillment, 3),
+            "BudgetExhausted": int(agent.budget_exhausted),
+            "PanicLevel":      round(agent.panic_level, 3),
+            "PBC":             round(agent.pbc, 3),
+            "SubjectiveNorm":  round(agent.subjective_norm, 3),
+            "PriceSensitivity": round(agent.price_sensitivity, 3),
+            "OrganicPref":     round(agent.organic_preference, 3),
+            "FinnishPref":     round(agent.finnish_preference, 3),
+            "FIES":            agent.food_insecurity_score,
+        })
+    return rows
+
+
+def render_agent_replay_tab():
+    st.header("🎬 Agent Replay Viewer")
+    st.markdown(
+        "Step through the simulation day by day and inspect individual consumer "
+        "agent decisions — archetype mix, panic levels, fulfillment rates, and "
+        "behavioural-theory scores for every shopper on any given day."
+    )
+
+    df_log = st.session_state.get("agent_log")
+    if df_log is None or df_log.empty:
+        st.info(
+            "No agent data found yet. Run the **🎮 Interactive Demo** simulation first — "
+            "agent snapshots are automatically captured during each run."
+        )
+        return
+
+    scenarios = sorted(df_log["Scenario"].unique())
+    days_avail = sorted(df_log["Day"].unique())
+
+    # ── Controls ─────────────────────────────────────────────────────────────
+    ctrl_col1, ctrl_col2 = st.columns([2, 1])
+    with ctrl_col1:
+        sel_day = st.slider(
+            "📅 Day", min_value=int(days_avail[0]), max_value=int(days_avail[-1]),
+            value=int(days_avail[0]), step=1, key="replay_day_slider",
+        )
+    with ctrl_col2:
+        sel_scenario = st.selectbox("Scenario", scenarios, key="replay_scenario_sel")
+
+    day_df = df_log[(df_log["Day"] == sel_day) & (df_log["Scenario"] == sel_scenario)].copy()
+    if day_df.empty:
+        st.warning("No agent data for this day/scenario combination.")
+        return
+
+    n_agents    = len(day_df)
+    avg_fulfill = day_df["Fulfillment"].mean()
+    avg_panic   = day_df["PanicLevel"].mean()
+    pct_exh     = day_df["BudgetExhausted"].mean() * 100
+    avg_pbc     = day_df["PBC"].mean()
+
+    # ── KPI strip ─────────────────────────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Shoppers today",     f"{n_agents}")
+    m2.metric("Avg Fulfillment",    f"{avg_fulfill:.1%}")
+    m3.metric("Budget Exhausted",   f"{pct_exh:.1f}%")
+    m4.metric("Avg Panic Level",    f"{avg_panic:.2f}")
+
+    st.divider()
+
+    # ── Scatter: Panic vs PBC coloured by archetype ───────────────────────────
+    st.subheader("🔬 Agent Decision Space — Panic vs Perceived Behavioural Control")
+    st.caption(
+        "Each dot is one shopper. Size = items purchased. "
+        "High panic + low PBC (bottom-right) = most vulnerable agents."
+    )
+
+    day_df["ArchetypeLabel"] = day_df["Archetype"].map(
+        lambda x: _ARCHETYPE_LABELS.get(x, x)
+    )
+    day_df["SizeScaled"] = (day_df["ItemsPurchased"].clip(lower=1) * 4).clip(upper=40)
+
+    fig_scatter = px.scatter(
+        day_df,
+        x="PanicLevel", y="PBC",
+        color="ArchetypeLabel",
+        size="SizeScaled",
+        size_max=18,
+        color_discrete_map={v: _ARCHETYPE_COLORS[k] for k, v in _ARCHETYPE_LABELS.items()},
+        hover_data={
+            "IncomeBracket": True,
+            "ItemsWanted": True,
+            "ItemsPurchased": True,
+            "Fulfillment": ":.1%",
+            "BudgetExhausted": True,
+            "SubjectiveNorm": ":.2f",
+            "SizeScaled": False,
+        },
+        labels={"PanicLevel": "Panic Level (0–1)", "PBC": "Perceived Behavioural Control (0–1)",
+                "ArchetypeLabel": "Archetype"},
+        title=f"Day {sel_day} — {sel_scenario}: {n_agents} shoppers",
+        template="plotly_white",
+    )
+    fig_scatter.update_layout(
+        xaxis=dict(range=[-0.05, 1.05]),
+        yaxis=dict(range=[-0.05, 1.05]),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    # Danger zone annotation
+    fig_scatter.add_shape(
+        type="rect", x0=0.5, x1=1.0, y0=0.0, y1=0.5,
+        fillcolor="rgba(220,20,60,0.06)", line=dict(color="rgba(220,20,60,0.3)", dash="dot"),
+    )
+    fig_scatter.add_annotation(
+        x=0.75, y=0.25, text="⚠️ High vulnerability zone",
+        showarrow=False, font=dict(size=10, color="#c0392b"),
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Archetype breakdown ───────────────────────────────────────────────────
+    st.subheader("🏷️ Archetype Breakdown — Day " + str(sel_day))
+    arch_summary = (
+        day_df.groupby("Archetype")
+        .agg(
+            Count       =("Archetype",       "count"),
+            AvgFulfill  =("Fulfillment",      "mean"),
+            AvgPanic    =("PanicLevel",       "mean"),
+            PctExhausted=("BudgetExhausted",  "mean"),
+            AvgPBC      =("PBC",              "mean"),
+        )
+        .reset_index()
+    )
+    arch_summary["AvgFulfill"]   = arch_summary["AvgFulfill"].map("{:.1%}".format)
+    arch_summary["PctExhausted"] = arch_summary["PctExhausted"].map("{:.1%}".format)
+    arch_summary["AvgPanic"]     = arch_summary["AvgPanic"].map("{:.2f}".format)
+    arch_summary["AvgPBC"]       = arch_summary["AvgPBC"].map("{:.2f}".format)
+    arch_summary["Archetype"]    = arch_summary["Archetype"].map(
+        lambda x: _ARCHETYPE_LABELS.get(x, x)
+    )
+    arch_summary.columns = ["Archetype", "Shoppers", "Avg Fulfillment",
+                             "Avg Panic", "% Budget Exhausted", "Avg PBC"]
+    st.dataframe(arch_summary, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Time-series: daily aggregate traces across all days ──────────────────
+    st.subheader("📈 Daily Trends — " + sel_scenario)
+    daily_agg = (
+        df_log[df_log["Scenario"] == sel_scenario]
+        .groupby(["Day", "Archetype"])
+        .agg(AvgFulfill=("Fulfillment", "mean"), AvgPanic=("PanicLevel", "mean"))
+        .reset_index()
+    )
+    daily_agg["ArchetypeLabel"] = daily_agg["Archetype"].map(
+        lambda x: _ARCHETYPE_LABELS.get(x, x)
+    )
+
+    tab_ts1, tab_ts2 = st.tabs(["Fulfilment Rate by Archetype", "Panic Level by Archetype"])
+
+    with tab_ts1:
+        fig_ts1 = px.line(
+            daily_agg, x="Day", y="AvgFulfill", color="ArchetypeLabel",
+            color_discrete_map={v: _ARCHETYPE_COLORS[k] for k, v in _ARCHETYPE_LABELS.items()},
+            labels={"AvgFulfill": "Avg Fulfillment", "ArchetypeLabel": "Archetype"},
+            title=f"Daily Mean Fulfillment Rate — {sel_scenario}",
+            template="plotly_white",
+        )
+        fig_ts1.add_vline(x=sel_day, line_dash="dot", line_color="#888",
+                          annotation_text=f"Day {sel_day}")
+        fig_ts1.update_yaxes(tickformat=".0%")
+        st.plotly_chart(fig_ts1, use_container_width=True, config=_PLOTLY_CFG)
+
+    with tab_ts2:
+        fig_ts2 = px.line(
+            daily_agg, x="Day", y="AvgPanic", color="ArchetypeLabel",
+            color_discrete_map={v: _ARCHETYPE_COLORS[k] for k, v in _ARCHETYPE_LABELS.items()},
+            labels={"AvgPanic": "Avg Panic Level", "ArchetypeLabel": "Archetype"},
+            title=f"Daily Mean Panic Level — {sel_scenario}",
+            template="plotly_white",
+        )
+        fig_ts2.add_vline(x=sel_day, line_dash="dot", line_color="#888",
+                          annotation_text=f"Day {sel_day}")
+        st.plotly_chart(fig_ts2, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Income vulnerability heatmap ──────────────────────────────────────────
+    st.subheader("💶 Income Vulnerability — Budget Exhaustion by Bracket Over Time")
+    heat_df = (
+        df_log[df_log["Scenario"] == sel_scenario]
+        .groupby(["Day", "IncomeBracket"])["BudgetExhausted"]
+        .mean()
+        .reset_index()
+    )
+    heat_pivot = heat_df.pivot(index="IncomeBracket", columns="Day",
+                                values="BudgetExhausted").fillna(0)
+    # Reorder rows Low → Mid → High
+    _bracket_order = [b for b in ["Low", "Mid", "High"] if b in heat_pivot.index]
+    heat_pivot = heat_pivot.loc[_bracket_order]
+
+    fig_heat = go.Figure(go.Heatmap(
+        z=heat_pivot.values,
+        x=heat_pivot.columns.tolist(),
+        y=heat_pivot.index.tolist(),
+        colorscale=[[0, "#27AE60"], [0.5, "#F1C40F"], [1, "#C0392B"]],
+        zmin=0, zmax=1,
+        colorbar=dict(title="Budget<br>Exhaustion", tickformat=".0%"),
+        hoverongaps=False,
+    ))
+    fig_heat.update_layout(
+        title=f"Budget Exhaustion Rate by Income Bracket — {sel_scenario}",
+        xaxis_title="Day", yaxis_title="Income Bracket",
+        template="plotly_white",
+        height=250,
+    )
+    st.plotly_chart(fig_heat, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Raw data download ─────────────────────────────────────────────────────
+    st.divider()
+    st.download_button(
+        "📥 Download full agent log (CSV)",
+        df_log.to_csv(index=False).encode("utf-8"),
+        "GROCERYsim_agent_log.csv",
+        "text/csv",
+        key="dl_agent_log",
+    )
+
+
+# ===========================================================================
+# 14. REGIONAL MAP (Finnish store network + food-security overlay)
+# ===========================================================================
+
+# Finnish supermarket locations (realistic, not exhaustive)
+_FI_STORES = [
+    # Helsinki metro
+    {"name": "K-Citymarket Jumbo", "chain": "K-Citymarket", "lat": 60.2927, "lon": 25.0414, "region": "Uusimaa",       "city": "Vantaa",       "size": "hypermarket"},
+    {"name": "Prisma Kannelmäki",  "chain": "Prisma",        "lat": 60.2343, "lon": 24.8878, "region": "Uusimaa",       "city": "Helsinki",     "size": "hypermarket"},
+    {"name": "S-Market Kamppi",    "chain": "S-Market",      "lat": 60.1683, "lon": 24.9316, "region": "Uusimaa",       "city": "Helsinki",     "size": "supermarket"},
+    {"name": "Lidl Itäkeskus",     "chain": "Lidl",          "lat": 60.2105, "lon": 25.0800, "region": "Uusimaa",       "city": "Helsinki",     "size": "supermarket"},
+    {"name": "K-Supermarket Munkkivuori", "chain": "K-Supermarket", "lat": 60.2041, "lon": 24.8817, "region": "Uusimaa", "city": "Helsinki",   "size": "supermarket"},
+    {"name": "Alepa Punavuori",    "chain": "Alepa",         "lat": 60.1605, "lon": 24.9407, "region": "Uusimaa",       "city": "Helsinki",     "size": "convenience"},
+    {"name": "Prisma Lippulaiva",  "chain": "Prisma",        "lat": 60.1631, "lon": 24.7439, "region": "Uusimaa",       "city": "Espoo",        "size": "hypermarket"},
+    {"name": "K-Citymarket Ruoholahti", "chain": "K-Citymarket", "lat": 60.1631, "lon": 24.9096, "region": "Uusimaa",  "city": "Helsinki",     "size": "hypermarket"},
+    # Tampere
+    {"name": "Prisma Lielahti",    "chain": "Prisma",        "lat": 61.5139, "lon": 23.7072, "region": "Pirkanmaa",     "city": "Tampere",      "size": "hypermarket"},
+    {"name": "K-Citymarket Turtola","chain": "K-Citymarket", "lat": 61.4918, "lon": 23.7895, "region": "Pirkanmaa",     "city": "Tampere",      "size": "hypermarket"},
+    {"name": "S-Market Tampere",   "chain": "S-Market",      "lat": 61.4978, "lon": 23.7610, "region": "Pirkanmaa",     "city": "Tampere",      "size": "supermarket"},
+    {"name": "Lidl Tampere",       "chain": "Lidl",          "lat": 61.5021, "lon": 23.7553, "region": "Pirkanmaa",     "city": "Tampere",      "size": "supermarket"},
+    # Turku
+    {"name": "Prisma Länsikeskus", "chain": "Prisma",        "lat": 60.4518, "lon": 22.2153, "region": "Varsinais-Suomi","city": "Turku",       "size": "hypermarket"},
+    {"name": "K-Citymarket Turku", "chain": "K-Citymarket",  "lat": 60.4518, "lon": 22.2641, "region": "Varsinais-Suomi","city": "Turku",       "size": "hypermarket"},
+    {"name": "S-Market Turku",     "chain": "S-Market",      "lat": 60.4518, "lon": 22.2666, "region": "Varsinais-Suomi","city": "Turku",       "size": "supermarket"},
+    # Oulu
+    {"name": "Prisma Oulu",        "chain": "Prisma",        "lat": 65.0121, "lon": 25.4651, "region": "Pohjois-Pohjanmaa","city": "Oulu",       "size": "hypermarket"},
+    {"name": "K-Citymarket Oulu",  "chain": "K-Citymarket",  "lat": 65.0031, "lon": 25.5181, "region": "Pohjois-Pohjanmaa","city": "Oulu",       "size": "hypermarket"},
+    {"name": "S-Market Oulu",      "chain": "S-Market",      "lat": 65.0121, "lon": 25.4731, "region": "Pohjois-Pohjanmaa","city": "Oulu",       "size": "supermarket"},
+    {"name": "Lidl Oulu",          "chain": "Lidl",          "lat": 64.9993, "lon": 25.5013, "region": "Pohjois-Pohjanmaa","city": "Oulu",       "size": "supermarket"},
+    # Jyväskylä
+    {"name": "Prisma Seppälä",     "chain": "Prisma",        "lat": 62.2421, "lon": 25.7482, "region": "Keski-Suomi",   "city": "Jyväskylä",   "size": "hypermarket"},
+    {"name": "K-Citymarket Jyväskylä","chain": "K-Citymarket","lat": 62.2366, "lon": 25.7482,"region": "Keski-Suomi",   "city": "Jyväskylä",   "size": "hypermarket"},
+    {"name": "S-Market Jyväskylä", "chain": "S-Market",      "lat": 62.2421, "lon": 25.7413, "region": "Keski-Suomi",   "city": "Jyväskylä",   "size": "supermarket"},
+    # Kuopio
+    {"name": "Prisma Kuopio",      "chain": "Prisma",        "lat": 62.8980, "lon": 27.6782, "region": "Pohjois-Savo",  "city": "Kuopio",      "size": "hypermarket"},
+    {"name": "K-Citymarket Kuopio","chain": "K-Citymarket",  "lat": 62.8879, "lon": 27.6894, "region": "Pohjois-Savo",  "city": "Kuopio",      "size": "hypermarket"},
+    # Joensuu
+    {"name": "Prisma Joensuu",     "chain": "Prisma",        "lat": 62.5984, "lon": 29.7740, "region": "Pohjois-Karjala","city": "Joensuu",    "size": "hypermarket"},
+    {"name": "S-Market Joensuu",   "chain": "S-Market",      "lat": 62.6009, "lon": 29.7618, "region": "Pohjois-Karjala","city": "Joensuu",    "size": "supermarket"},
+    # Lahti
+    {"name": "Prisma Lahti",       "chain": "Prisma",        "lat": 60.9827, "lon": 25.6609, "region": "Päijät-Häme",   "city": "Lahti",       "size": "hypermarket"},
+    {"name": "K-Citymarket Lahti", "chain": "K-Citymarket",  "lat": 60.9827, "lon": 25.6553, "region": "Päijät-Häme",   "city": "Lahti",       "size": "hypermarket"},
+    # Rovaniemi (Lapland)
+    {"name": "Prisma Rovaniemi",   "chain": "Prisma",        "lat": 66.5039, "lon": 25.7294, "region": "Lappi",          "city": "Rovaniemi",   "size": "hypermarket"},
+    {"name": "S-Market Rovaniemi", "chain": "S-Market",      "lat": 66.5007, "lon": 25.7320, "region": "Lappi",          "city": "Rovaniemi",   "size": "supermarket"},
+    # Vaasa
+    {"name": "Prisma Vaasa",       "chain": "Prisma",        "lat": 63.0961, "lon": 21.5922, "region": "Pohjanmaa",      "city": "Vaasa",       "size": "hypermarket"},
+    {"name": "K-Citymarket Vaasa", "chain": "K-Citymarket",  "lat": 63.0961, "lon": 21.5800, "region": "Pohjanmaa",      "city": "Vaasa",       "size": "hypermarket"},
+]
+
+# Regional food-security & population context
+_FI_REGIONS = {
+    "Uusimaa":             {"pop": 1_700_000, "income_idx": 1.25, "rural_pct": 5,  "import_dep": 55},
+    "Pirkanmaa":           {"pop":   530_000, "income_idx": 1.05, "rural_pct": 18, "import_dep": 48},
+    "Varsinais-Suomi":     {"pop":   490_000, "income_idx": 1.03, "rural_pct": 22, "import_dep": 45},
+    "Pohjois-Pohjanmaa":   {"pop":   420_000, "income_idx": 0.95, "rural_pct": 35, "import_dep": 42},
+    "Keski-Suomi":         {"pop":   280_000, "income_idx": 0.93, "rural_pct": 40, "import_dep": 44},
+    "Pohjois-Savo":        {"pop":   245_000, "income_idx": 0.90, "rural_pct": 45, "import_dep": 40},
+    "Pohjois-Karjala":     {"pop":   162_000, "income_idx": 0.86, "rural_pct": 52, "import_dep": 38},
+    "Päijät-Häme":         {"pop":   202_000, "income_idx": 0.96, "rural_pct": 20, "import_dep": 47},
+    "Lappi":               {"pop":   180_000, "income_idx": 0.88, "rural_pct": 75, "import_dep": 35},
+    "Pohjanmaa":           {"pop":   185_000, "income_idx": 0.97, "rural_pct": 38, "import_dep": 39},
+}
+
+_CHAIN_COLORS = {
+    "K-Citymarket":  "#E87722",
+    "K-Supermarket": "#F5A623",
+    "Prisma":        "#27AE60",
+    "S-Market":      "#44A1A0",
+    "Lidl":          "#2471A3",
+    "Alepa":         "#8E44AD",
+}
+_SIZE_MAP = {"hypermarket": 18, "supermarket": 12, "convenience": 7}
+
+
+def render_regional_map_tab():
+    st.header("🗺️ Finnish Store Network & Regional Food-Security Map")
+    st.markdown(
+        "Explore the geographical distribution of major grocery chains across Finland "
+        "and see how regional food-security indicators (import dependency, rural access, "
+        "income index) interact with your simulation results."
+    )
+
+    df_stores = pd.DataFrame(_FI_STORES)
+    df_stores["MarkerSize"] = df_stores["size"].map(_SIZE_MAP)
+    df_stores["ChainColor"] = df_stores["chain"].map(_CHAIN_COLORS)
+
+    # ── Controls ─────────────────────────────────────────────────────────────
+    ctrl1, ctrl2, ctrl3 = st.columns(3)
+    with ctrl1:
+        sel_chains = st.multiselect(
+            "Filter by chain", sorted(df_stores["chain"].unique()),
+            default=sorted(df_stores["chain"].unique()),
+            key="map_chains",
+        )
+    with ctrl2:
+        sel_regions = st.multiselect(
+            "Filter by region", sorted(df_stores["region"].unique()),
+            default=sorted(df_stores["region"].unique()),
+            key="map_regions",
+        )
+    with ctrl3:
+        map_metric = st.selectbox(
+            "Regional overlay metric",
+            ["Import Dependency %", "Rural Population %", "Income Index", "Population"],
+            key="map_metric",
+        )
+
+    _metric_col_map = {
+        "Import Dependency %": "import_dep",
+        "Rural Population %":  "rural_pct",
+        "Income Index":        "income_idx",
+        "Population":          "pop",
+    }
+    metric_col = _metric_col_map[map_metric]
+
+    filtered = df_stores[
+        df_stores["chain"].isin(sel_chains) &
+        df_stores["region"].isin(sel_regions)
+    ].copy()
+
+    if filtered.empty:
+        st.warning("No stores match the current filters.")
+        return
+
+    # Attach regional metric to each store row
+    filtered["RegionMetric"] = filtered["region"].map(
+        lambda r: _FI_REGIONS.get(r, {}).get(metric_col, 0)
+    )
+    filtered["RegionPop"] = filtered["region"].map(
+        lambda r: _FI_REGIONS.get(r, {}).get("pop", 0)
+    )
+
+    # ── Map ───────────────────────────────────────────────────────────────────
+    fig_map = px.scatter_mapbox(
+        filtered,
+        lat="lat", lon="lon",
+        color="chain",
+        size="MarkerSize",
+        size_max=20,
+        color_discrete_map=_CHAIN_COLORS,
+        hover_name="name",
+        hover_data={
+            "city": True,
+            "region": True,
+            "size": True,
+            "RegionMetric": True,
+            "lat": False,
+            "lon": False,
+            "MarkerSize": False,
+            "ChainColor": False,
+            "RegionPop": True,
+        },
+        labels={"chain": "Chain", "RegionMetric": map_metric, "RegionPop": "Region pop."},
+        zoom=4.5,
+        center={"lat": 64.5, "lon": 26.0},
+        mapbox_style="open-street-map",
+        title="Finnish Supermarket Network",
+        height=560,
+    )
+    fig_map.update_layout(
+        legend=dict(orientation="h", yanchor="bottom", y=1.01),
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+    st.plotly_chart(fig_map, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Regional stats table ──────────────────────────────────────────────────
+    st.subheader("📊 Regional Food-Security Indicators")
+
+    # Build region summary
+    region_rows = []
+    for region, stats_r in _FI_REGIONS.items():
+        n_stores = len(df_stores[df_stores["region"] == region])
+        region_rows.append({
+            "Region":             region,
+            "Population":         f"{stats_r['pop']:,}",
+            "Income Index":       f"{stats_r['income_idx']:.2f}",
+            "Import Dep. %":      f"{stats_r['import_dep']}%",
+            "Rural Pop. %":       f"{stats_r['rural_pct']}%",
+            "Mapped Stores":      n_stores,
+            "Food Access Risk":   (
+                "🔴 High"   if stats_r["rural_pct"] > 60 or stats_r["income_idx"] < 0.90 else
+                "🟡 Medium" if stats_r["rural_pct"] > 35 or stats_r["income_idx"] < 0.95 else
+                "🟢 Low"
+            ),
+        })
+    st.dataframe(pd.DataFrame(region_rows), use_container_width=True, hide_index=True)
+
+    # ── Simulation overlay (if data available) ───────────────────────────────
+    df_sim = st.session_state.get("sim_results")
+    if df_sim is not None and not df_sim.empty:
+        st.divider()
+        st.subheader("🔗 Simulation → Regional Projection")
+        st.markdown(
+            "Your simulation results scaled to each region's population. "
+            "This projects what the simulated supply shock would mean if the "
+            "same scenario played out in each Finnish region."
+        )
+
+        df_crisis = df_sim[df_sim["Scenario"] == "Crisis"] if "Crisis" in df_sim["Scenario"].values else df_sim
+        sim_avg_daily_rev   = df_crisis["Revenue"].mean()   if "Revenue"   in df_crisis.columns else 1
+        sim_avg_daily_waste = df_crisis["Waste"].mean()     if "Waste"     in df_crisis.columns else 0
+        sim_avg_food_stress = df_crisis["FoodStressedPct"].mean() if "FoodStressedPct" in df_crisis.columns else 0
+        # Simulation uses ~200 agents; scale to store catchment ~5000 households
+        _scale = 5000 / max(df_crisis["Consumers"].mean(), 1) if "Consumers" in df_crisis.columns else 25
+
+        proj_rows = []
+        for region, stats_r in _FI_REGIONS.items():
+            n_stores_r  = len(df_stores[df_stores["region"] == region])
+            region_scale = (stats_r["pop"] / 200_000) * (stats_r["income_idx"])
+            proj_rev    = sim_avg_daily_rev   * _scale * region_scale * n_stores_r
+            proj_waste  = sim_avg_daily_waste * _scale * region_scale * n_stores_r
+            proj_stress = sim_avg_food_stress * stats_r["pop"]
+            proj_rows.append({
+                "Region":                   region,
+                "Est. Daily Revenue (€)":   f"{proj_rev:,.0f}",
+                "Est. Daily Food Waste":    f"{proj_waste:,.0f} units",
+                "Est. Food-Stressed People":f"{proj_stress:,.0f}",
+                "Mapped Stores":            n_stores_r,
+            })
+        st.dataframe(pd.DataFrame(proj_rows), use_container_width=True, hide_index=True)
+        st.caption(
+            "⚠️ Projections are illustrative estimates based on linear scaling from "
+            "the ABM (single store, ~200 agents). They are not validated forecasts."
+        )
+
+
+# ===========================================================================
 # 12. MAIN ENTRY POINT
 # ===========================================================================
 
@@ -8041,6 +8543,12 @@ def main():
 
     with tabs[11]:
         render_stress_tab(params)
+
+    with tabs[12]:
+        render_agent_replay_tab()
+
+    with tabs[13]:
+        render_regional_map_tab()
 
     render_footer()
 
