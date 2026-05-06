@@ -2628,6 +2628,9 @@ defaults = {
     "_last_params": None,
     # Agent-level replay log (list → DataFrame)
     "agent_log": None,
+    # Multi-store network results
+    "multistore_results": None,   # DataFrame: Day × Store × Scenario metrics
+    "multistore_config":  None,   # list of store-config dicts used in last run
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -2639,7 +2642,7 @@ for k, v in defaults.items():
 _MAIN_T = {
     "en": {
         "subtitle": "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export", "📊 Compare Scenarios", "🚨 Stress Test", "🎬 Agent Replay", "🗺️ Regional Map"],
+        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export", "📊 Compare Scenarios", "🚨 Stress Test", "🎬 Agent Replay", "🗺️ Regional Map", "🏪 Multi-Store Network"],
         "sidebar_title": "⚙️ Simulation Parameters",
         "sidebar_general": "📅 General",
         "duration_days": "Duration (Days)",
@@ -2734,7 +2737,7 @@ _MAIN_T = {
     },
     "fi": {
         "subtitle": "**Agenttipohjainen malli kuluttajakäyttäytymiseen & toimitusketjun stressitestaukseen** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti", "📊 Vertaile Skenaarioita", "🚨 Stressitesti", "🎬 Agenttitoisinto", "🗺️ Aluekartta"],
+        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti", "📊 Vertaile Skenaarioita", "🚨 Stressitesti", "🎬 Agenttitoisinto", "🗺️ Aluekartta", "🏪 Monikauppaverkosto"],
         "sidebar_title": "⚙️ Simulaatioparametrit",
         "sidebar_general": "📅 Yleiset",
         "duration_days": "Kesto (päivät)",
@@ -2829,7 +2832,7 @@ _MAIN_T = {
     },
     "el": {
         "subtitle": "**Μοντέλο Πράκτορα για Καταναλωτική Συμπεριφορά & Ανθεκτικότητα Αλυσίδας Εφοδιασμού** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή", "📊 Σύγκριση Σεναρίων", "🚨 Δοκιμή Αντοχής", "🎬 Αναπαραγωγή Πρακτόρων", "🗺️ Περιφερειακός Χάρτης"],
+        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή", "📊 Σύγκριση Σεναρίων", "🚨 Δοκιμή Αντοχής", "🎬 Αναπαραγωγή Πρακτόρων", "🗺️ Περιφερειακός Χάρτης", "🏪 Δίκτυο Πολυ-Καταστημάτων"],
         "sidebar_title": "⚙️ Παράμετροι Προσομοίωσης",
         "sidebar_general": "📅 Γενικά",
         "duration_days": "Διάρκεια (ημέρες)",
@@ -2924,7 +2927,7 @@ _MAIN_T = {
     },
     "pt": {
         "subtitle": "**Modelo Baseado em Agentes para Comportamento do Consumidor & Cadeia de Abastecimento** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar", "📊 Comparar Cenários", "🚨 Teste de Stress", "🎬 Repetição de Agentes", "🗺️ Mapa Regional"],
+        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar", "📊 Comparar Cenários", "🚨 Teste de Stress", "🎬 Repetição de Agentes", "🗺️ Mapa Regional", "🏪 Rede Multi-Loja"],
         "sidebar_title": "⚙️ Parâmetros da Simulação",
         "sidebar_general": "📅 Geral",
         "duration_days": "Duração (dias)",
@@ -8452,6 +8455,501 @@ def render_regional_map_tab():
 
 
 # ===========================================================================
+# 15. MULTI-STORE NETWORK
+# ===========================================================================
+
+# ── Store-type consumer-count multipliers ───────────────────────────────────
+_STORE_TYPE_MULT = {
+    "Hypermarket":   1.00,
+    "Supermarket":   0.50,
+    "Convenience":   0.15,
+}
+
+# ── Preset store networks ────────────────────────────────────────────────────
+_NETWORK_PRESETS = {
+    "Helsinki Metro (4 stores)": [
+        {"name": "K-Citymarket Jumbo",    "region": "Uusimaa",     "type": "Hypermarket",  "dis_sensitivity": 1.0},
+        {"name": "Prisma Lippulaiva",     "region": "Uusimaa",     "type": "Hypermarket",  "dis_sensitivity": 1.0},
+        {"name": "S-Market Kamppi",       "region": "Uusimaa",     "type": "Supermarket",  "dis_sensitivity": 1.2},
+        {"name": "Alepa Punavuori",       "region": "Uusimaa",     "type": "Convenience",  "dis_sensitivity": 1.5},
+    ],
+    "Multi-Region Network (6 stores)": [
+        {"name": "Prisma Helsinki",       "region": "Uusimaa",           "type": "Hypermarket", "dis_sensitivity": 1.0},
+        {"name": "K-Citymarket Tampere",  "region": "Pirkanmaa",         "type": "Hypermarket", "dis_sensitivity": 1.0},
+        {"name": "Prisma Turku",          "region": "Varsinais-Suomi",   "type": "Hypermarket", "dis_sensitivity": 1.1},
+        {"name": "S-Market Oulu",         "region": "Pohjois-Pohjanmaa", "type": "Supermarket", "dis_sensitivity": 1.3},
+        {"name": "K-Citymarket Jyväskylä","region": "Keski-Suomi",       "type": "Supermarket", "dis_sensitivity": 1.2},
+        {"name": "Prisma Rovaniemi",      "region": "Lappi",             "type": "Supermarket", "dis_sensitivity": 1.6},
+    ],
+    "National Supply Chain (8 stores)": [
+        {"name": "Prisma Helsinki",       "region": "Uusimaa",           "type": "Hypermarket", "dis_sensitivity": 1.0},
+        {"name": "K-Citymarket Espoo",    "region": "Uusimaa",           "type": "Hypermarket", "dis_sensitivity": 1.0},
+        {"name": "Prisma Tampere",        "region": "Pirkanmaa",         "type": "Hypermarket", "dis_sensitivity": 1.1},
+        {"name": "K-Citymarket Turku",    "region": "Varsinais-Suomi",   "type": "Hypermarket", "dis_sensitivity": 1.1},
+        {"name": "Prisma Oulu",           "region": "Pohjois-Pohjanmaa", "type": "Hypermarket", "dis_sensitivity": 1.2},
+        {"name": "S-Market Kuopio",       "region": "Pohjois-Savo",      "type": "Supermarket", "dis_sensitivity": 1.3},
+        {"name": "S-Market Joensuu",      "region": "Pohjois-Karjala",   "type": "Supermarket", "dis_sensitivity": 1.4},
+        {"name": "Prisma Rovaniemi",      "region": "Lappi",             "type": "Supermarket", "dis_sensitivity": 1.7},
+    ],
+}
+
+# Region proximity matrix — 0=same region, 1=adjacent, 2=distant
+# Used for panic-contagion decay: same=0.80, adjacent=0.35, distant=0.10
+_REGION_PROXIMITY = {
+    ("Uusimaa", "Uusimaa"):                 0,
+    ("Uusimaa", "Pirkanmaa"):               1,
+    ("Uusimaa", "Varsinais-Suomi"):         1,
+    ("Uusimaa", "Päijät-Häme"):             1,
+    ("Pirkanmaa", "Varsinais-Suomi"):       1,
+    ("Pirkanmaa", "Keski-Suomi"):           1,
+    ("Pirkanmaa", "Pohjois-Savo"):          2,
+    ("Keski-Suomi", "Pohjois-Savo"):        1,
+    ("Keski-Suomi", "Pohjois-Karjala"):     1,
+    ("Pohjois-Pohjanmaa", "Lappi"):         1,
+    ("Pohjois-Savo", "Pohjois-Karjala"):    1,
+}
+_CONTAGION_DECAY = {0: 0.80, 1: 0.35, 2: 0.10}
+
+
+def _proximity_level(r1: str, r2: str) -> int:
+    """Return proximity level (0=same, 1=adjacent, 2=distant)."""
+    if r1 == r2:
+        return 0
+    return _REGION_PROXIMITY.get((r1, r2), _REGION_PROXIMITY.get((r2, r1), 2))
+
+
+def _run_multistore_network(
+    store_configs: list[dict],
+    params: dict,
+    n_days: int,
+    crisis_start: int,
+    inflation: float,
+    disruption_days: int,
+    panic_sens: float,
+    hoard: float,
+    enable_contagion: bool,
+    enable_redistribution: bool,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """
+    Run N SupermarketModel instances in lockstep, one per store config.
+
+    Inter-store dynamics (when enabled):
+    • Panic contagion  — after each day, stores with panic > 0.55 spread
+      a fraction of their panic to other stores (decay by proximity).
+    • Emergency redistribution — a shared network buffer of supply days
+      (= n_stores × 2) is drawn from when any store's daily revenue drops
+      >35 % below its own baseline. Each draw reduces that store's
+      effective disruption by 1 day (capped at buffer remaining).
+
+    Returns a long DataFrame: Day, Store, Region, Type, Scenario, and all
+    aggregate KPIs from _collect_model_day().
+    """
+    if st.session_state.config_data is None:
+        return pd.DataFrame()
+
+    n_stores = len(store_configs)
+    base_con  = params["base_con"]
+
+    # Build one model per store (baseline + crisis)
+    models_base   = []
+    models_crisis = []
+    for i, sc in enumerate(store_configs):
+        region_stats = _FI_REGIONS.get(sc["region"], {})
+        income_idx   = region_stats.get("income_idx", 1.0)
+        store_mult   = _STORE_TYPE_MULT.get(sc["type"], 0.5)
+        eff_consumers = max(10, int(base_con * store_mult * income_idx))
+        eff_dis       = max(0, int(disruption_days * sc.get("dis_sensitivity", 1.0)))
+
+        store_params = {**params,
+                        "base_con":  eff_consumers,
+                        "dis":       eff_dis,
+                        "inf":       inflation,
+                        "panic":     panic_sens,
+                        "hoard":     hoard,
+                        "cri_start": crisis_start,
+                        "days":      n_days}
+        models_base.append(_make_model(store_params, is_crisis=False, seed=seed + i))
+        models_crisis.append(_make_model(store_params, is_crisis=True,  seed=seed + i))
+
+    # Redistribution buffer
+    redist_buffer = n_stores * 2  # shared supply-day buffer
+
+    rows = []
+    # Track each store's baseline revenue (day-5 rolling average) for redistribution trigger
+    baseline_rev_tracker = [[] for _ in range(n_stores)]
+
+    for day in range(1, n_days + 1):
+        for i in range(n_stores):
+            models_base[i].step()
+            models_crisis[i].step()
+
+        # ── Panic contagion ──────────────────────────────────────────────────
+        if enable_contagion:
+            panic_levels = [m.global_panic_level for m in models_crisis]
+            new_panics   = list(panic_levels)
+            for i in range(n_stores):
+                if panic_levels[i] > 0.55:
+                    for j in range(n_stores):
+                        if i == j:
+                            continue
+                        prox   = _proximity_level(store_configs[i]["region"],
+                                                  store_configs[j]["region"])
+                        decay  = _CONTAGION_DECAY.get(prox, 0.10)
+                        signal = (panic_levels[i] - 0.55) * decay * 0.30
+                        new_panics[j] = min(1.0, new_panics[j] + signal)
+            for i, m in enumerate(models_crisis):
+                m.global_panic_level = new_panics[i]
+
+        # ── Emergency redistribution ─────────────────────────────────────────
+        if enable_redistribution and redist_buffer > 0 and day >= crisis_start:
+            for i in range(n_stores):
+                last_rec_c = models_crisis[i].daily_records[-1] if models_crisis[i].daily_records else {}
+                last_rec_b = models_base[i].daily_records[-1]   if models_base[i].daily_records   else {}
+                rev_c = last_rec_c.get("Revenue", 0)
+                rev_b = last_rec_b.get("Revenue", 1)
+                if rev_b > 0 and (rev_b - rev_c) / rev_b > 0.35:
+                    # Store in crisis — draw from buffer
+                    draw = min(1, redist_buffer)
+                    redist_buffer -= draw
+                    # Simulate redistribution: temporarily reduce effective disruption
+                    if models_crisis[i].supply_disruption_days > 0:
+                        models_crisis[i].supply_disruption_days = max(
+                            0, models_crisis[i].supply_disruption_days - draw
+                        )
+
+        # ── Collect results ──────────────────────────────────────────────────
+        for i, sc in enumerate(store_configs):
+            agg_b, _ = _collect_model_day(models_base[i],   day, "Baseline",
+                                          collect_products=False)
+            agg_c, _ = _collect_model_day(models_crisis[i], day, "Crisis",
+                                          collect_products=False)
+            for agg, scenario in [(agg_b, "Baseline"), (agg_c, "Crisis")]:
+                rows.append({
+                    "Day":      day,
+                    "Store":    sc["name"],
+                    "Region":   sc["region"],
+                    "Type":     sc["type"],
+                    "Scenario": scenario,
+                    **{k: agg[k] for k in [
+                        "Revenue", "Waste", "LostSales", "PanicLevel",
+                        "BudgetExhaustionRate", "FoodStressedPct",
+                        "FulfillmentRate", "CO2Total", "ImportDepPct",
+                    ] if k in agg},
+                })
+
+    return pd.DataFrame(rows)
+
+
+def render_multistore_tab(params: dict):
+    st.header("🏪 Multi-Store Network Simulation")
+    st.markdown(
+        "Simulate a network of supermarkets across Finland under the same supply-chain "
+        "crisis. Each store is calibrated to its region's income level and size. "
+        "Optional **panic contagion** spreads fear between nearby stores; "
+        "**emergency redistribution** lets the network partially shield the hardest-hit stores."
+    )
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Load data in the **🏠 Data & Population** tab first.")
+        return
+
+    # ── Network preset selector ──────────────────────────────────────────────
+    st.subheader("1️⃣ Choose a Store Network")
+    preset_names = ["Custom"] + list(_NETWORK_PRESETS.keys())
+    sel_preset   = st.selectbox("Preset network", preset_names, index=1,
+                                key="ms_preset_sel")
+
+    if sel_preset != "Custom":
+        default_stores = _NETWORK_PRESETS[sel_preset]
+    else:
+        default_stores = [
+            {"name": "Store A", "region": "Uusimaa",   "type": "Hypermarket", "dis_sensitivity": 1.0},
+            {"name": "Store B", "region": "Pirkanmaa", "type": "Supermarket", "dis_sensitivity": 1.2},
+        ]
+
+    # ── Editable store table ─────────────────────────────────────────────────
+    st.markdown("**Edit the network below** — add rows to expand, delete rows to reduce:")
+    region_opts = sorted(_FI_REGIONS.keys())
+    type_opts   = list(_STORE_TYPE_MULT.keys())
+
+    edited_stores = st.data_editor(
+        pd.DataFrame(default_stores),
+        num_rows="dynamic",
+        column_config={
+            "name":            st.column_config.TextColumn("Store Name"),
+            "region":          st.column_config.SelectboxColumn("Region", options=region_opts),
+            "type":            st.column_config.SelectboxColumn("Type",   options=type_opts),
+            "dis_sensitivity": st.column_config.NumberColumn(
+                "Disruption Sensitivity", min_value=0.5, max_value=3.0, step=0.1,
+                help="1.0 = same as global setting. >1 = more exposed (e.g. remote store). <1 = more resilient."
+            ),
+        },
+        use_container_width=True,
+        key="ms_store_editor",
+    )
+
+    store_configs = edited_stores.dropna(subset=["name"]).to_dict("records")
+    if len(store_configs) < 1:
+        st.warning("Add at least one store to run the simulation.")
+        return
+
+    # ── Crisis parameters ────────────────────────────────────────────────────
+    st.subheader("2️⃣ Crisis & Network Parameters")
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        ms_days        = st.slider("Simulation days",     30, 180, 90, 10, key="ms_days")
+        ms_cri_start   = st.slider("Crisis start (day)",   5,  60, 30,  5, key="ms_cri_start")
+    with p2:
+        ms_inflation   = st.slider("Inflation rate (%)",   0,  50, 15,  5, key="ms_inf") / 100
+        ms_disruption  = st.slider("Disruption (days)",    0,  21,  7,  1, key="ms_dis")
+    with p3:
+        ms_panic       = st.slider("Panic sensitivity",  0.0, 1.0, 0.5, 0.1, key="ms_panic")
+        ms_hoard       = st.slider("Hoarding multiplier",1.0, 3.0, 1.5, 0.1, key="ms_hoard")
+
+    net1, net2 = st.columns(2)
+    with net1:
+        enable_contagion      = st.toggle("🦠 Enable panic contagion between stores",
+                                          value=True, key="ms_contagion")
+    with net2:
+        enable_redistribution = st.toggle("🚛 Enable emergency supply redistribution",
+                                          value=True, key="ms_redist")
+
+    # ── Run ──────────────────────────────────────────────────────────────────
+    st.subheader("3️⃣ Run")
+    n_stores_display = len(store_configs)
+    st.caption(
+        f"Network: **{n_stores_display} stores** · "
+        f"{'Panic contagion ON' if enable_contagion else 'No contagion'} · "
+        f"{'Redistribution ON' if enable_redistribution else 'No redistribution'}"
+    )
+
+    if st.button("▶️ Run Multi-Store Simulation", type="primary",
+                 use_container_width=True, key="ms_run_btn"):
+        with st.spinner(f"Simulating {n_stores_display} stores × {ms_days} days…"):
+            ms_params = {**params, "days": ms_days, "cri_start": ms_cri_start,
+                         "cri_duration": 0}
+            df_ms = _run_multistore_network(
+                store_configs       = store_configs,
+                params              = ms_params,
+                n_days              = ms_days,
+                crisis_start        = ms_cri_start,
+                inflation           = ms_inflation,
+                disruption_days     = ms_disruption,
+                panic_sens          = ms_panic,
+                hoard               = ms_hoard,
+                enable_contagion    = enable_contagion,
+                enable_redistribution = enable_redistribution,
+                seed                = 42,
+            )
+        st.session_state.multistore_results = df_ms
+        st.session_state.multistore_config  = store_configs
+        st.rerun()
+
+    # ── Results dashboard ─────────────────────────────────────────────────────
+    df_ms = st.session_state.get("multistore_results")
+    if df_ms is None or df_ms.empty:
+        return
+
+    df_crisis   = df_ms[df_ms["Scenario"] == "Crisis"]
+    df_baseline = df_ms[df_ms["Scenario"] == "Baseline"]
+    stores_list = df_ms["Store"].unique().tolist()
+
+    st.divider()
+    st.subheader("📊 Network Dashboard")
+
+    # ── KPI strip ────────────────────────────────────────────────────────────
+    total_rev_b  = df_baseline.groupby("Day")["Revenue"].sum().mean()
+    total_rev_c  = df_crisis.groupby("Day")["Revenue"].sum().mean()
+    rev_drop_pct = (total_rev_b - total_rev_c) / max(total_rev_b, 1) * 100
+    avg_fulfill  = df_crisis["FulfillmentRate"].mean()
+    avg_food_str = df_crisis["FoodStressedPct"].mean() * 100
+    avg_panic    = df_crisis["PanicLevel"].mean()
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Network Rev/day (Crisis)", f"€{total_rev_c:,.0f}",
+              delta=f"{-rev_drop_pct:.1f}% vs Baseline",
+              delta_color="inverse")
+    k2.metric("Stores simulated",   str(len(stores_list)))
+    k3.metric("Avg Fulfillment",    f"{avg_fulfill:.1%}")
+    k4.metric("Food-Stressed %",    f"{avg_food_str:.1f}%")
+    k5.metric("Avg Panic Level",    f"{avg_panic:.2f}")
+
+    st.divider()
+
+    # ── Revenue heatmap: stores × days ───────────────────────────────────────
+    st.subheader("🌡️ Revenue Heatmap — Crisis Scenario (all stores × all days)")
+    heat_data = df_crisis.pivot_table(
+        index="Store", columns="Day", values="Revenue", aggfunc="mean"
+    )
+    # Normalise each store row to its own baseline (so absolute-size differences
+    # don't hide crisis impact in small stores)
+    base_data = df_baseline.pivot_table(
+        index="Store", columns="Day", values="Revenue", aggfunc="mean"
+    )
+    # Relative revenue (crisis ÷ baseline)
+    rel_data = heat_data.div(base_data).clip(0, 1.5)
+
+    fig_heat = go.Figure(go.Heatmap(
+        z=rel_data.values,
+        x=rel_data.columns.tolist(),
+        y=rel_data.index.tolist(),
+        colorscale=[[0, "#C0392B"], [0.5, "#F1C40F"], [1.0, "#27AE60"]],
+        zmin=0.4, zmax=1.1,
+        colorbar=dict(title="Crisis Rev<br>÷ Baseline"),
+        hovertemplate="Store: %{y}<br>Day: %{x}<br>Relative Rev: %{z:.2f}<extra></extra>",
+    ))
+    fig_heat.update_layout(
+        title="Relative Revenue (Crisis ÷ Baseline) — 1.0 = no impact, <0.7 = severe",
+        xaxis_title="Day", yaxis_title="Store",
+        template="plotly_white",
+        height=max(200, len(stores_list) * 45 + 100),
+    )
+    st.plotly_chart(fig_heat, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Per-store revenue time-series ─────────────────────────────────────────
+    st.subheader("📈 Revenue Over Time — Crisis vs Baseline per Store")
+    fig_ts = go.Figure()
+    _TS_COLORS = ["#E87722","#44A1A0","#27AE60","#8E44AD","#2471A3","#C0392B","#D4AC0D","#1ABC9C"]
+    for i, store in enumerate(stores_list):
+        col = _TS_COLORS[i % len(_TS_COLORS)]
+        sub_b = df_baseline[df_baseline["Store"] == store].groupby("Day")["Revenue"].mean()
+        sub_c = df_crisis[df_crisis["Store"] == store].groupby("Day")["Revenue"].mean()
+        fig_ts.add_trace(go.Scatter(
+            x=sub_b.index, y=sub_b.values,
+            name=f"{store} (Baseline)",
+            line=dict(color=col, width=1.5, dash="dot"),
+            legendgroup=store, showlegend=True,
+        ))
+        fig_ts.add_trace(go.Scatter(
+            x=sub_c.index, y=sub_c.values,
+            name=f"{store} (Crisis)",
+            line=dict(color=col, width=2.5),
+            legendgroup=store, showlegend=True,
+        ))
+    fig_ts.add_vline(x=ms_cri_start, line_dash="dot", line_color="orange",
+                     annotation_text="Crisis start")
+    fig_ts.update_layout(
+        title="Daily Revenue by Store",
+        xaxis_title="Day", yaxis_title="Revenue (€)",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=9)),
+        height=420,
+    )
+    st.plotly_chart(fig_ts, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Panic contagion chart ─────────────────────────────────────────────────
+    if enable_contagion:
+        st.subheader("🦠 Panic Contagion — Level by Store Over Time")
+        fig_panic = px.line(
+            df_crisis.groupby(["Day", "Store"])["PanicLevel"].mean().reset_index(),
+            x="Day", y="PanicLevel", color="Store",
+            color_discrete_sequence=_TS_COLORS,
+            title="Panic Level Propagation Across the Network",
+            template="plotly_white",
+            labels={"PanicLevel": "Panic Level (0–1)"},
+        )
+        fig_panic.add_vline(x=ms_cri_start, line_dash="dot", line_color="orange",
+                             annotation_text="Crisis start")
+        fig_panic.update_yaxes(range=[0, 1])
+        st.plotly_chart(fig_panic, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Vulnerability ranking ────────────────────────────────────────────────
+    st.subheader("🏆 Store Vulnerability Ranking")
+    store_summary = []
+    for store in stores_list:
+        sc_cfg = next((s for s in store_configs if s["name"] == store), {})
+        sub_b  = df_baseline[df_baseline["Store"] == store]
+        sub_c  = df_crisis[df_crisis["Store"]   == store]
+        avg_rev_b  = sub_b["Revenue"].mean()
+        avg_rev_c  = sub_c["Revenue"].mean()
+        rev_loss   = (avg_rev_b - avg_rev_c) / max(avg_rev_b, 1) * 100
+        max_panic  = sub_c["PanicLevel"].max()
+        avg_fulfill = sub_c["FulfillmentRate"].mean()
+        risk = (
+            "🔴 Critical" if rev_loss >= 35 else
+            "🟠 High"     if rev_loss >= 20 else
+            "🟡 Medium"   if rev_loss >= 10 else
+            "🟢 Low"
+        )
+        store_summary.append({
+            "Store":              store,
+            "Region":             sc_cfg.get("region", ""),
+            "Type":               sc_cfg.get("type",   ""),
+            "Avg Rev Baseline":   f"€{avg_rev_b:,.0f}",
+            "Avg Rev Crisis":     f"€{avg_rev_c:,.0f}",
+            "Revenue Loss %":     f"{rev_loss:.1f}%",
+            "Peak Panic":         f"{max_panic:.2f}",
+            "Avg Fulfillment":    f"{avg_fulfill:.1%}",
+            "Risk Level":         risk,
+        })
+    # Sort by revenue loss descending
+    store_summary.sort(key=lambda r: float(r["Revenue Loss %"].rstrip("%")), reverse=True)
+    st.dataframe(pd.DataFrame(store_summary), use_container_width=True, hide_index=True)
+
+    # ── Network aggregate: stacked area ──────────────────────────────────────
+    st.subheader("📦 Network Aggregate — Daily Revenue Stack")
+    stack_df = df_crisis.groupby(["Day", "Store"])["Revenue"].mean().reset_index()
+    fig_stack = px.area(
+        stack_df, x="Day", y="Revenue", color="Store",
+        color_discrete_sequence=_TS_COLORS,
+        title="Combined Network Revenue (Crisis) — stacked by store",
+        template="plotly_white",
+        labels={"Revenue": "Revenue (€)"},
+    )
+    fig_stack.add_vline(x=ms_cri_start, line_dash="dot", line_color="orange",
+                        annotation_text="Crisis start")
+    st.plotly_chart(fig_stack, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Food security: food-stressed % by store ───────────────────────────────
+    st.subheader("🍞 Consumer Food Security — Food-Stressed % by Store")
+    food_df = df_crisis.groupby(["Day", "Store"])["FoodStressedPct"].mean().reset_index()
+    food_df["FoodStressedPct"] *= 100
+    fig_food = px.line(
+        food_df, x="Day", y="FoodStressedPct", color="Store",
+        color_discrete_sequence=_TS_COLORS,
+        title="Food-Stressed Consumer % — Crisis scenario",
+        template="plotly_white",
+        labels={"FoodStressedPct": "Food-Stressed %"},
+    )
+    fig_food.add_vline(x=ms_cri_start, line_dash="dot", line_color="orange",
+                       annotation_text="Crisis start")
+    st.plotly_chart(fig_food, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Network resilience score ──────────────────────────────────────────────
+    st.divider()
+    net_resilience = avg_fulfill * (1 - rev_drop_pct / 100) * min(1.0, 1 / max(avg_panic, 0.01) * 0.5)
+    net_resilience = max(0.0, min(1.0, net_resilience))
+    resilience_label = (
+        "🟢 Resilient"       if net_resilience >= 0.75 else
+        "🟡 Moderate"        if net_resilience >= 0.50 else
+        "🟠 Vulnerable"      if net_resilience >= 0.30 else
+        "🔴 Critical"
+    )
+    st.markdown(
+        f"<div style='background:#F0E9DA;border-radius:10px;padding:16px 24px;'>"
+        f"<h4 style='margin:0 0 6px 0;'>🔒 Network Resilience Score</h4>"
+        f"<span style='font-size:2rem;font-weight:700;'>{net_resilience:.2f}</span>"
+        f"<span style='font-size:1.1rem;margin-left:12px;'>{resilience_label}</span>"
+        f"<p style='margin:8px 0 0 0;font-size:0.85rem;color:#555;'>"
+        f"Composite score: avg fulfillment × (1 − revenue loss) × panic dampener. "
+        f"1.0 = fully resilient network, 0.0 = complete collapse.</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Download ──────────────────────────────────────────────────────────────
+    st.divider()
+    st.download_button(
+        "📥 Download full network results (CSV)",
+        df_ms.to_csv(index=False).encode("utf-8"),
+        "GROCERYsim_multistore_results.csv",
+        "text/csv",
+        key="dl_multistore",
+    )
+
+
+# ===========================================================================
 # 12. MAIN ENTRY POINT
 # ===========================================================================
 
@@ -8549,6 +9047,9 @@ def main():
 
     with tabs[13]:
         render_regional_map_tab()
+
+    with tabs[14]:
+        render_multistore_tab(params)
 
     render_footer()
 
