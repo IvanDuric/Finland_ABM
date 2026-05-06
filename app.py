@@ -1857,7 +1857,7 @@ def _render_sf_sc_results(data: dict):
         f"(€{peak_lost_val:,.0f}), driven by the combination of panic-buying demand spikes and "
         f"delayed replenishment from the {p['dis']}-day supply disruption. "
         f"Stockout events represent unrecoverable demand — empirical studies show 21–43% of consumers "
-        f"switch brands permanently after a stockout (Gruen et al., 2002). "
+        f"switch brands permanently after a stockout ([Gruen et al., 2002](https://www.supplychain247.com/images/pdfs/GMA_2002_Worldwide_OOS_Study.pdf)). "
         f"Grey dotted line = baseline lost sales, isolating the crisis-attributable component."
     )
 
@@ -1939,10 +1939,10 @@ def _render_sf_sc_results(data: dict):
         panic_txt = "Panic remained below the 0.30 hoarding threshold throughout the simulation."
     _sf_analysis_box(
         f"Consumer panic peaked at **{peak_panic:.2f}/1.0** (Day {panic_peak_day}). {panic_txt} "
-        f"Stockpile pressure (quasi-hyperbolic discounting, O'Donoghue & Rabin 1999) peaked at "
+        f"Stockpile pressure (quasi-hyperbolic discounting, [O'Donoghue & Rabin 1999](https://www.jstor.org/stable/116981?seq=1)) peaked at "
         f"**{sp_peak:.2f}**, indicating consumers were building home inventories in anticipation of "
         f"further scarcity. For supply chain actors, this demand amplification — the 'bullwhip effect' "
-        f"(Lee et al., 1997) — means true consumer demand was below store orders during the panic phase. "
+        f"([Lee et al., 1997](https://www.jstor.org/stable/2634565?seq=1)) — means true consumer demand was below store orders during the panic phase. "
         f"Expect a demand trough post-crisis; reduce replenishment orders 10–15% during recovery."
     )
 
@@ -2065,7 +2065,7 @@ def _render_sf_pm_results(data: dict):
         f"Low-income households fell below the 80% welfare threshold on **{low_below_80} of {days} days**. "
         f"This divergence arises because lower-income agents have less budget buffer to absorb inflation and "
         f"are more likely to encounter stockouts as higher-income panic-buyers deplete shelves first "
-        f"(Darmon & Drewnowski, 2008). {policy_hint}"
+        f"([Darmon & Drewnowski, 2008](https://pubmed.ncbi.nlm.nih.gov/18469226/)). {policy_hint}"
     )
 
     # ── Chart 2: FIES Food Security ───────────────────────────────────────────
@@ -2093,11 +2093,11 @@ def _render_sf_pm_results(data: dict):
     )
     st.plotly_chart(fig2, use_container_width=True)
     _sf_analysis_box(
-        f"Severe food insecurity (FIES, FAO 2016) among low-income households peaked at "
+        f"Severe food insecurity (FIES, [FAO 2016](https://openknowledge.fao.org/server/api/core/bitstreams/07bc7c6e-72e5-488d-b2f7-3c1499d098fb/content)) among low-income households peaked at "
         f"**{fies_lo_peak:.1f}%** during the crisis, vs a baseline of **{fies_lo_base:.1f}%** "
         f"(+**{fies_delta:.1f} pp**). FIES captures both objective access failure (budget exhaustion, "
         f"stockouts) and subjective stress indicators. Targeted subsidies for low-income consumers have "
-        f"the highest FIES-reduction impact per euro spent (Sen, 1981; FAO, 2016). "
+        f"the highest FIES-reduction impact per euro spent ([Sen, 1981](https://www.jstor.org/stable/1882681?seq=1); [FAO, 2016](https://openknowledge.fao.org/server/api/core/bitstreams/07bc7c6e-72e5-488d-b2f7-3c1499d098fb/content)). "
         f"Dotted lines = counterfactual baseline for each income group."
     )
 
@@ -2135,7 +2135,7 @@ def _render_sf_pm_results(data: dict):
         f"**{mean_gini_b:.3f}** (baseline) to **{mean_gini_c:.3f}** during the crisis — "
         f"{'a statistically meaningful increase in access inequality' if abs(mean_gini_c - mean_gini_b) > 0.02 else 'a marginal change'}. "
         f"A Gini above 0.30 signals structurally unequal access and typically warrants "
-        f"rationing or targeted subsidy measures ({gini_action}, Thaler & Sunstein 2008)."
+        f"rationing or targeted subsidy measures ({gini_action}, [Thaler & Sunstein 2008](https://psycnet.apa.org/record/2008-03730-000))."
     )
 
     # ── Chart 4: Import Dependency ────────────────────────────────────────────
@@ -2174,7 +2174,7 @@ def _render_sf_pm_results(data: dict):
         f"Domestic sales share {dom_dir} from **{dom_share_b:.1f}%** (baseline) to "
         f"**{dom_share_c:.1f}%** during the crisis — {dom_interp} "
         f"Higher import reliance increases exposure to cross-border disruptions and exchange-rate "
-        f"volatility under climate stress (EC Farm to Fork Strategy, 2030)."
+        f"volatility under climate stress ([EC Farm to Fork Strategy, 2030](https://food.ec.europa.eu/system/files/2020-05/f2f_action-plan_2020_strategy-info_en.pdf))."
     )
 
     # ── Chart 5: Policy Effectiveness (conditional) ───────────────────────────
