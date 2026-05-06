@@ -2618,6 +2618,14 @@ defaults = {
     "policy_scenarios": [],
     # Onboarding tour (1 = first step, 0 = hidden)
     "tour_step": 1,
+    # Saved scenarios for compare feature
+    "saved_scenarios": [],
+    # Stress-test results cache
+    "stress_results": None,
+    # Export tab: cached generated PDF bytes
+    "_generated_pdf": None,
+    # Last sidebar params (for PDF report)
+    "_last_params": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -2629,7 +2637,7 @@ for k, v in defaults.items():
 _MAIN_T = {
     "en": {
         "subtitle": "**Agent-Based Model for Consumer Behaviour & Supply Chain Stress-Testing** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export"],
+        "tabs": ["🏠 Data & Population", "🎮 Interactive Demo", "🔬 Scientific Analysis", "♻️ Food Waste", "📦 Per-Product", "🏛️ Policy Analysis", "👔 Stakeholder View", "🎚️ Sensitivity Analysis", "🧪 Behavioural Theory", "📥 Export", "📊 Compare Scenarios", "🚨 Stress Test"],
         "sidebar_title": "⚙️ Simulation Parameters",
         "sidebar_general": "📅 General",
         "duration_days": "Duration (Days)",
@@ -2724,7 +2732,7 @@ _MAIN_T = {
     },
     "fi": {
         "subtitle": "**Agenttipohjainen malli kuluttajakäyttäytymiseen & toimitusketjun stressitestaukseen** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti"],
+        "tabs": ["🏠 Data & väestö", "🎮 Interaktiivinen demo", "🔬 Tieteellinen analyysi", "♻️ Ruokahävikki", "📦 Tuotekohtainen", "🏛️ Politiikka-analyysi", "👔 Sidosryhmänäkymä", "🎚️ Herkkyysanalyysi", "🧪 Käyttäytymisteoria", "📥 Vienti", "📊 Vertaile Skenaarioita", "🚨 Stressitesti"],
         "sidebar_title": "⚙️ Simulaatioparametrit",
         "sidebar_general": "📅 Yleiset",
         "duration_days": "Kesto (päivät)",
@@ -2819,7 +2827,7 @@ _MAIN_T = {
     },
     "el": {
         "subtitle": "**Μοντέλο Πράκτορα για Καταναλωτική Συμπεριφορά & Ανθεκτικότητα Αλυσίδας Εφοδιασμού** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή"],
+        "tabs": ["🏠 Δεδομένα & Πληθυσμός", "🎮 Διαδραστικό Demo", "🔬 Επιστημονική Ανάλυση", "♻️ Απώλεια Τροφίμων", "📦 Ανά Προϊόν", "🏛️ Ανάλυση Πολιτικής", "👔 Προβολή Ενδιαφερομένων", "🎚️ Ανάλυση Ευαισθησίας", "🧪 Θεωρία Συμπεριφοράς", "📥 Εξαγωγή", "📊 Σύγκριση Σεναρίων", "🚨 Δοκιμή Αντοχής"],
         "sidebar_title": "⚙️ Παράμετροι Προσομοίωσης",
         "sidebar_general": "📅 Γενικά",
         "duration_days": "Διάρκεια (ημέρες)",
@@ -2914,7 +2922,7 @@ _MAIN_T = {
     },
     "pt": {
         "subtitle": "**Modelo Baseado em Agentes para Comportamento do Consumidor & Cadeia de Abastecimento** | SecureFood / Horizon Europe — IAMO XR Lab",
-        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar"],
+        "tabs": ["🏠 Dados & População", "🎮 Demo Interativo", "🔬 Análise Científica", "♻️ Desperdício Alimentar", "📦 Por Produto", "🏛️ Análise de Políticas", "👔 Visão das Partes", "🎚️ Análise de Sensibilidade", "🧪 Teoria Comportamental", "📥 Exportar", "📊 Comparar Cenários", "🚨 Teste de Stress"],
         "sidebar_title": "⚙️ Parâmetros da Simulação",
         "sidebar_general": "📅 Geral",
         "duration_days": "Duração (dias)",
@@ -4689,6 +4697,45 @@ def render_demo_tab(params: dict):
                         f"{_df_delta.abs().sum(axis=1).max():.3f})."
                     )
 
+    # ── Save scenario ────────────────────────────────────────────────────────
+    if st.session_state.sim_results is not None:
+        st.divider()
+        st.markdown("### 💾 Save This Scenario for Comparison")
+        _sc_col1, _sc_col2, _sc_col3 = st.columns([3, 1, 1])
+        with _sc_col1:
+            _sc_name = st.text_input(
+                "Scenario name",
+                value=f"Scenario {len(st.session_state.saved_scenarios) + 1}",
+                key="save_scenario_name",
+                label_visibility="collapsed",
+                placeholder="Give this scenario a name…",
+            )
+        with _sc_col2:
+            if st.button("💾 Save Scenario", use_container_width=True, key="save_scenario_btn"):
+                _df_r = st.session_state.sim_results
+                _base = _df_r[_df_r["Scenario"] == "Baseline"]
+                _cris = _df_r[_df_r["Scenario"] == "Crisis"]
+                _entry = {
+                    "name":       _sc_name or f"Scenario {len(st.session_state.saved_scenarios)+1}",
+                    "timestamp":  pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                    "params":     {k: params.get(k) for k in
+                                   ["days","base_con","month","reorder","target","lead",
+                                    "inf","dis","panic","hoard","cri_start"]},
+                    "revenue_base":    float(_base["Revenue"].sum()),
+                    "revenue_crisis":  float(_cris["Revenue"].sum()),
+                    "lost_sales":      float(_df_r["LostSales"].sum()),
+                    "waste":           float(_df_r["Waste"].sum()),
+                    "fulfillment":     float(_df_r["FulfillmentRate"].mean()),
+                    "df":             _df_r.copy(),
+                }
+                st.session_state.saved_scenarios.append(_entry)
+                st.success(f"✅ Saved **{_entry['name']}** — go to 📊 Compare Scenarios tab to compare.")
+        with _sc_col3:
+            if st.session_state.saved_scenarios:
+                if st.button("🗑️ Clear All", use_container_width=True, key="clear_scenarios_btn"):
+                    st.session_state.saved_scenarios = []
+                    st.rerun()
+
 
 # ===========================================================================
 # 6. MONTE CARLO RUNNER
@@ -5519,6 +5566,298 @@ def render_behaviour_tab(params):
     st.dataframe(theory_df, use_container_width=True, hide_index=True)
 
 
+# ---------------------------------------------------------------------------
+# Full branded PDF report (Export tab)
+# ---------------------------------------------------------------------------
+
+def _make_branded_pdf_report(params: dict | None = None) -> bytes:
+    """
+    Generate a comprehensive branded GROCERYsim / SecureFood PDF report
+    covering all available simulation results stored in st.session_state.
+
+    Sections included (skipped when data is absent):
+      0. Cover page
+      1. Simulation parameters
+      2. Interactive Demo — key metrics + revenue/waste/lost-sales charts
+      3. Supply chain log summary
+      4. Policy analysis KPIs + revenue comparison chart
+      5. Stress-test risk ranking (if available)
+      6. Saved scenario comparison table (if available)
+      7. Methodology note
+    """
+    from datetime import datetime as _dt
+
+    pdf = _PDF()
+    now_str = _dt.now().strftime("%d %b %Y, %H:%M")
+
+    # ── 0. Cover ────────────────────────────────────────────────────────────
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 22)
+    pdf.ln(20)
+    pdf.cell(0, 14, "GROCERYsim ABM v2.0", 0, 1, "C")
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Strategic Resilience & Food-System Report", 0, 1, "C")
+    pdf.ln(6)
+    pdf.set_font("Arial", "", 11)
+    pdf.cell(0, 8, _to_latin1(f"Generated: {now_str}"), 0, 1, "C")
+    pdf.cell(0, 8, "SecureFood / Horizon Europe -- grant agreement No. 101136583", 0, 1, "C")
+    pdf.ln(10)
+    pdf.set_font("Arial", "I", 9)
+    pdf.set_text_color(80, 80, 80)
+    pdf.multi_cell(
+        0, 5,
+        _to_latin1(
+            "This report is automatically generated from a single simulation session. "
+            "Results are stochastic; re-running with the same parameters may yield "
+            "slightly different outcomes due to ABM randomness."
+        ),
+    )
+    pdf.set_text_color(0, 0, 0)
+
+    # ── 1. Simulation parameters ─────────────────────────────────────────────
+    if params:
+        pdf.add_page()
+        pdf.section("1. Simulation Parameters")
+        _PARAM_LABELS = {
+            "n_agents":         "Number of consumer agents",
+            "n_days":           "Simulation horizon (days)",
+            "disruption_days":  "Supply disruption (days)",
+            "inflation_rate":   "Inflation rate",
+            "panic_prob":       "Panic-buying probability",
+            "hoard_mult":       "Hoarding demand multiplier",
+            "base_con_mult":    "Baseline consumption multiplier",
+            "fat_tax":          "Fat-tax surcharge (EUR/unit)",
+            "domestic_subsidy": "Domestic supply subsidy (EUR/unit)",
+            "organic_subsidy":  "Organic supply subsidy (EUR/unit)",
+            "nudge_enabled":    "Purchase-limit nudge active",
+            "nudge_cap":        "Nudge cap (units/visit)",
+        }
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(100, 6, "Parameter", 1)
+        pdf.cell(75,  6, "Value",     1)
+        pdf.ln()
+        pdf.set_font("Arial", "", 9)
+        for key, label in _PARAM_LABELS.items():
+            if key in params:
+                val = params[key]
+                if isinstance(val, float):
+                    val_str = f"{val:.4g}"
+                else:
+                    val_str = str(val)
+                pdf.cell(100, 6, _to_latin1(label), 1)
+                pdf.cell(75,  6, _to_latin1(val_str), 1)
+                pdf.ln()
+
+    # ── 2. Interactive Demo results ──────────────────────────────────────────
+    df_sim = st.session_state.get("sim_results")
+    if df_sim is not None and not df_sim.empty:
+        pdf.add_page()
+        pdf.section("2. Interactive Demo -- Key Metrics")
+
+        scenarios = df_sim["Scenario"].unique() if "Scenario" in df_sim.columns else []
+        for sc in scenarios:
+            sub = df_sim[df_sim["Scenario"] == sc] if len(scenarios) > 0 else df_sim
+            rev   = sub["Revenue"].mean()   if "Revenue"   in sub.columns else 0
+            waste = sub["Waste"].mean()     if "Waste"     in sub.columns else 0
+            lost  = sub["LostSales"].mean() if "LostSales" in sub.columns else 0
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(0, 6, _to_latin1(f"Scenario: {sc}"), 0, 1)
+            pdf.set_font("Arial", "", 9)
+            pdf.cell(0, 5,
+                     _to_latin1(
+                         f"  Avg daily revenue: EUR {rev:,.2f}   |  "
+                         f"Avg daily waste: {waste:.1f} units   |  "
+                         f"Avg daily lost sales: {lost:.1f} units"
+                     ), 0, 1)
+            pdf.ln(1)
+
+        # Revenue time-series
+        pdf.add_page()
+        pdf.section("2a. Revenue Over Time")
+        fig, ax = plt.subplots(figsize=(9, 3.8))
+        _COLORS = ["steelblue", "firebrick", "seagreen", "darkorange", "purple"]
+        for i, sc in enumerate(scenarios):
+            sub = df_sim[df_sim["Scenario"] == sc]
+            ax.plot(sub.groupby("Day")["Revenue"].mean(),
+                    color=_COLORS[i % len(_COLORS)], label=sc)
+        ax.set_xlabel("Day"); ax.set_ylabel("Revenue (EUR)")
+        ax.set_title("Daily Mean Revenue by Scenario")
+        ax.legend(fontsize=8); ax.grid(alpha=0.3)
+        plt.tight_layout()
+        pdf.add_mpl(fig); plt.close(fig)
+
+        # Waste & Lost Sales
+        pdf.section("2b. Food Waste & Lost Sales")
+        fig2, axes2 = plt.subplots(1, 2, figsize=(9, 3.5))
+        for i, sc in enumerate(scenarios):
+            sub = df_sim[df_sim["Scenario"] == sc]
+            col_c = _COLORS[i % len(_COLORS)]
+            if "Waste" in sub.columns:
+                axes2[0].plot(sub.groupby("Day")["Waste"].mean(), color=col_c, label=sc)
+            if "LostSales" in sub.columns:
+                axes2[1].plot(sub.groupby("Day")["LostSales"].mean(), color=col_c, label=sc)
+        axes2[0].set_title("Daily Food Waste (units)"); axes2[0].set_xlabel("Day"); axes2[0].legend(fontsize=7)
+        axes2[1].set_title("Daily Lost Sales (units)"); axes2[1].set_xlabel("Day"); axes2[1].legend(fontsize=7)
+        for ax_ in axes2:
+            ax_.grid(alpha=0.3)
+        plt.tight_layout()
+        pdf.add_mpl(fig2); plt.close(fig2)
+
+    # ── 3. Supply chain log ───────────────────────────────────────────────────
+    df_scm = st.session_state.get("sim_scm_log")
+    if df_scm is not None and not df_scm.empty:
+        pdf.add_page()
+        pdf.section("3. Supply Chain Log -- Summary")
+        if "Type" in df_scm.columns:
+            total_orders     = len(df_scm[df_scm["Type"] == "Order"])
+            total_deliveries = len(df_scm[df_scm["Type"] == "Delivery"])
+        else:
+            total_orders = total_deliveries = "n/a"
+        pdf.body(
+            f"Total order events: {total_orders}   |   "
+            f"Total delivery events: {total_deliveries}   |   "
+            f"Log rows: {len(df_scm):,}"
+        )
+        # Show first 10 rows as sample
+        pdf.set_font("Arial", "B", 8)
+        cols_to_show = list(df_scm.columns[:6])
+        col_w = 175 // max(len(cols_to_show), 1)
+        for c in cols_to_show:
+            pdf.cell(col_w, 5, _to_latin1(str(c)[:14]), 1)
+        pdf.ln()
+        pdf.set_font("Arial", "", 7)
+        for _, row in df_scm.head(10).iterrows():
+            for c in cols_to_show:
+                pdf.cell(col_w, 5, _to_latin1(str(row[c])[:14]), 1)
+            pdf.ln()
+
+    # ── 4. Policy analysis ────────────────────────────────────────────────────
+    df_pol_base = st.session_state.get("policy_baseline")
+    df_pol_scen = st.session_state.get("policy_scenario")
+    pol_label   = st.session_state.get("policy_label", "Policy Scenario")
+    if (df_pol_base is not None and df_pol_scen is not None
+            and not df_pol_base.empty and not df_pol_scen.empty):
+        pdf.add_page()
+        pdf.section("4. Policy Analysis -- KPI Comparison")
+        _kpi_defs = [
+            ("Revenue/day (EUR)",    "Revenue",              False),
+            ("Waste/day (units)",    "Waste",                False),
+            ("CO2 total/day (kg)",   "CO2Total",             False),
+            ("Budget Exhaustion %",  "BudgetExhaustionRate", True),
+            ("Food Stressed %",      "FoodStressedPct",      True),
+            ("Fulfillment %",        "FulfillmentRate",      True),
+        ]
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(70, 6, "Metric",   1)
+        pdf.cell(35, 6, "Baseline", 1)
+        pdf.cell(35, 6, _to_latin1(str(pol_label)[:18]), 1)
+        pdf.cell(35, 6, "Delta (%)", 1)
+        pdf.ln()
+        pdf.set_font("Arial", "", 9)
+        for lbl, col, is_pct in _kpi_defs:
+            if col not in df_pol_base.columns:
+                continue
+            b_v = df_pol_base[col].mean() * (100 if is_pct else 1)
+            p_v = df_pol_scen[col].mean() * (100 if is_pct else 1)
+            d_p = (p_v - b_v) / max(abs(b_v), 1e-9) * 100
+            pdf.cell(70, 6, _to_latin1(lbl), 1)
+            pdf.cell(35, 6, f"{b_v:.2f}", 1)
+            pdf.cell(35, 6, f"{p_v:.2f}", 1)
+            pdf.cell(35, 6, f"{d_p:+.1f}%", 1)
+            pdf.ln()
+
+        pdf.add_page()
+        pdf.section("4a. Policy Revenue Comparison Chart")
+        fig_p, ax_p = plt.subplots(figsize=(9, 3.8))
+        ax_p.plot(df_pol_base.groupby("Day")["Revenue"].mean(), color="steelblue", label="Baseline")
+        ax_p.plot(df_pol_scen.groupby("Day")["Revenue"].mean(), color="firebrick", label=pol_label)
+        ax_p.set_xlabel("Day"); ax_p.set_ylabel("Revenue (EUR)")
+        ax_p.set_title("Policy Impact on Daily Revenue")
+        ax_p.legend(fontsize=8); ax_p.grid(alpha=0.3)
+        plt.tight_layout()
+        pdf.add_mpl(fig_p); plt.close(fig_p)
+
+    # ── 5. Stress-test results ────────────────────────────────────────────────
+    stress_res = st.session_state.get("stress_results")
+    if stress_res is not None and hasattr(stress_res, "iterrows") and not stress_res.empty:
+        pdf.add_page()
+        pdf.section("5. Automated Stress-Test Risk Ranking")
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(75, 6, "Scenario",           1)
+        pdf.cell(35, 6, "Crisis Rev (EUR)",   1)
+        pdf.cell(35, 6, "Revenue Loss (%)",   1)
+        pdf.cell(30, 6, "Lost Sales (EUR)",   1)
+        pdf.ln()
+        pdf.set_font("Arial", "", 9)
+        for _, row in stress_res.iterrows():
+            sc_name  = _to_latin1(str(row.get("Scenario", ""))[:32])
+            cris_rev = row.get("Crisis Revenue", 0)
+            rev_loss = row.get("Revenue Loss (%)", 0)
+            lost     = row.get("Total Lost Sales (€)", 0)
+            pdf.cell(75, 6, sc_name,              1)
+            pdf.cell(35, 6, f"{cris_rev:,.0f}",   1)
+            pdf.cell(35, 6, f"{rev_loss:.1f}%",   1)
+            pdf.cell(30, 6, f"{lost:,.0f}",        1)
+            pdf.ln()
+
+    # ── 6. Saved scenario comparison ─────────────────────────────────────────
+    saved = st.session_state.get("saved_scenarios", [])
+    if len(saved) >= 2:
+        pdf.add_page()
+        pdf.section("6. Saved Scenario Comparison")
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(60, 6, "Scenario",      1)
+        pdf.cell(45, 6, "Avg Rev (EUR)", 1)
+        pdf.cell(35, 6, "Avg Waste",     1)
+        pdf.cell(35, 6, "Avg LostSales", 1)
+        pdf.ln()
+        pdf.set_font("Arial", "", 9)
+        for sc in saved:
+            name = sc.get("name", "Unnamed")
+            df_s = sc.get("df")
+            if df_s is None or df_s.empty:
+                continue
+            avg_r = df_s["Revenue"].mean()   if "Revenue"   in df_s.columns else 0
+            avg_w = df_s["Waste"].mean()     if "Waste"     in df_s.columns else 0
+            avg_l = df_s["LostSales"].mean() if "LostSales" in df_s.columns else 0
+            pdf.cell(60, 6, _to_latin1(name[:28]), 1)
+            pdf.cell(45, 6, f"{avg_r:,.2f}",        1)
+            pdf.cell(35, 6, f"{avg_w:.1f}",          1)
+            pdf.cell(35, 6, f"{avg_l:.1f}",          1)
+            pdf.ln()
+
+    # ── 7. Methodology ────────────────────────────────────────────────────────
+    pdf.add_page()
+    pdf.section("7. Methodology Note")
+    pdf.body(
+        "GROCERYsim ABM v2.0 is a Mesa-based agent-based model for Finnish dairy retail "
+        "and food-system resilience research. Consumer agents (default: 200) are calibrated "
+        "from Discrete Choice Experiment (DCE) preference scores and questionnaire data "
+        "collected under the SecureFood / Horizon Europe project. "
+        "\n\n"
+        "Population archetypes: K-Means clustering (k=4) on price sensitivity, health "
+        "consciousness, and local preference scores. Stratified bootstrap sampling ensures "
+        "realistic income-group representation (Low 30%, Mid 50%, High 20%). "
+        "\n\n"
+        "Utility function: U = origin_bonus + organic_bonus + fat_match - price_disutility. "
+        "Agents update preferences via archetype-specific Bayesian learning rules "
+        "(base rate 0.015/day). "
+        "\n\n"
+        "CO2 emission factors (kg CO2-eq/unit): Finnish organic 0.8, "
+        "Finnish conventional 1.2, Imported organic 1.5, Imported conventional 2.2. "
+        "\n\n"
+        "Monte Carlo confidence bands use non-parametric percentiles (p10/p25/p75/p90) "
+        "across independent simulation runs -- more robust than Gaussian assumptions for "
+        "short-horizon ABM outputs. "
+        "\n\n"
+        "SecureFood / Horizon Europe -- grant agreement No. 101136583. "
+        "For methodological details see: "
+        "GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf"
+    )
+
+    return bytes(pdf.output())
+
+
 # ===========================================================================
 # 11. TAB: EXPORT
 # ===========================================================================
@@ -5576,6 +5915,50 @@ def render_export_tab():
                 "text/csv",
                 key="dl_full_bundle",
             )
+
+    # ── Branded PDF Report ────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 📄 Full Branded PDF Report")
+    st.markdown(
+        "Generate a complete, print-ready PDF report covering all simulation results "
+        "available in this session — parameters, revenue & waste charts, policy KPIs, "
+        "stress-test ranking, scenario comparison, and methodology note."
+    )
+
+    _has_any = any(
+        st.session_state.get(k) is not None
+        for k in ["sim_results", "policy_baseline", "stress_results"]
+    )
+
+    _report_params = st.session_state.get("_last_params")
+
+    if not _has_any:
+        st.info(
+            "No simulation data found yet. Run at least one simulation (Interactive Demo, "
+            "Policy Analysis, or Stress Test) before generating the PDF report."
+        )
+    else:
+        _pdf_col1, _pdf_col2 = st.columns([2, 1])
+        with _pdf_col1:
+            if st.button("📄 Generate PDF Report", key="gen_pdf_report_btn", type="primary",
+                         use_container_width=True):
+                with st.spinner("Building report… this may take 10–30 seconds"):
+                    try:
+                        _pdf_bytes = _make_branded_pdf_report(params=_report_params)
+                        st.session_state["_generated_pdf"] = _pdf_bytes
+                    except Exception as _e:
+                        st.error(f"PDF generation failed: {_e}")
+        with _pdf_col2:
+            _generated = st.session_state.get("_generated_pdf")
+            if _generated:
+                st.download_button(
+                    "📥 Download PDF",
+                    _generated,
+                    "GROCERYsim_Report.pdf",
+                    "application/pdf",
+                    key="dl_branded_pdf",
+                    use_container_width=True,
+                )
 
 
 # ===========================================================================
@@ -7149,11 +7532,411 @@ def render_sensitivity_tab(params: dict):
 
 
 # ===========================================================================
+# 12. SCENARIO COMPARE TAB
+# ===========================================================================
+
+def render_scenario_compare_tab():
+    st.header("📊 Compare Scenarios")
+
+    saved = st.session_state.saved_scenarios
+    if len(saved) < 2:
+        st.info(
+            "Run the **🎮 Interactive Demo** at least twice with different parameters, "
+            "then click **💾 Save Scenario** each time. "
+            f"You have **{len(saved)}** scenario(s) saved — need at least 2 to compare."
+        )
+        if saved:
+            st.markdown(f"**Saved so far:** {saved[0]['name']} ({saved[0]['timestamp']})")
+        return
+
+    # ── Scenario selector ────────────────────────────────────────────────────
+    names = [s["name"] for s in saved]
+    col_a, col_b, col_del = st.columns([2, 2, 1])
+    with col_a:
+        sel_a = st.selectbox("Scenario A", names, index=0, key="cmp_a")
+    with col_b:
+        default_b = 1 if len(names) > 1 else 0
+        sel_b = st.selectbox("Scenario B", names, index=default_b, key="cmp_b")
+    with col_del:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Clear All Saved", use_container_width=True, key="cmp_clear"):
+            st.session_state.saved_scenarios = []
+            st.rerun()
+
+    sc_a = next(s for s in saved if s["name"] == sel_a)
+    sc_b = next(s for s in saved if s["name"] == sel_b)
+
+    # ── Summary metrics table ────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 📋 Key Metrics Summary")
+
+    def _pct_diff(a, b):
+        if b == 0:
+            return "—"
+        d = (a - b) / abs(b) * 100
+        arrow = "▲" if d > 0 else "▼"
+        color = "#27ae60" if d > 0 else "#c0392b"
+        return f"<span style='color:{color};font-weight:700'>{arrow} {abs(d):.1f}%</span>"
+
+    metrics = [
+        ("Total Revenue — Baseline (€)", "revenue_base"),
+        ("Total Revenue — Crisis (€)",   "revenue_crisis"),
+        ("Total Lost Sales (€)",          "lost_sales"),
+        ("Total Waste (units)",           "waste"),
+        ("Avg Fulfillment Rate",          "fulfillment"),
+    ]
+    rows_html = ""
+    for label, key in metrics:
+        va = sc_a[key]; vb = sc_b[key]
+        fmt = f"{va:,.1f}" if isinstance(va, float) else str(va)
+        fmtb = f"{vb:,.1f}" if isinstance(vb, float) else str(vb)
+        diff = _pct_diff(va, vb)
+        rows_html += (
+            f"<tr><td style='padding:6px 12px;color:#042026'>{label}</td>"
+            f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:#042026'>{fmt}</td>"
+            f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:#042026'>{fmtb}</td>"
+            f"<td style='padding:6px 12px;text-align:center'>{diff}</td></tr>"
+        )
+    st.markdown(
+        f"""<table style='width:100%;border-collapse:collapse;background:#FAF6EC;
+                          border:1px solid #e8dcc8;border-radius:8px;overflow:hidden'>
+          <thead>
+            <tr style='background:#F0E9DA'>
+              <th style='padding:8px 12px;text-align:left;color:#042026'>Metric</th>
+              <th style='padding:8px 12px;text-align:right;color:#DBA159'>{sel_a}</th>
+              <th style='padding:8px 12px;text-align:right;color:#44A1A0'>{sel_b}</th>
+              <th style='padding:8px 12px;text-align:center;color:#042026'>A vs B</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── Side-by-side charts ───────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 📈 Side-by-Side Revenue Comparison")
+
+    def _scenario_line(df, col, color, name):
+        base = df[df["Scenario"] == "Baseline"]
+        crisis = df[df["Scenario"] == "Crisis"]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=base["Day"], y=base[col],
+                                 line=dict(color="#44A1A0", width=2), name="Baseline"))
+        fig.add_trace(go.Scatter(x=crisis["Day"], y=crisis[col],
+                                 line=dict(color="#DC143C", width=2, dash="dash"), name="Crisis"))
+        fig.update_layout(
+            title=name, template="plotly_white",
+            xaxis_title="Day", yaxis_title="Revenue (€)",
+            legend=dict(orientation="h", y=1.12),
+            margin=dict(l=40, r=20, t=55, b=40),
+        )
+        return fig
+
+    cc1, cc2 = st.columns(2)
+    cc1.markdown(f"**{sel_a}**")
+    cc1.plotly_chart(_scenario_line(sc_a["df"], "Revenue", "#DBA159", "Revenue"),
+                     use_container_width=True, config=_PLOTLY_CFG)
+    cc2.markdown(f"**{sel_b}**")
+    cc2.plotly_chart(_scenario_line(sc_b["df"], "Revenue", "#44A1A0", "Revenue"),
+                     use_container_width=True, config=_PLOTLY_CFG)
+
+    # Overlay chart
+    st.markdown("### 🔀 Overlay — Baseline Revenue")
+    fig_ov = go.Figure()
+    for sc, col in [(sc_a, "#DBA159"), (sc_b, "#44A1A0")]:
+        base = sc["df"][sc["df"]["Scenario"] == "Baseline"]
+        fig_ov.add_trace(go.Scatter(x=base["Day"], y=base["Revenue"],
+                                    line=dict(color=col, width=2.5), name=sc["name"]))
+    fig_ov.update_layout(template="plotly_white", xaxis_title="Day", yaxis_title="Revenue (€)",
+                         legend=dict(orientation="h", y=1.12),
+                         margin=dict(l=40, r=20, t=55, b=40))
+    st.plotly_chart(fig_ov, use_container_width=True, config=_PLOTLY_CFG)
+
+    st.markdown("### 📉 Overlay — Lost Sales")
+    fig_ls = go.Figure()
+    for sc, col in [(sc_a, "#DBA159"), (sc_b, "#44A1A0")]:
+        d = sc["df"].groupby("Day")["LostSales"].sum().reset_index()
+        fig_ls.add_trace(go.Scatter(x=d["Day"], y=d["LostSales"],
+                                    line=dict(color=col, width=2.5), name=sc["name"]))
+    fig_ls.update_layout(template="plotly_white", xaxis_title="Day", yaxis_title="Lost Sales (€)",
+                         legend=dict(orientation="h", y=1.12),
+                         margin=dict(l=40, r=20, t=55, b=40))
+    st.plotly_chart(fig_ls, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Parameters diff ───────────────────────────────────────────────────────
+    with st.expander("⚙️ Parameter Differences"):
+        pa, pb = sc_a["params"], sc_b["params"]
+        all_keys = sorted(set(list(pa.keys()) + list(pb.keys())))
+        param_rows = []
+        for k in all_keys:
+            va2, vb2 = pa.get(k, "—"), pb.get(k, "—")
+            param_rows.append({"Parameter": k, sel_a: va2, sel_b: vb2,
+                                "Changed": "✅" if va2 != vb2 else ""})
+        st.dataframe(pd.DataFrame(param_rows), use_container_width=True, hide_index=True)
+
+    # ── Export comparison ─────────────────────────────────────────────────────
+    st.divider()
+    buf = io.StringIO()
+    for sc in [sc_a, sc_b]:
+        buf.write(f"### {sc['name']}  ({sc['timestamp']})\n")
+        sc["df"].to_csv(buf, index=False)
+        buf.write("\n\n")
+    st.download_button(
+        "📥 Download Comparison CSV",
+        buf.getvalue().encode("utf-8"),
+        "scenario_comparison.csv", "text/csv",
+        key="dl_cmp",
+    )
+
+
+# ===========================================================================
+# 13. STRESS TEST TAB
+# ===========================================================================
+
+_STRESS_SCENARIOS = [
+    {
+        "id": "supply_shock",
+        "name": "🌊 Supply Chain Collapse",
+        "desc": "Complete delivery stoppage for 10 days (flood / logistics failure)",
+        "overrides": {"dis": 10, "inf": 0.05, "panic": 0.6, "hoard": 1.4},
+    },
+    {
+        "id": "price_spike",
+        "name": "💸 Commodity Price Spike",
+        "desc": "40% price inflation shock with moderate supply disruption",
+        "overrides": {"inf": 0.40, "dis": 3, "panic": 0.4, "hoard": 1.2},
+    },
+    {
+        "id": "panic_buying",
+        "name": "😱 Panic Buying Wave",
+        "desc": "Media-driven panic: high hoarding, rapid shelf depletion",
+        "overrides": {"panic": 0.9, "hoard": 2.5, "dis": 2, "inf": 0.08},
+    },
+    {
+        "id": "import_dep",
+        "name": "🚢 Import Dependency Crisis",
+        "desc": "Extended import disruption — 14 days, high inflation",
+        "overrides": {"dis": 14, "inf": 0.20, "panic": 0.5, "hoard": 1.3},
+    },
+    {
+        "id": "demand_surge",
+        "name": "📈 Demand Surge (+80%)",
+        "desc": "Sudden 80% increase in shoppers (tourism / refugee influx)",
+        "overrides": {"base_con_mult": 1.80, "dis": 1, "inf": 0.05},
+    },
+    {
+        "id": "deep_freeze",
+        "name": "🧊 Deep Freeze (Cold-chain Failure)",
+        "desc": "Perishables supply cut by 60% for 7 days",
+        "overrides": {"dis": 7, "inf": 0.15, "panic": 0.55, "hoard": 1.6},
+    },
+]
+
+
+def render_stress_tab(params: dict):
+    st.header("🚨 Automated Scenario Stress Test")
+    st.markdown(
+        "Automatically run **6 pre-defined crisis scenarios** against your current baseline "
+        "parameters and rank them by impact on revenue, food security, and supply chain resilience."
+    )
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Load population data in **🏠 Data & Population** first.")
+        return
+
+    st.markdown("### ⚙️ Stress Test Settings")
+    c1, c2 = st.columns(2)
+    with c1:
+        st_days = st.slider("Simulation duration per scenario (days)", 30, 180, 90, 15,
+                            key="stress_days")
+    with c2:
+        st_runs = st.slider("Monte Carlo runs per scenario", 1, 5, 2, 1,
+                            key="stress_runs",
+                            help="More runs = more accurate but slower. 2–3 is sufficient for stress ranking.")
+
+    st.markdown("### 📋 Scenarios to Test")
+    cols = st.columns(3)
+    selected_ids = []
+    for i, sc in enumerate(_STRESS_SCENARIOS):
+        with cols[i % 3]:
+            with st.container(border=True):
+                checked = st.checkbox(sc["name"], value=True, key=f"stress_chk_{sc['id']}")
+                st.caption(sc["desc"])
+                if checked:
+                    selected_ids.append(sc["id"])
+
+    if not selected_ids:
+        st.warning("Select at least one scenario.")
+        return
+
+    run_stress = st.button("🚀 Run Stress Test", type="primary", key="run_stress_btn",
+                           use_container_width=False)
+
+    if run_stress:
+        st.session_state.stress_results = None
+        stress_rows = []
+        progress = st.progress(0, text="Initialising…")
+        selected_scs = [s for s in _STRESS_SCENARIOS if s["id"] in selected_ids]
+
+        for idx, sc in enumerate(selected_scs):
+            progress.progress(idx / len(selected_scs), text=f"Running: {sc['name']}…")
+
+            # Build overridden params
+            sc_params = dict(params)
+            ov = sc["overrides"]
+            if "base_con_mult" in ov:
+                sc_params["base_con"] = int(params["base_con"] * ov["base_con_mult"])
+            for k in ["dis", "inf", "panic", "hoard"]:
+                if k in ov:
+                    sc_params[k] = ov[k]
+            sc_params["days"]      = st_days
+            sc_params["cri_start"] = max(7, st_days // 6)
+
+            # Run baseline + crisis
+            run_rev_base, run_rev_crisis, run_lost, run_waste, run_fulfill = [], [], [], [], []
+            for run_id in range(st_runs):
+                try:
+                    m_base = _make_model(sc_params, is_crisis=False, seed=500 + run_id)
+                    m_cris = _make_model(sc_params, is_crisis=True,  seed=500 + run_id)
+                    rev_b = rev_c = lost = waste = fulfill = 0.0
+                    for day in range(1, st_days + 1):
+                        m_base.step(); m_cris.step()
+                        rb, _ = _collect_model_day(m_base, day, "Baseline", collect_products=False)
+                        rc, _ = _collect_model_day(m_cris, day, "Crisis",   collect_products=False)
+                        rev_b   += rb["Revenue"]
+                        rev_c   += rc["Revenue"]
+                        lost    += rc["LostSales"]
+                        waste   += rc["Waste"]
+                        fulfill += rc["FulfillmentRate"]
+                    run_rev_base.append(rev_b)
+                    run_rev_crisis.append(rev_c)
+                    run_lost.append(lost)
+                    run_waste.append(waste)
+                    run_fulfill.append(fulfill / st_days)
+                except Exception:
+                    pass
+
+            if not run_rev_base:
+                continue
+
+            rev_base_mean   = float(np.mean(run_rev_base))
+            rev_crisis_mean = float(np.mean(run_rev_crisis))
+            revenue_loss_pct = (rev_base_mean - rev_crisis_mean) / max(rev_base_mean, 1) * 100
+
+            stress_rows.append({
+                "Scenario":           sc["name"],
+                "Description":        sc["desc"],
+                "Revenue Loss (%)":   round(revenue_loss_pct, 1),
+                "Total Lost Sales (€)": round(float(np.mean(run_lost)), 0),
+                "Total Waste (units)": round(float(np.mean(run_waste)), 0),
+                "Avg Fulfillment":    round(float(np.mean(run_fulfill)), 3),
+                "Baseline Revenue":   round(rev_base_mean, 0),
+                "Crisis Revenue":     round(rev_crisis_mean, 0),
+                "_severity":          revenue_loss_pct,
+            })
+
+        progress.progress(1.0, text="Complete ✓")
+        time.sleep(0.4)
+        progress.empty()
+        st.session_state.stress_results = pd.DataFrame(stress_rows).sort_values(
+            "_severity", ascending=False
+        )
+        st.rerun()
+
+    # ── Results dashboard ─────────────────────────────────────────────────────
+    results = st.session_state.stress_results
+    if results is None or results.empty:
+        return
+
+    st.divider()
+    st.markdown("### 🏆 Risk Ranking")
+
+    def _severity_color(pct):
+        if pct >= 30:   return "#c0392b"
+        if pct >= 15:   return "#e67e22"
+        if pct >= 5:    return "#f1c40f"
+        return "#27ae60"
+
+    for _, row in results.iterrows():
+        col_icon, col_info, col_bar = st.columns([1, 4, 3])
+        sev = row["Revenue Loss (%)"]
+        color = _severity_color(sev)
+        with col_icon:
+            risk_label = "CRITICAL" if sev >= 30 else ("HIGH" if sev >= 15 else ("MEDIUM" if sev >= 5 else "LOW"))
+            st.markdown(
+                f"<div style='background:{color};color:white;text-align:center;"
+                f"padding:10px 6px;border-radius:6px;font-weight:700;font-size:12px;"
+                f"margin-top:4px'>{risk_label}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_info:
+            st.markdown(f"**{row['Scenario']}**  \n{row['Description']}")
+            st.caption(
+                f"Revenue loss: **{sev:.1f}%**  ·  "
+                f"Lost sales: **€{row['Total Lost Sales (€)']:,.0f}**  ·  "
+                f"Fulfillment: **{row['Avg Fulfillment']:.1%}**"
+            )
+        with col_bar:
+            fig_bar = go.Figure(go.Bar(
+                x=[sev], y=[""], orientation="h",
+                marker_color=color, text=[f"{sev:.1f}%"],
+                textposition="inside",
+            ))
+            fig_bar.update_layout(
+                height=60, margin=dict(l=0, r=0, t=0, b=0),
+                xaxis=dict(range=[0, max(results["Revenue Loss (%)"].max() * 1.15, 5)],
+                           showticklabels=False, showgrid=False),
+                yaxis=dict(showticklabels=False),
+                template="plotly_white", showlegend=False,
+            )
+            st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
+
+    # ── Heatmap ───────────────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 🌡️ Risk Heatmap")
+    heat_cols = ["Revenue Loss (%)", "Total Lost Sales (€)", "Total Waste (units)", "Avg Fulfillment"]
+    heat_df = results[["Scenario"] + heat_cols].set_index("Scenario")
+    norm_df = (heat_df - heat_df.min()) / (heat_df.max() - heat_df.min() + 1e-9)
+    norm_df["Avg Fulfillment"] = 1 - norm_df["Avg Fulfillment"]  # invert: lower is worse
+
+    fig_heat = go.Figure(go.Heatmap(
+        z=norm_df.values,
+        x=heat_cols,
+        y=norm_df.index.tolist(),
+        colorscale=[[0, "#27ae60"], [0.5, "#f1c40f"], [1, "#c0392b"]],
+        showscale=True,
+        text=heat_df.values.round(1),
+        texttemplate="%{text}",
+        hovertemplate="%{y}<br>%{x}: %{text}<extra></extra>",
+    ))
+    fig_heat.update_layout(
+        template="plotly_white", height=320,
+        margin=dict(l=160, r=40, t=30, b=60),
+        xaxis=dict(side="top"),
+    )
+    st.plotly_chart(fig_heat, use_container_width=True, config=_PLOTLY_CFG)
+
+    # ── Download ──────────────────────────────────────────────────────────────
+    st.divider()
+    dl_df = results.drop(columns=["_severity"], errors="ignore")
+    st.download_button(
+        "📥 Download Stress Test Results (CSV)",
+        dl_df.to_csv(index=False).encode("utf-8"),
+        "stress_test_results.csv", "text/csv",
+        key="dl_stress",
+    )
+
+
+# ===========================================================================
 # 12. MAIN ENTRY POINT
 # ===========================================================================
 
 def main():
     params = build_sidebar_params()
+    # Cache params so the export tab can include them in the PDF report
+    st.session_state["_last_params"] = params
     render_onboarding_tour()
 
     _title_col, _right_col = st.columns([4, 3])
@@ -7232,6 +8015,12 @@ def main():
 
     with tabs[9]:
         render_export_tab()
+
+    with tabs[10]:
+        render_scenario_compare_tab()
+
+    with tabs[11]:
+        render_stress_tab(params)
 
     render_footer()
 
