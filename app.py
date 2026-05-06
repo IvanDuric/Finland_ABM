@@ -8452,6 +8452,139 @@ def render_regional_map_tab():
             "the ABM (single store, ~200 agents). They are not validated forecasts."
         )
 
+    # ── Multi-Store simulation overlay ────────────────────────────────────────
+    st.divider()
+    st.subheader("🏪 Multi-Store Simulation Overlay")
+
+    df_ms      = st.session_state.get("multistore_results")
+    ms_configs = st.session_state.get("multistore_config", [])
+
+    if df_ms is None or df_ms.empty:
+        st.info(
+            "No multi-store simulation results yet. "
+            "Run the **🏪 Multi-Store Network** simulation first — "
+            "your simulated stores and their risk levels will appear on this map."
+        )
+        if st.button("🏪 Go to Multi-Store Network", key="map_goto_ms",
+                     use_container_width=False):
+            st.session_state["nav_section"] = "multistore"
+            st.rerun()
+    else:
+        # Build risk table from multi-store results
+        _RISK_COLORS_MAP = {
+            "🔴 Critical": "#C0392B",
+            "🟠 High":     "#E67E22",
+            "🟡 Medium":   "#F1C40F",
+            "🟢 Low":      "#27AE60",
+        }
+        df_crisis_ms = df_ms[df_ms["Scenario"] == "Crisis"]
+        df_base_ms   = df_ms[df_ms["Scenario"] == "Baseline"]
+
+        sim_store_pts = []
+        for sc in ms_configs:
+            s_name  = sc.get("name", "")
+            s_region = sc.get("region", "")
+            # Find the store in _FI_STORES for coordinates
+            match = next(
+                (s for s in _FI_STORES
+                 if sc.get("name", "").lower() in s["name"].lower()
+                 or s["name"].lower() in sc.get("name", "").lower()),
+                None,
+            )
+            # Fall back to region centroid from any store in that region
+            if match is None:
+                match = next(
+                    (s for s in _FI_STORES if s["region"] == s_region), None
+                )
+            if match is None:
+                continue
+
+            sub_c = df_crisis_ms[df_crisis_ms["Store"] == s_name]
+            sub_b = df_base_ms[df_base_ms["Store"]   == s_name]
+            if sub_c.empty:
+                continue
+            avg_rev_b = sub_b["Revenue"].mean() if not sub_b.empty else 1
+            avg_rev_c = sub_c["Revenue"].mean()
+            rev_loss  = (avg_rev_b - avg_rev_c) / max(avg_rev_b, 1) * 100
+            risk = (
+                "🔴 Critical" if rev_loss >= 35 else
+                "🟠 High"     if rev_loss >= 20 else
+                "🟡 Medium"   if rev_loss >= 10 else
+                "🟢 Low"
+            )
+            sim_store_pts.append({
+                "name":     s_name,
+                "lat":      match["lat"],
+                "lon":      match["lon"],
+                "region":   s_region,
+                "type":     sc.get("type", ""),
+                "rev_loss": round(rev_loss, 1),
+                "risk":     risk,
+                "color":    _RISK_COLORS_MAP.get(risk, "#888"),
+                "size":     22,
+            })
+
+        if sim_store_pts:
+            show_overlay = st.toggle(
+                "Show Multi-Store simulation results on map",
+                value=True, key="map_ms_overlay_toggle",
+            )
+
+            if show_overlay:
+                df_sim_pts = pd.DataFrame(sim_store_pts)
+                fig_overlay = px.scatter_mapbox(
+                    df_sim_pts,
+                    lat="lat", lon="lon",
+                    color="risk",
+                    size="size",
+                    size_max=22,
+                    color_discrete_map=_RISK_COLORS_MAP,
+                    hover_name="name",
+                    hover_data={
+                        "region":   True,
+                        "type":     True,
+                        "rev_loss": True,
+                        "risk":     True,
+                        "lat": False, "lon": False, "size": False, "color": False,
+                    },
+                    labels={"rev_loss": "Revenue Loss %", "risk": "Risk Level"},
+                    zoom=4.5,
+                    center={"lat": 64.5, "lon": 26.0},
+                    mapbox_style="open-street-map",
+                    title="Simulated Store Network — Risk Level Overlay",
+                    height=480,
+                )
+                fig_overlay.update_layout(
+                    legend=dict(orientation="h", yanchor="bottom", y=1.01),
+                    margin=dict(l=0, r=0, t=40, b=0),
+                )
+                st.plotly_chart(fig_overlay, use_container_width=True, config=_PLOTLY_CFG)
+
+                # Risk summary
+                risk_counts = df_sim_pts["risk"].value_counts().to_dict()
+                rc1, rc2, rc3, rc4 = st.columns(4)
+                for col, risk_lbl, bg in [
+                    (rc1, "🔴 Critical", "#fdecea"),
+                    (rc2, "🟠 High",     "#fef3e2"),
+                    (rc3, "🟡 Medium",   "#fefce8"),
+                    (rc4, "🟢 Low",      "#eafaf1"),
+                ]:
+                    col.markdown(
+                        f"<div style='background:{bg};border-radius:8px;padding:10px;"
+                        f"text-align:center;'>"
+                        f"<div style='font-weight:700;font-size:0.9rem;'>{risk_lbl}</div>"
+                        f"<div style='font-size:1.6rem;font-weight:700;'>"
+                        f"{risk_counts.get(risk_lbl, 0)}</div>"
+                        f"<div style='font-size:0.75rem;color:#666;'>stores</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+        st.markdown("")
+        if st.button("🔄 Re-run Multi-Store Simulation", key="map_goto_ms_rerun"):
+            st.session_state["nav_section"] = "multistore"
+            st.rerun()
+
 
 # ===========================================================================
 # 15. MULTI-STORE NETWORK
@@ -8937,15 +9070,23 @@ def render_multistore_tab(params: dict):
         unsafe_allow_html=True,
     )
 
-    # ── Download ──────────────────────────────────────────────────────────────
+    # ── Download + Map link ───────────────────────────────────────────────────
     st.divider()
-    st.download_button(
-        "📥 Download full network results (CSV)",
-        df_ms.to_csv(index=False).encode("utf-8"),
-        "GROCERYsim_multistore_results.csv",
-        "text/csv",
-        key="dl_multistore",
-    )
+    _dl_col, _map_col = st.columns([2, 1])
+    with _dl_col:
+        st.download_button(
+            "📥 Download full network results (CSV)",
+            df_ms.to_csv(index=False).encode("utf-8"),
+            "GROCERYsim_multistore_results.csv",
+            "text/csv",
+            key="dl_multistore",
+            use_container_width=True,
+        )
+    with _map_col:
+        if st.button("🗺️ View Results on Regional Map", key="ms_goto_map",
+                     use_container_width=True, type="primary"):
+            st.session_state["nav_section"] = "map"
+            st.rerun()
 
 
 # ===========================================================================
@@ -9149,32 +9290,84 @@ def render_nav_home():
 
 
 def _render_nav_breadcrumb(section_key: str):
-    """Render breadcrumb bar + 'Back to menu' button above a section."""
+    """
+    Render a fully-clickable breadcrumb bar.
+
+    Layout:  [🏠 Menu]  ›  [🔬 Card Name]  ›  **Current Section**
+    All segments except the current one are live Streamlit buttons.
+    Both 'Menu' and 'Card Name' navigate back to the home card grid.
+    """
     meta    = _SECTION_META.get(section_key, {})
     card    = meta.get("card",    {})
     section = meta.get("section", {})
 
-    left_col, right_col = st.columns([9, 1])
-    with left_col:
-        _bc_color   = card.get("color", "#444")
-        _bc_icon    = card.get("icon",  "")
-        _bc_ctitle  = card.get("title", "")
-        _bc_slabel  = section.get("label", "")
-        st.markdown(
-            f"<div style='padding:4px 0 2px;color:#666;font-size:0.84rem;'>"
-            f"<span style='color:#DBA159;font-weight:600;'>🏠 Menu</span>"
-            f"&nbsp;›&nbsp;"
-            f"<span style='color:{_bc_color};font-weight:600;'>"
-            f"{_bc_icon} {_bc_ctitle}</span>"
-            f"&nbsp;›&nbsp;"
-            f"<strong style='color:#042026;'>{_bc_slabel}</strong>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with right_col:
-        if st.button("🏠 Menu", key="nav_back_btn", use_container_width=True):
+    _bc_icon   = card.get("icon",  "")
+    _bc_title  = card.get("title", "")
+    _bc_label  = section.get("label", "")
+
+    # Inject link-style CSS scoped to the breadcrumb buttons only.
+    # We target the two buttons by their unique keys via a data-testid approach
+    # that Streamlit exposes for the parent element.
+    st.markdown(
+        """
+        <style>
+        /* Breadcrumb buttons: look like coloured text links, not boxes */
+        [data-testid="stButton"]:has(button[kind="secondary"]#bc_home_btn),
+        [data-testid="stButton"]:has(button[kind="secondary"]#bc_card_btn) { display:inline; }
+        button#bc_home_btn, button#bc_card_btn {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #DBA159 !important;
+            font-weight: 600 !important;
+            font-size: 0.85rem !important;
+            padding: 2px 4px !important;
+            min-height: 28px !important;
+            height: 28px !important;
+        }
+        button#bc_home_btn:hover, button#bc_card_btn:hover {
+            background: transparent !important;
+            text-decoration: underline !important;
+            color: #c2873c !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Breadcrumb columns: [Menu btn] [sep] [Card btn] [sep] [Section label] [spacer]
+    _c0, _s1, _c1, _s2, _c2, _ = st.columns([0.65, 0.08, 1.05, 0.08, 2.5, 3.5])
+
+    with _c0:
+        if st.button("🏠 Menu", key="bc_home_btn",
+                     help="Go back to the navigation home"):
             st.session_state["nav_section"] = None
             st.rerun()
+
+    with _s1:
+        st.markdown(
+            "<div style='padding:5px 0;color:#aaa;font-size:1.05rem;'>›</div>",
+            unsafe_allow_html=True,
+        )
+
+    with _c1:
+        if st.button(f"{_bc_icon} {_bc_title}", key="bc_card_btn",
+                     help="Go back to the navigation home"):
+            st.session_state["nav_section"] = None
+            st.rerun()
+
+    with _s2:
+        st.markdown(
+            "<div style='padding:5px 0;color:#aaa;font-size:1.05rem;'>›</div>",
+            unsafe_allow_html=True,
+        )
+
+    with _c2:
+        st.markdown(
+            f"<div style='padding:5px 0;font-size:0.85rem;font-weight:700;"
+            f"color:#042026;'>{_bc_label}</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ===========================================================================
