@@ -5021,9 +5021,29 @@ def _percentile_band(df: pd.DataFrame, col: str = "Revenue"):
     return stats
 
 
+_CSS_NAMED_COLORS = {
+    "gray":    "#808080", "grey":    "#808080",
+    "red":     "#FF0000", "green":   "#008000",
+    "blue":    "#0000FF", "orange":  "#FFA500",
+    "purple":  "#800080", "teal":    "#008080",
+    "black":   "#000000", "white":   "#FFFFFF",
+    "steelblue": "#4682B4", "firebrick": "#B22222",
+    "seagreen":  "#2E8B57", "tomato":    "#FF6347",
+    "lightgray": "#D3D3D3", "darkgray":  "#A9A9A9",
+    "salmon":  "#FA8072", "lightgreen": "#90EE90",
+}
+
+
 def _band_traces(fig: go.Figure, stats: pd.DataFrame, name: str,
                  color_hex: str, show_iqr: bool = True):
-    """Add p10–p90 outer band, optional p25–p75 IQR band, and median line."""
+    """Add p10–p90 outer band, optional p25–p75 IQR band, and median line.
+
+    ``color_hex`` may be a 6-digit hex string (``#RRGGBB``) **or** a CSS
+    named colour — the function converts named colours to hex automatically.
+    """
+    color_hex = _CSS_NAMED_COLORS.get(color_hex.lower().strip(), color_hex)
+    if not (color_hex.startswith("#") and len(color_hex) == 7):
+        color_hex = "#808080"   # safe fallback
     r, g, b = int(color_hex[1:3], 16), int(color_hex[3:5], 16), int(color_hex[5:7], 16)
     days_fwd = stats["Day"]
     days_rev = stats["Day"][::-1]
