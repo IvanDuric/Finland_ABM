@@ -110,7 +110,6 @@ def apply_theme():
         }
         .eu-text { font-style: italic; color: #44A1A0; }
 
-        /* Placeholder: keep tab list from adding extra ── */
         .stTabs [data-baseweb="tab-list"] {
             gap: 2px;
             padding: 0 4px;
@@ -140,7 +139,6 @@ def apply_theme():
             }
         }
 
-        /* Streamlit's own dark-theme class (set by the Streamlit config toggle) */
         [data-theme="dark"] .step-card,
         .stApp[data-theme="dark"] .step-card {
             background: #1a2a3e !important;
@@ -175,7 +173,6 @@ def apply_theme():
 
         /* ── Mobile / tablet responsiveness ── */
         @media (max-width: 768px) {
-            /* Horizontal-scroll tabs instead of wrapping */
             .stTabs [data-baseweb="tab-list"] {
                 overflow-x: auto !important;
                 flex-wrap: nowrap !important;
@@ -188,33 +185,26 @@ def apply_theme():
                 flex-shrink: 0;
             }
 
-            /* Touch-friendly buttons */
             .stButton > button {
                 min-height: 44px !important;
                 font-size: 14px !important;
             }
 
-            /* Sidebar: narrower on tablet */
             [data-testid="stSidebar"] {
                 min-width: 240px !important;
                 max-width: 280px !important;
             }
 
-            /* Plotly charts: allow full width */
             .js-plotly-plot, .plotly { width: 100% !important; }
 
-            /* Metrics: stack on very small screens */
             [data-testid="stMetric"] { min-width: 120px; }
         }
 
         @media (max-width: 480px) {
-            /* Reduce padding so content isn't squeezed */
             .main .block-container { padding-left: 12px !important; padding-right: 12px !important; }
 
-            /* Sidebar collapses by default — nothing to force, Streamlit handles it */
             .stButton > button { width: 100% !important; min-height: 48px !important; }
 
-            /* Dataframes: horizontal scroll */
             [data-testid="stDataFrame"] { overflow-x: auto !important; }
             [data-testid="stDataFrame"] > div { overflow-x: auto !important; }
         }
@@ -2543,7 +2533,7 @@ _MAIN_T = {
         "sub_dce": "🧠 DCE-Derived Preference Distributions",
         "sub_catalogue": "🛒 Product Catalogue",
         "animation_speed": "Animation Speed (delay per day, seconds)",
-        "securefood_btn": "📄 Get SecureFood Scenario Instructions",
+        "securefood_btn": "📄 Scenario Instructions",
         "sidebar_interventions_caption": "These levers are visible in the 🧪 Behavioural Theory tab.",
         "exp_nudge": "🛒 Nudge — Purchase Limit",
         "nudge_cap_on": "Enable per-visit purchase cap",
@@ -2638,7 +2628,7 @@ _MAIN_T = {
         "sub_dce": "🧠 DCE-johdetut preferenssijakaumat",
         "sub_catalogue": "🛒 Tuoteluettelo",
         "animation_speed": "Animaationopeus (viive päivää kohti, sekuntia)",
-        "securefood_btn": "📄 Hae SecureFood-skenaarion ohjeet",
+        "securefood_btn": "📄 Skenaarion ohjeet",
         "sidebar_interventions_caption": "Nämä vipuvarret näkyvät 🧪 Käyttäytymisteoria-välilehdellä.",
         "exp_nudge": "🛒 Kehotus — Ostorajoitus",
         "nudge_cap_on": "Ota käyttöön käyntikohtainen ostorajoitus",
@@ -2733,7 +2723,7 @@ _MAIN_T = {
         "sub_dce": "🧠 Κατανομές Προτιμήσεων DCE",
         "sub_catalogue": "🛒 Κατάλογος Προϊόντων",
         "animation_speed": "Ταχύτητα Κινούμενης Εικόνας (καθυστέρηση ανά ημέρα, δευτ.)",
-        "securefood_btn": "📄 Λήψη Οδηγιών Σεναρίου SecureFood",
+        "securefood_btn": "📄 Οδηγίες Σεναρίου",
         "sidebar_interventions_caption": "Αυτές οι ρυθμίσεις εμφανίζονται στην καρτέλα 🧪 Θεωρία Συμπεριφοράς.",
         "exp_nudge": "🛒 Ώθηση — Όριο Αγοράς",
         "nudge_cap_on": "Ενεργοποίηση ορίου αγοράς ανά επίσκεψη",
@@ -2828,7 +2818,7 @@ _MAIN_T = {
         "sub_dce": "🧠 Distribuições de Preferências DCE",
         "sub_catalogue": "🛒 Catálogo de Produtos",
         "animation_speed": "Velocidade de Animação (atraso por dia, segundos)",
-        "securefood_btn": "📄 Obter Instruções do Cenário SecureFood",
+        "securefood_btn": "📄 Instruções do Cenário",
         "sidebar_interventions_caption": "Estas alavancas são visíveis no separador 🧪 Teoria Comportamental.",
         "exp_nudge": "🛒 Incentivo — Limite de Compra",
         "nudge_cap_on": "Ativar limite de compra por visita",
@@ -6978,55 +6968,49 @@ def render_sensitivity_tab(params: dict):
 def main():
     params = build_sidebar_params()
 
-    _title_col, _sf_col, _btn_col = st.columns([4, 1.6, 1.4])
+    _title_col, _right_col = st.columns([4, 3])
     with _title_col:
         st.title("🛒 GROCERYsim ABM v2.0")
         st.markdown(_t("subtitle"))
-    with _sf_col:
-        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-        if st.button("🌿 SecureFood Scenario Simulator",
-                     use_container_width=True, key="sf_launch_btn"):
-            st.session_state["page"] = "securefood"
-            st.rerun()
-    with _btn_col:
-        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-        _pdf_path = os.path.join(_STATIC_DIR, "GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf")
-        try:
-            with open(_pdf_path, "rb") as _f:
-                _pdf_bytes = _f.read()
-            st.download_button(
-                label=_t("securefood_btn"),
-                data=_pdf_bytes,
-                file_name="GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="securefood_pdf_btn",
+    with _right_col:
+        _sf_logo_uri = _logo_uri("SecureFood.png")
+        with st.container(border=True):
+            st.markdown(
+                f"<div style='text-align:center; padding:4px 0 8px 0;'>"
+                f"<img src='{_sf_logo_uri}' style='height:48px; width:auto; object-fit:contain;'>"
+                f"</div>"
+                f"<style>"
+                f"[data-testid='stVerticalBlockBorderWrapper'] [data-testid='stButton'] > button,"
+                f"[data-testid='stVerticalBlockBorderWrapper'] [data-testid='stDownloadButton'] > button {{"
+                f"  height: 42px !important;"
+                f"  min-height: 42px !important;"
+                f"  white-space: nowrap !important;"
+                f"  overflow: hidden !important;"
+                f"  text-overflow: ellipsis !important;"
+                f"}}"
+                f"</style>",
+                unsafe_allow_html=True,
             )
-        except FileNotFoundError:
-            pass
-    components.html("""
-<script>
-(function applyOrangeBtn(){
-  function style(){
-    try {
-      window.parent.document.querySelectorAll('button').forEach(function(b){
-        if((b.innerText || '').includes('SecureFood Scenario Instructions')){
-          b.style.backgroundColor='#E87722';
-          b.style.color='white';
-          b.style.border='none';
-          b.style.fontWeight='600';
-          b.onmouseenter=function(){this.style.backgroundColor='#c9641a';};
-          b.onmouseleave=function(){this.style.backgroundColor='#E87722';};
-        }
-      });
-    } catch(e){}
-  }
-  style();
-  try {
-    new MutationObserver(style).observe(window.parent.document.body,{childList:true,subtree:true});
-  } catch(e){}
-})();
-</script>""", height=0)
+            _btn_a, _btn_b = st.columns(2)
+            with _btn_a:
+                if st.button("🌿 Scenario Simulator", use_container_width=True, key="sf_launch_btn"):
+                    st.session_state["page"] = "securefood"
+                    st.rerun()
+            with _btn_b:
+                _pdf_path = os.path.join(_STATIC_DIR, "GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf")
+                try:
+                    with open(_pdf_path, "rb") as _f:
+                        _pdf_bytes = _f.read()
+                    st.download_button(
+                        label=_t("securefood_btn"),
+                        data=_pdf_bytes,
+                        file_name="GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="securefood_pdf_btn",
+                    )
+                except FileNotFoundError:
+                    pass
     st.divider()
 
     tabs = st.tabs(_t("tabs"))
