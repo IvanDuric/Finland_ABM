@@ -226,6 +226,143 @@ ARCHETYPE_EMOJI = {
     "habitual_buyer":   "🔁",
 }
 
+# ---------------------------------------------------------------------------
+# Global Plotly config — responsive + mobile-friendly toolbar
+# ---------------------------------------------------------------------------
+_PLOTLY_CFG = {
+    "responsive": True,
+    "displayModeBar": "hover",
+    "modeBarButtonsToRemove": ["lasso2d", "select2d", "autoScale2d"],
+    "scrollZoom": False,
+}
+
+# ---------------------------------------------------------------------------
+# Onboarding tour steps
+# ---------------------------------------------------------------------------
+_TOUR_STEPS = [
+    {
+        "title": "👋 Welcome to GROCERYsim ABM v2.0",
+        "body": (
+            "This guided tour walks you through the key features in about 2 minutes. "
+            "You can skip at any time using the button on the left."
+        ),
+    },
+    {
+        "title": "⚙️ Simulation Parameters — Sidebar",
+        "body": (
+            "The left sidebar controls every aspect of the simulation: duration, "
+            "number of consumers, reorder points and lead times. "
+            "The model auto-calibrates shelf capacity and stock levels to your store size."
+        ),
+    },
+    {
+        "title": "🏠 Tab 1 — Data & Population",
+        "body": (
+            "Start here. Load your participant cohort from Firebase or upload CSV/JSON files. "
+            "The simulation matches real consumer baskets against your product catalogue "
+            "before each run."
+        ),
+    },
+    {
+        "title": "🎮 Tab 2 — Interactive Demo",
+        "body": (
+            "Run a single simulation with live chart updates. "
+            "Perfect for quickly exploring how parameter changes affect day-by-day revenue, "
+            "stock levels, and consumer behaviour archetypes."
+        ),
+    },
+    {
+        "title": "🔬 Tab 3 — Scientific Analysis",
+        "body": (
+            "Run multiple simulations (Monte Carlo) for statistically robust results "
+            "with percentile confidence bands (p10–p90). "
+            "Uses AI to recommend optimal parameters and compares baseline vs. crisis scenarios."
+        ),
+    },
+    {
+        "title": "🏛️ Tab 6 — Policy Analysis",
+        "body": (
+            "Test policy interventions: fat taxes, subsidies, purchase caps, labelling. "
+            "See how each policy shifts consumer behaviour and revenue "
+            "across the four consumer archetypes."
+        ),
+    },
+    {
+        "title": "🌿 SecureFood Scenario Simulator",
+        "body": (
+            "Dedicated tool for the Horizon Europe SecureFood project. "
+            "Simulate climate disruption in Finnish dairy supply chains from the perspective "
+            "of a Supply Chain Actor or Policy Maker."
+        ),
+    },
+    {
+        "title": "✅ You're all set!",
+        "body": (
+            "Explore the remaining tabs: ♻️ Food Waste, 📦 Per-Product deep-dives, "
+            "👔 Stakeholder View, 🎚️ Sensitivity Analysis, and 🧪 Behavioural Theory. "
+            "Use the 📥 Export tab to download all results as CSV. "
+            "Click the '🎓 Tour' button in the sidebar to replay this tour any time."
+        ),
+    },
+]
+
+
+def render_onboarding_tour():
+    """Render the guided onboarding tour banner. Skippable at every step."""
+    step = st.session_state.get("tour_step", 0)
+    if step <= 0:
+        return
+
+    idx = min(step - 1, len(_TOUR_STEPS) - 1)
+    current = _TOUR_STEPS[idx]
+    total = len(_TOUR_STEPS)
+    pct = int(step / total * 100)
+
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(135deg,#042026 0%,#073B4C 100%);
+                    color:#F4EFE6; padding:20px 26px 16px 26px; border-radius:10px;
+                    border-left:5px solid #DBA159; margin-bottom:18px;
+                    box-shadow:0 4px 24px rgba(4,32,38,0.18);">
+          <div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;
+                      color:#DBA159;font-weight:700;margin-bottom:6px;">
+            Guided Tour &nbsp;·&nbsp; Step {step} of {total}
+          </div>
+          <div style="font-size:17px;font-weight:700;margin-bottom:8px;
+                      color:#F4EFE6;">{current['title']}</div>
+          <div style="font-size:14px;line-height:1.65;color:rgba(244,239,230,0.85);
+                      max-width:680px;">{current['body']}</div>
+          <div style="margin-top:14px;background:rgba(255,255,255,0.12);
+                      border-radius:3px;height:3px;">
+            <div style="background:#DBA159;width:{pct}%;height:3px;
+                        border-radius:3px;transition:width .3s;"></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c_skip, _, c_prev, c_next = st.columns([2, 4, 1, 1])
+    with c_skip:
+        if st.button("✕  Skip tour", key="tour_skip"):
+            st.session_state["tour_step"] = 0
+            st.rerun()
+    with c_prev:
+        if step > 1:
+            if st.button("← Back", key="tour_prev"):
+                st.session_state["tour_step"] = step - 1
+                st.rerun()
+    with c_next:
+        label = "✓ Done" if step == total else "Next →"
+        btn_type = "secondary" if step == total else "primary"
+        if st.button(label, key="tour_next", type=btn_type):
+            if step >= total:
+                st.session_state["tour_step"] = 0
+            else:
+                st.session_state["tour_step"] = step + 1
+            st.rerun()
+
+
 # ===========================================================================
 # 0b. LANDING PAGE
 # ===========================================================================
@@ -2479,6 +2616,8 @@ defaults = {
     "policy_label":     None,   # human-readable name of the active policy run
     # Multi-scenario store: list of {"label": str, "df": DataFrame}
     "policy_scenarios": [],
+    # Onboarding tour (1 = first step, 0 = hidden)
+    "tour_step": 1,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -3252,6 +3391,10 @@ def _render_analysis(
 
 def build_sidebar_params():
     st.sidebar.title(_t("sidebar_title"))
+    if st.sidebar.button("🎓 Tour", help="Restart the guided tour", key="restart_tour_btn"):
+        st.session_state["tour_step"] = 1
+        st.rerun()
+    st.sidebar.divider()
 
     st.sidebar.header(_t("sidebar_general"))
     days_to_run    = st.sidebar.slider(_t("duration_days"), 7, 1825, 60,
@@ -3643,7 +3786,7 @@ def render_data_tab():
                                    color_discrete_sequence=["#003399"])
             fig_age.update_layout(template="plotly_white", showlegend=False,
                                   xaxis_title=_t("label_age"), yaxis_title=_t("label_count"))
-            st.plotly_chart(fig_age, width='stretch')
+            st.plotly_chart(fig_age, use_container_width=True, config=_PLOTLY_CFG)
 
     with col_b:
         if "gender" in df_demo:
@@ -3653,7 +3796,7 @@ def render_data_tab():
                              title=_t("chart_gender"),
                              color_discrete_sequence=px.colors.qualitative.Set2)
             fig_gen.update_layout(template="plotly_white")
-            st.plotly_chart(fig_gen, width='stretch')
+            st.plotly_chart(fig_gen, use_container_width=True, config=_PLOTLY_CFG)
 
     with col_c:
         if "income_group" in df_demo:
@@ -3664,7 +3807,7 @@ def render_data_tab():
                              color_discrete_sequence=["#003399"])
             fig_inc.update_layout(template="plotly_white", xaxis_title="",
                                   xaxis_tickangle=-30)
-            st.plotly_chart(fig_inc, width='stretch')
+            st.plotly_chart(fig_inc, use_container_width=True, config=_PLOTLY_CFG)
 
     # ---- Archetype distribution ----
     _arch_hdr, _arch_info = st.columns([8, 1])
@@ -3735,7 +3878,7 @@ each participant via k-means clustering.
                 title=_t("chart_radar_title"),
                 template="plotly_white",
             )
-            st.plotly_chart(fig_radar, width='stretch')
+            st.plotly_chart(fig_radar, use_container_width=True, config=_PLOTLY_CFG)
 
     # ---- DCE preference distributions ----
     st.subheader(_t("sub_dce"))
@@ -3753,7 +3896,7 @@ each participant via k-means clustering.
                                color_discrete_sequence=["#2980b9"])
             fig.update_layout(template="plotly_white", showlegend=False,
                               xaxis_title="", yaxis_title=_t("label_count"), height=250)
-            col_widget.plotly_chart(fig, width='stretch')
+            col_widget.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
 
     # ---- Product catalogue preview ----
     st.subheader(_t("sub_catalogue"))
@@ -3762,7 +3905,7 @@ each participant via k-means clustering.
                              "is_bio","is_plant_based","shelf_life_days",
                              "initial_stock_shelf","initial_stock_storage"]
                  if c in df_prods.columns]
-    st.dataframe(df_prods[cols_show].sort_values("category"), width='stretch')
+    st.dataframe(df_prods[cols_show].sort_values("category"), use_container_width=True)
 
     render_footer()
 
@@ -3826,7 +3969,7 @@ def render_demo_tab(params: dict):
                                   line_color="steelblue", annotation_text="Crisis End / Recovery")
                 fig.update_layout(template="plotly_white",
                                   yaxis_title="Revenue (€, constant baseline prices)")
-                chart_spot.plotly_chart(fig, width='stretch')
+                chart_spot.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
                 progress.progress(day / params["days"], text=f"Day {day}/{params['days']}")
                 time.sleep(run_speed)
 
@@ -3920,7 +4063,7 @@ def render_demo_tab(params: dict):
         fig_rev.update_layout(template="plotly_white",
                               yaxis_title="Revenue (€, constant baseline prices)")
         _add_crisis_lines(fig_rev)
-        c1.plotly_chart(fig_rev, width='stretch')
+        c1.plotly_chart(fig_rev, use_container_width=True, config=_PLOTLY_CFG)
 
         fig_nom = px.line(df, x="Day", y="NominalRevenue", color="Scenario",
                           title="Nominal Revenue (€, inflated prices)  — store cash-flow view",
@@ -3928,7 +4071,7 @@ def render_demo_tab(params: dict):
         fig_nom.update_layout(template="plotly_white",
                               yaxis_title="Revenue (€, current prices)")
         _add_crisis_lines(fig_nom)
-        c2.plotly_chart(fig_nom, width='stretch')
+        c2.plotly_chart(fig_nom, use_container_width=True, config=_PLOTLY_CFG)
 
         with st.expander("📊 Revenue Analysis", expanded=True):
             st.markdown("**Constant-price Revenue** (demand signal — falls when consumers buy less)")
@@ -3946,14 +4089,14 @@ def render_demo_tab(params: dict):
         fig_price.update_layout(template="plotly_white",
                                 yaxis_title="Mean price across catalogue (€)")
         _add_crisis_lines(fig_price)
-        c3.plotly_chart(fig_price, width='stretch')
+        c3.plotly_chart(fig_price, use_container_width=True, config=_PLOTLY_CFG)
 
         fig_lost = px.bar(df, x="Day", y="LostSales", color="Scenario", barmode="group",
                           title="Lost Sales (€)",
                           color_discrete_map={"Baseline":"#87CEEB","Crisis":"#8B0000"})
         fig_lost.update_layout(template="plotly_white")
         _add_crisis_lines(fig_lost)
-        c4.plotly_chart(fig_lost, width='stretch')
+        c4.plotly_chart(fig_lost, use_container_width=True, config=_PLOTLY_CFG)
 
         with st.expander("📊 Price & Lost-Sales Analysis", expanded=True):
             st.markdown("**Average Product Price** — measures inflation pass-through and recovery speed")
@@ -3970,14 +4113,14 @@ def render_demo_tab(params: dict):
                             color_discrete_map={"Baseline":"#2E8B57","Crisis":"#DC143C"})
         fig_panic.update_layout(template="plotly_white")
         _add_crisis_lines(fig_panic)
-        c5.plotly_chart(fig_panic, width='stretch')
+        c5.plotly_chart(fig_panic, use_container_width=True, config=_PLOTLY_CFG)
 
         fig_waste = px.bar(df, x="Day", y="Waste", color="Scenario", barmode="group",
                            title="Daily Waste (units)",
                            color_discrete_map={"Baseline":"#90EE90","Crisis":"#FF6347"})
         fig_waste.update_layout(template="plotly_white")
         _add_crisis_lines(fig_waste)
-        c6.plotly_chart(fig_waste, width='stretch')
+        c6.plotly_chart(fig_waste, use_container_width=True, config=_PLOTLY_CFG)
 
         with st.expander("📊 Panic & Waste Analysis", expanded=True):
             st.markdown("**Global Panic Level** (0–1 scale) — driven by stockouts, crowding, and media")
@@ -3995,7 +4138,7 @@ def render_demo_tab(params: dict):
         fig_foot = px.bar(df_base, x="Day", y="Consumers", title="Daily Footfall (Baseline)",
                           color_discrete_sequence=["#4682B4"])
         fig_foot.update_layout(template="plotly_white")
-        st.plotly_chart(fig_foot, width='stretch')
+        st.plotly_chart(fig_foot, use_container_width=True, config=_PLOTLY_CFG)
         with st.expander("📊 Footfall Analysis", expanded=True):
             st.markdown("**Daily Store Visitors** — footfall during the baseline (no-crisis) run")
             _render_analysis(df, "Consumers", params, suffix=" visitors", decimals=0,
@@ -4261,9 +4404,9 @@ def render_demo_tab(params: dict):
             # Scenario tabs
             sc_tab_b, sc_tab_c = st.tabs(["🟢 Baseline", "🔴 Crisis"])
             with sc_tab_b:
-                st.plotly_chart(draw_scm_v2("Baseline", "#27ae60"), width='stretch')
+                st.plotly_chart(draw_scm_v2("Baseline", "#27ae60"), use_container_width=True, config=_PLOTLY_CFG)
             with sc_tab_c:
-                st.plotly_chart(draw_scm_v2("Crisis", "#c0392b"), width='stretch')
+                st.plotly_chart(draw_scm_v2("Crisis", "#c0392b"), use_container_width=True, config=_PLOTLY_CFG)
 
             # Quick summary table below the chart
             st.markdown("##### 📋 Product Summary")
@@ -4309,7 +4452,7 @@ def render_demo_tab(params: dict):
                 ),
             )])
             fig_sankey.update_layout(title="Revenue Flow — Crisis Scenario", height=400)
-            st.plotly_chart(fig_sankey, width='stretch')
+            st.plotly_chart(fig_sankey, use_container_width=True, config=_PLOTLY_CFG)
 
             st.caption(
                 "The Sankey diagram shows how potential revenue was split between "
@@ -4357,7 +4500,7 @@ def render_demo_tab(params: dict):
                     xaxis_title="Day", yaxis_title=label,
                     legend=dict(orientation="h", y=-0.3),
                 )
-                col.plotly_chart(fig_d, width='stretch')
+                col.plotly_chart(fig_d, use_container_width=True, config=_PLOTLY_CFG)
 
             st.markdown(
                 "**How to read this:** Each line represents the mean preference value "
@@ -4464,7 +4607,7 @@ def render_demo_tab(params: dict):
                         legend=dict(orientation="h", y=-0.3),
                         xaxis_title="", margin=dict(t=60, b=80),
                     )
-                    _bcol.plotly_chart(_fig_bar, width='stretch')
+                    _bcol.plotly_chart(_fig_bar, use_container_width=True, config=_PLOTLY_CFG)
 
                 st.divider()
 
@@ -4500,7 +4643,7 @@ def render_demo_tab(params: dict):
                         xaxis_title="Day", legend=dict(orientation="h", y=-0.35),
                         margin=dict(t=50, b=80),
                     )
-                    _tcol.plotly_chart(_fig_t, width='stretch')
+                    _tcol.plotly_chart(_fig_t, use_container_width=True, config=_PLOTLY_CFG)
 
                 st.divider()
 
@@ -4665,7 +4808,7 @@ def render_science_tab(params: dict):
              "Recommended Capacity": c}
             for p, c in st.session_state.ai_recs.items()
         ])
-        st.dataframe(recs_df, width='stretch')
+        st.dataframe(recs_df, use_container_width=True)
 
         col1, col2 = st.columns(2)
         if col1.button("✅ Accept AI Recommendations & Re-run Baseline"):
@@ -4717,7 +4860,7 @@ def render_science_tab(params: dict):
                                      text=[f"{r_lost:.0f}", f"{o_lost:.0f}"], textposition="auto"))
             fig_cmp.update_layout(barmode="group", title="Baseline Efficiency Comparison",
                                   template="plotly_white", yaxis_title="Units (avg per run)")
-            st.plotly_chart(fig_cmp, width='stretch')
+            st.plotly_chart(fig_cmp, use_container_width=True, config=_PLOTLY_CFG)
         else:
             st.info("Using Raw Baseline (optimisation skipped).")
 
@@ -4773,7 +4916,7 @@ def render_science_tab(params: dict):
                             title="Daily Revenue Distribution",
                             color_discrete_map={label_base:"#2E8B57","Crisis":"#DC143C"})
         fig_vio.update_layout(template="plotly_white")
-        st.plotly_chart(fig_vio, width='stretch')
+        st.plotly_chart(fig_vio, use_container_width=True, config=_PLOTLY_CFG)
         with st.expander("📊 Revenue Distribution Analysis", expanded=True):
             st.markdown("**Revenue Distribution** — spread and central tendency across all runs and days")
             _render_analysis(df_full, "Revenue", params, prefix="€", decimals=0,
@@ -4819,49 +4962,93 @@ def render_science_tab(params: dict):
             st.rerun()
 
 
-def _plot_ci_band(df: pd.DataFrame, title: str, color: str = "steelblue"):
-    stats = df.groupby("Day")["Revenue"].agg(["mean","std"]).reset_index()
-    stats["upper"] = stats["mean"] + 1.96 * stats["std"]
-    stats["lower"] = stats["mean"] - 1.96 * stats["std"]
-    fig = go.Figure()
+def _percentile_band(df: pd.DataFrame, col: str = "Revenue"):
+    """Return a per-Day stats DataFrame with mean, median, p10, p25, p75, p90."""
+    g = df.groupby("Day")[col]
+    stats = g.agg(["mean"]).reset_index()
+    stats["median"] = g.median().values
+    stats["p10"]    = g.quantile(0.10).values
+    stats["p25"]    = g.quantile(0.25).values
+    stats["p75"]    = g.quantile(0.75).values
+    stats["p90"]    = g.quantile(0.90).values
+    return stats
+
+
+def _band_traces(fig: go.Figure, stats: pd.DataFrame, name: str,
+                 color_hex: str, show_iqr: bool = True):
+    """Add p10–p90 outer band, optional p25–p75 IQR band, and median line."""
+    r, g, b = int(color_hex[1:3], 16), int(color_hex[3:5], 16), int(color_hex[5:7], 16)
+    days_fwd = stats["Day"]
+    days_rev = stats["Day"][::-1]
+
+    # Outer band p10–p90
     fig.add_trace(go.Scatter(
-        x=pd.concat([stats["Day"], stats["Day"][::-1]]),
-        y=pd.concat([stats["upper"], stats["lower"][::-1]]),
-        fill="toself", fillcolor=f"rgba(128,128,128,0.2)",
-        line=dict(color="rgba(255,255,255,0)"), showlegend=False,
+        x=pd.concat([days_fwd, days_rev]),
+        y=pd.concat([stats["p90"], stats["p10"][::-1]]),
+        fill="toself",
+        fillcolor=f"rgba({r},{g},{b},0.10)",
+        line=dict(color="rgba(0,0,0,0)"),
+        legendgroup=name,
+        name=f"{name} p10–p90",
+        showlegend=True,
+        hoverinfo="skip",
     ))
-    fig.add_trace(go.Scatter(x=stats["Day"], y=stats["mean"],
-                             line=dict(color=color), name="Mean"))
-    fig.update_layout(title=title, template="plotly_white",
-                      xaxis_title="Day", yaxis_title="Revenue (€)")
-    st.plotly_chart(fig, width='stretch')
+    # IQR band p25–p75
+    if show_iqr:
+        fig.add_trace(go.Scatter(
+            x=pd.concat([days_fwd, days_rev]),
+            y=pd.concat([stats["p75"], stats["p25"][::-1]]),
+            fill="toself",
+            fillcolor=f"rgba({r},{g},{b},0.20)",
+            line=dict(color="rgba(0,0,0,0)"),
+            legendgroup=name,
+            name=f"{name} IQR",
+            showlegend=True,
+            hoverinfo="skip",
+        ))
+    # Median line
+    fig.add_trace(go.Scatter(
+        x=stats["Day"], y=stats["median"],
+        line=dict(color=color_hex, width=2.5),
+        legendgroup=name,
+        name=f"{name} median",
+    ))
+
+
+def _plot_ci_band(df: pd.DataFrame, title: str, color: str = "#44A1A0"):
+    """Single-scenario revenue chart with p10/p25/p75/p90 percentile bands."""
+    stats = _percentile_band(df)
+    fig = go.Figure()
+    _band_traces(fig, stats, "Revenue", color)
+    fig.update_layout(
+        title=title,
+        template="plotly_white",
+        xaxis_title="Day",
+        yaxis_title="Revenue (€)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(l=50, r=20, t=60, b=40),
+    )
+    st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
 
 
 def _plot_ci_dual(df_base: pd.DataFrame, df_cri: pd.DataFrame, label_base: str):
-    def ci_traces(df, name, color):
-        s = df.groupby("Day")["Revenue"].agg(["mean","std"]).reset_index()
-        s["u"] = s["mean"] + 1.96 * s["std"]
-        s["l"] = s["mean"] - 1.96 * s["std"]
-        return s, name, color
-
-    s_b, n_b, c_b = ci_traces(df_base, label_base, "#2E8B57")
-    s_c, n_c, c_c = ci_traces(df_cri,  "Crisis",   "#DC143C")
+    """Baseline vs Crisis revenue chart with dual percentile confidence bands."""
+    s_b = _percentile_band(df_base)
+    s_c = _percentile_band(df_cri)
 
     fig = go.Figure()
-    for s, n, c in [(s_b, n_b, c_b), (s_c, n_c, c_c)]:
-        r, g, b = (int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16))
-        fig.add_trace(go.Scatter(
-            x=pd.concat([s["Day"], s["Day"][::-1]]),
-            y=pd.concat([s["u"], s["l"][::-1]]),
-            fill="toself", fillcolor=f"rgba({r},{g},{b},0.15)",
-            line=dict(color="rgba(255,255,255,0)"), showlegend=False,
-        ))
-        fig.add_trace(go.Scatter(x=s["Day"], y=s["mean"],
-                                 line=dict(color=c), name=n))
-    fig.update_layout(title="Daily Revenue Trends [95 % CI]",
-                      xaxis_title="Day", yaxis_title="Revenue (€)",
-                      template="plotly_white")
-    st.plotly_chart(fig, width='stretch')
+    _band_traces(fig, s_b, label_base, "#44A1A0")   # teal  = baseline
+    _band_traces(fig, s_c, "Crisis",   "#DC143C")   # red   = crisis
+
+    fig.update_layout(
+        title="Daily Revenue — Baseline vs Crisis  [p10 / IQR / p90 bands]",
+        xaxis_title="Day",
+        yaxis_title="Revenue (€)",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(l=50, r=20, t=60, b=40),
+    )
+    st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
 
 
 # ===========================================================================
@@ -4902,7 +5089,7 @@ def render_waste_tab():
                          color="Category",
                          color_discrete_sequence=px.colors.qualitative.Set2)
         fig_cat.update_layout(template="plotly_white", showlegend=False)
-        st.plotly_chart(fig_cat, width='stretch')
+        st.plotly_chart(fig_cat, use_container_width=True, config=_PLOTLY_CFG)
 
     with col_b:
         by_reason = dfw.groupby("Reason")["Quantity"].sum().reset_index()
@@ -4910,7 +5097,7 @@ def render_waste_tab():
                          title="Waste by Reason",
                          color_discrete_sequence=["#e74c3c","#e67e22","#f1c40f"])
         fig_rea.update_layout(template="plotly_white")
-        st.plotly_chart(fig_rea, width='stretch')
+        st.plotly_chart(fig_rea, use_container_width=True, config=_PLOTLY_CFG)
 
     # Time series
     daily_waste = dfw.groupby("Day")["Quantity"].sum().reset_index()
@@ -4918,7 +5105,7 @@ def render_waste_tab():
                        title="Daily Waste Over Simulation",
                        color_discrete_sequence=["#e74c3c"])
     fig_time.update_layout(template="plotly_white")
-    st.plotly_chart(fig_time, width='stretch')
+    st.plotly_chart(fig_time, use_container_width=True, config=_PLOTLY_CFG)
     with st.expander("📊 Waste Trend Analysis", expanded=True):
         st.markdown("**Daily Food Waste** — units discarded (expiry + refused deliveries) per day")
         _waste_ts = daily_waste.copy()
@@ -4932,7 +5119,7 @@ def render_waste_tab():
                     orientation="h", title="Top 20 Products by Waste",
                     color_discrete_sequence=px.colors.qualitative.Set2)
     fig_hm.update_layout(template="plotly_white", yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig_hm, width='stretch')
+    st.plotly_chart(fig_hm, use_container_width=True, config=_PLOTLY_CFG)
 
     # Download
     st.download_button("📥 Download Waste Data (CSV)",
@@ -4984,7 +5171,7 @@ def render_product_tab():
                                    line=dict(color="#8e44ad", width=1, dash="dot")))
     fig_stock.update_layout(title=f"Stock Trajectory — {sel_prod}",
                              template="plotly_white", xaxis_title="Day", yaxis_title="Units")
-    st.plotly_chart(fig_stock, width='stretch')
+    st.plotly_chart(fig_stock, use_container_width=True, config=_PLOTLY_CFG)
     with st.expander("📊 Stock Analysis", expanded=True):
         st.markdown("**Shelf Stock** — units available to customers each day")
         _render_analysis(df, "Shelf", {}, suffix=" units", decimals=1, higher_is_better=True)
@@ -4998,7 +5185,7 @@ def render_product_tab():
                          title="Daily Revenue",
                          color_discrete_sequence=["#003399"])
         fig_rev.update_layout(template="plotly_white")
-        st.plotly_chart(fig_rev, width='stretch')
+        st.plotly_chart(fig_rev, use_container_width=True, config=_PLOTLY_CFG)
         with st.expander("📊 Revenue Analysis", expanded=True):
             _render_analysis(df, "Revenue", {}, prefix="€", decimals=2, higher_is_better=True)
 
@@ -5007,7 +5194,7 @@ def render_product_tab():
                            title="Daily Waste (units)",
                            color_discrete_sequence=["#e74c3c"])
         fig_waste.update_layout(template="plotly_white")
-        st.plotly_chart(fig_waste, width='stretch')
+        st.plotly_chart(fig_waste, use_container_width=True, config=_PLOTLY_CFG)
         with st.expander("📊 Waste Analysis", expanded=True):
             _render_analysis(df, "Waste", {}, suffix=" units", decimals=1, higher_is_better=False)
 
@@ -5015,7 +5202,7 @@ def render_product_tab():
                         title="Daily Selling Price",
                         color_discrete_sequence=["#e67e22"])
     fig_price.update_layout(template="plotly_white", yaxis_title="Price (€)")
-    st.plotly_chart(fig_price, width='stretch')
+    st.plotly_chart(fig_price, use_container_width=True, config=_PLOTLY_CFG)
     with st.expander("📊 Price Analysis", expanded=True):
         st.markdown("**Selling Price** — price per unit each day (includes inflation pass-through and discounts)")
         _render_analysis(df, "Price", {}, prefix="€", decimals=3, higher_is_better=False)
@@ -5025,7 +5212,7 @@ def render_product_tab():
                         title="Near-Expiry Units Sold (50 % discount)",
                         color_discrete_sequence=["#f39c12"])
         fig_ne.update_layout(template="plotly_white")
-        st.plotly_chart(fig_ne, width='stretch')
+        st.plotly_chart(fig_ne, use_container_width=True, config=_PLOTLY_CFG)
         with st.expander("📊 Near-Expiry Analysis", expanded=True):
             _render_analysis(df, "NearExpiry", {}, suffix=" units", decimals=1, higher_is_better=False)
 
@@ -5080,7 +5267,7 @@ def render_behaviour_tab(params):
                 height=320, margin=dict(t=40, b=60),
                 template="plotly_white",
             )
-            st.plotly_chart(fig_tpb, width='stretch')
+            st.plotly_chart(fig_tpb, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 TPB Analysis", expanded=False):
                 st.markdown("**Subjective Norm** — social influence driving purchase intention")
                 _render_analysis(df, "AvgSubjectiveNorm", params, decimals=3, higher_is_better=True)
@@ -5118,7 +5305,7 @@ def render_behaviour_tab(params):
                 height=320, margin=dict(t=40, b=60),
                 template="plotly_white",
             )
-            st.plotly_chart(fig_kt, width='stretch')
+            st.plotly_chart(fig_kt, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Loss Aversion Analysis", expanded=False):
                 st.markdown("**Budget Exhaustion Rate** — share of consumers who ran out of budget (proxy for loss aversion)")
                 _render_analysis(df, "BudgetExhaustionRate", params, decimals=3, higher_is_better=False)
@@ -5155,7 +5342,7 @@ def render_behaviour_tab(params):
                 template="plotly_white",
             )
             rationing_on = params.get("purchase_limit") is not None
-            st.plotly_chart(fig_gini, width='stretch')
+            st.plotly_chart(fig_gini, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Gini Equity Analysis", expanded=False):
                 st.markdown("**Gini Access Coefficient** — 0 = perfectly equal access, 1 = one consumer gets everything")
                 _render_analysis(df, "GiniAccess", params, decimals=3, higher_is_better=False)
@@ -5188,7 +5375,7 @@ def render_behaviour_tab(params):
                 height=320, margin=dict(t=40, b=60),
                 template="plotly_white",
             )
-            st.plotly_chart(fig_fies, width='stretch')
+            st.plotly_chart(fig_fies, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Food Security Analysis", expanded=False):
                 for _fc in available:
                     _lbl = {"FIESSevere_Low": "Low-income severely food-insecure %",
@@ -5232,7 +5419,7 @@ def render_behaviour_tab(params):
                 height=320, margin=dict(t=40, b=60),
                 template="plotly_white",
             )
-            st.plotly_chart(fig_sp, width='stretch')
+            st.plotly_chart(fig_sp, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Stockpile Analysis", expanded=False):
                 st.markdown("**Stockpile Pressure** — avg urgency to accumulate pantry stock (β-δ discounting effect)")
                 _render_analysis(df, "StockpilePressure", params, decimals=3, higher_is_better=False)
@@ -5270,7 +5457,7 @@ def render_behaviour_tab(params):
                 height=320, margin=dict(t=40, b=60),
                 template="plotly_white",
             )
-            st.plotly_chart(fig_media, width='stretch')
+            st.plotly_chart(fig_media, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Media Effect Analysis", expanded=False):
                 st.markdown("**Media Panic Effect** — daily change in global panic driven by media agenda-setting")
                 _render_analysis(df, "MediaPanicEffect", params, decimals=4, higher_is_better=False)
@@ -5329,7 +5516,7 @@ def render_behaviour_tab(params):
             "Policy Relevance": "Crisis communication strategy"
         },
     ])
-    st.dataframe(theory_df, width='stretch', hide_index=True)
+    st.dataframe(theory_df, use_container_width=True, hide_index=True)
 
 
 # ===========================================================================
@@ -5354,7 +5541,7 @@ def render_export_tab():
         if df is not None and not df.empty:
             any_data = True
             with st.expander(f"📊 {label}", expanded=False):
-                st.dataframe(df.head(200), width='stretch')
+                st.dataframe(df.head(200), use_container_width=True)
                 st.download_button(
                     f"📥 Download {label} (CSV)",
                     df.to_csv(index=False).encode("utf-8"),
@@ -6065,7 +6252,7 @@ def render_policy_tab(params: dict):
             xaxis_title="Day", template="plotly_white",
             legend=dict(orientation="h", y=-0.25),
         )
-        st.plotly_chart(fig_ms, width='stretch')
+        st.plotly_chart(fig_ms, use_container_width=True, config=_PLOTLY_CFG)
 
         # Bar chart: mean value per scenario
         bar_data = [{"Scenario": "Baseline (no policy)",
@@ -6080,7 +6267,7 @@ def render_policy_tab(params: dict):
             title=f"Mean {ms_metric} by Scenario",
         )
         fig_bar_ms.update_layout(template="plotly_white", showlegend=False)
-        st.plotly_chart(fig_bar_ms, width='stretch')
+        st.plotly_chart(fig_bar_ms, use_container_width=True, config=_PLOTLY_CFG)
         st.divider()
 
     # =====================================================================
@@ -6160,7 +6347,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="Revenue (€)",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_rev, width='stretch')
+            st.plotly_chart(fig_rev, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Revenue Analysis", expanded=True):
                 _render_analysis(df_all, "Revenue", {}, prefix="€", decimals=0,
                                  higher_is_better=True,
@@ -6179,7 +6366,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="Wasted Units",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_waste, width='stretch')
+            st.plotly_chart(fig_waste, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Waste Analysis", expanded=True):
                 _render_analysis(df_all, "Waste", {}, suffix=" units", decimals=1,
                                  higher_is_better=False,
@@ -6193,7 +6380,7 @@ def render_policy_tab(params: dict):
             title="Total Revenue Distribution Across Runs",
         )
         fig_box.update_layout(template="plotly_white", showlegend=False)
-        st.plotly_chart(fig_box, width='stretch')
+        st.plotly_chart(fig_box, use_container_width=True, config=_PLOTLY_CFG)
 
     # ---- Environmental ----
     with chart_tabs[1]:
@@ -6214,7 +6401,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="kg CO₂-eq",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_co2, width='stretch')
+            st.plotly_chart(fig_co2, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 CO₂ Analysis", expanded=True):
                 _render_analysis(df_all, "CO2Total", {}, suffix=" kg CO₂-eq", decimals=1,
                                  higher_is_better=False,
@@ -6233,7 +6420,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="Import Dependency %",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_imp, width='stretch')
+            st.plotly_chart(fig_imp, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Import Dependency Analysis", expanded=True):
                 _render_analysis(df_all, "ImportDepPct", {}, suffix="%", decimals=1,
                                  higher_is_better=False,
@@ -6250,7 +6437,7 @@ def render_policy_tab(params: dict):
             title="Average Daily CO₂ Breakdown: Sales vs Waste",
         )
         fig_co2_break.update_layout(template="plotly_white")
-        st.plotly_chart(fig_co2_break, width='stretch')
+        st.plotly_chart(fig_co2_break, use_container_width=True, config=_PLOTLY_CFG)
 
     # ---- Consumer Welfare ----
     with chart_tabs[2]:
@@ -6269,7 +6456,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="% Consumers",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_bex, width='stretch')
+            st.plotly_chart(fig_bex, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Budget Exhaustion Analysis", expanded=True):
                 _render_analysis(df_all, "BudgetExhaustionRate", {}, suffix=" (0–1)", decimals=3,
                                  higher_is_better=False,
@@ -6288,7 +6475,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="% Consumers",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_stress, width='stretch')
+            st.plotly_chart(fig_stress, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Food Stress Analysis", expanded=True):
                 _render_analysis(df_all, "FoodStressedPct", {}, suffix=" (0–1)", decimals=3,
                                  higher_is_better=False,
@@ -6309,7 +6496,7 @@ def render_policy_tab(params: dict):
                 xaxis_title="Day", yaxis_title="Avg Fat% per unit bought",
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_fat, width='stretch')
+            st.plotly_chart(fig_fat, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Dietary Analysis", expanded=True):
                 _render_analysis(df_all, "MeanFatPurchased", {}, suffix="%", decimals=2,
                                  higher_is_better=False,
@@ -6329,7 +6516,7 @@ def render_policy_tab(params: dict):
                 yaxis_range=[0, 105],
                 template="plotly_white", legend=dict(orientation="h", y=-0.2),
             )
-            st.plotly_chart(fig_ful, width='stretch')
+            st.plotly_chart(fig_ful, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Fulfillment Analysis", expanded=True):
                 _render_analysis(df_all, "FulfillmentRate", {}, suffix=" (0–1)", decimals=3,
                                  higher_is_better=True,
@@ -6383,7 +6570,7 @@ def render_policy_tab(params: dict):
             )
             fig_bex_br.update_layout(template="plotly_white",
                                      legend=dict(orientation="h", y=-0.25))
-            st.plotly_chart(fig_bex_br, width='stretch')
+            st.plotly_chart(fig_bex_br, use_container_width=True, config=_PLOTLY_CFG)
 
         with col_b:
             fig_ful_br = px.bar(
@@ -6396,7 +6583,7 @@ def render_policy_tab(params: dict):
             fig_ful_br.update_layout(template="plotly_white",
                                      legend=dict(orientation="h", y=-0.25),
                                      yaxis_range=[0, 105])
-            st.plotly_chart(fig_ful_br, width='stretch')
+            st.plotly_chart(fig_ful_br, use_container_width=True, config=_PLOTLY_CFG)
 
         # ---- Mean fat grouped bar ----
         fig_fat_br = px.bar(
@@ -6408,7 +6595,7 @@ def render_policy_tab(params: dict):
         )
         fig_fat_br.update_layout(template="plotly_white",
                                  legend=dict(orientation="h", y=-0.2))
-        st.plotly_chart(fig_fat_br, width='stretch')
+        st.plotly_chart(fig_fat_br, use_container_width=True, config=_PLOTLY_CFG)
 
         # ---- Delta heatmap: policy effect on each bracket ----
         st.markdown("#### Policy Δ by Bracket (Policy − Baseline, percentage points)")
@@ -6440,7 +6627,7 @@ def render_policy_tab(params: dict):
             _styler = _styler.applymap(_color_delta)
         st.dataframe(
             _styler.format("{:+.3f}"),
-            width='stretch',
+            use_container_width=True,
         )
         st.caption(
             "Red = policy made this metric worse for that income group | "
@@ -6495,7 +6682,7 @@ def render_policy_tab(params: dict):
         if "Baseline" in summary.columns and "Policy" in summary.columns:
             summary["Δ (Policy − Baseline)"] = summary["Policy"] - summary["Baseline"]
             summary["Δ%"] = ((summary["Policy"] - summary["Baseline"]) / summary["Baseline"].abs().clip(lower=1e-9) * 100).round(2)
-        st.dataframe(summary, width='stretch')
+        st.dataframe(summary, use_container_width=True)
 
         st.markdown("### Download combined records")
         dl_all = pd.concat([df_base, df_pol], ignore_index=True)
@@ -6586,14 +6773,14 @@ def render_stakeholder_tab():
                             title="Daily Revenue Trend",
                             color_discrete_sequence=["#2E8B57"])
             fig_r.update_layout(template="plotly_white")
-            st.plotly_chart(fig_r, width='stretch')
+            st.plotly_chart(fig_r, use_container_width=True, config=_PLOTLY_CFG)
 
         with col_b:
             fig_w = px.bar(df_sc, x="Day", y="Waste",
                            title="Daily Waste (Units)",
                            color_discrete_sequence=["#e74c3c"])
             fig_w.update_layout(template="plotly_white")
-            st.plotly_chart(fig_w, width='stretch')
+            st.plotly_chart(fig_w, use_container_width=True, config=_PLOTLY_CFG)
 
         # Top 10 products by revenue
         if df_stock is not None and not df_stock.empty:
@@ -6606,7 +6793,7 @@ def render_stakeholder_tab():
                              color_discrete_sequence=["#003399"])
             fig_top.update_layout(template="plotly_white",
                                   yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_top, width='stretch')
+            st.plotly_chart(fig_top, use_container_width=True, config=_PLOTLY_CFG)
 
             # Lost sales by product
             top_lost = (df_stock_sc.groupby("Product")["LostSales"]
@@ -6617,7 +6804,7 @@ def render_stakeholder_tab():
                               color_discrete_sequence=["#dc143c"])
             fig_lost.update_layout(template="plotly_white",
                                    yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_lost, width='stretch')
+            st.plotly_chart(fig_lost, use_container_width=True, config=_PLOTLY_CFG)
 
     # -----------------------------------------------------------------------
     elif view == "📋 Policy Maker":
@@ -6650,14 +6837,14 @@ def render_stakeholder_tab():
                                  color_discrete_sequence=["#e67e22"])
             fig_stress.update_layout(template="plotly_white",
                                      yaxis_tickformat=".0%")
-            st.plotly_chart(fig_stress, width='stretch')
+            st.plotly_chart(fig_stress, use_container_width=True, config=_PLOTLY_CFG)
 
         with col_b:
             fig_co2 = px.area(df_sc, x="Day", y="CO2Total",
                               title="Daily CO₂ Footprint (kg CO₂-eq)",
                               color_discrete_sequence=["#27ae60"])
             fig_co2.update_layout(template="plotly_white")
-            st.plotly_chart(fig_co2, width='stretch')
+            st.plotly_chart(fig_co2, use_container_width=True, config=_PLOTLY_CFG)
 
         col_c, col_d = st.columns(2)
         with col_c:
@@ -6665,7 +6852,7 @@ def render_stakeholder_tab():
                               title="Import Dependency % over Time",
                               color_discrete_sequence=["#2980b9"])
             fig_imp.update_layout(template="plotly_white")
-            st.plotly_chart(fig_imp, width='stretch')
+            st.plotly_chart(fig_imp, use_container_width=True, config=_PLOTLY_CFG)
 
         with col_d:
             fig_fat = px.line(df_sc, x="Day", y="MeanFatPurchased",
@@ -6673,7 +6860,7 @@ def render_stakeholder_tab():
                               color_discrete_sequence=["#8e44ad"])
             fig_fat.update_layout(template="plotly_white",
                                   yaxis_title="Avg fat % per unit")
-            st.plotly_chart(fig_fat, width='stretch')
+            st.plotly_chart(fig_fat, use_container_width=True, config=_PLOTLY_CFG)
 
         # Income vulnerability snapshot (from policy comparison if available)
         if pol_base is not None and pol_scen is not None:
@@ -6689,7 +6876,7 @@ def render_stakeholder_tab():
                     "Policy Budget Exh.%":   round(p_val, 1),
                     "Δ (pp)": round(p_val - b_val, 2),
                 })
-            st.dataframe(pd.DataFrame(vuln_data), width='stretch', hide_index=True)
+            st.dataframe(pd.DataFrame(vuln_data), use_container_width=True, hide_index=True)
         else:
             st.info(
                 "Run a policy comparison in the **🏛️ Policy Analysis** tab to see "
@@ -6743,7 +6930,7 @@ def render_stakeholder_tab():
         # Full metrics table
         st.markdown("### Full Daily Metrics Table")
         display_cols = [c for c in df_sc.columns if c not in ("Scenario",)]
-        st.dataframe(df_sc[display_cols].round(4), width='stretch')
+        st.dataframe(df_sc[display_cols].round(4), use_container_width=True)
 
         # Citation / methods note
         st.markdown("### Methods Summary (cite-ready)")
@@ -6913,7 +7100,7 @@ def render_sensitivity_tab(params: dict):
         yaxis=dict(autorange="reversed"),
         coloraxis_showscale=False,
     )
-    st.plotly_chart(fig_tor, width='stretch')
+    st.plotly_chart(fig_tor, use_container_width=True, config=_PLOTLY_CFG)
 
     st.caption(
         "Bar length = max(metric) − min(metric) as each parameter sweeps its range. "
@@ -6941,7 +7128,7 @@ def render_sensitivity_tab(params: dict):
                 xaxis_title=plabel, yaxis_title=metric_label,
                 margin=dict(t=40, b=30),
             )
-            cols[col_idx].plotly_chart(fig_curve, width='stretch')
+            cols[col_idx].plotly_chart(fig_curve, use_container_width=True, config=_PLOTLY_CFG)
 
     # ---- Download ----
     sa_rows = []
@@ -6967,6 +7154,7 @@ def render_sensitivity_tab(params: dict):
 
 def main():
     params = build_sidebar_params()
+    render_onboarding_tour()
 
     _title_col, _right_col = st.columns([4, 3])
     with _title_col:
