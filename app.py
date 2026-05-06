@@ -243,62 +243,91 @@ _TOUR_STEPS = [
     {
         "title": "👋 Welcome to GROCERYsim ABM v2.0",
         "body": (
-            "This guided tour walks you through the key features in about 2 minutes. "
-            "You can skip at any time using the button on the left."
+            "This 8-step tour covers every feature in about 2 minutes. "
+            "Navigation works via the 5 coloured cards below — click any section "
+            "button to open it. The breadcrumb at the top of each section "
+            "(🏠 Menu › 🔬 Simulation › …) is fully clickable to go back. "
+            "Skip this tour any time with the button on the left."
         ),
     },
     {
         "title": "⚙️ Simulation Parameters — Sidebar",
         "body": (
-            "The left sidebar controls every aspect of the simulation: duration, "
-            "number of consumers, reorder points and lead times. "
-            "The model auto-calibrates shelf capacity and stock levels to your store size."
+            "The left sidebar controls every aspect of the model: simulation duration, "
+            "number of consumer agents, reorder points, lead times, crisis settings "
+            "(inflation, supply disruption, panic sensitivity, hoarding multiplier), "
+            "and behavioural levers (media channel, purchase-limit nudge, stockpile horizon). "
+            "The model auto-calibrates shelf capacity and stock to your store size."
         ),
     },
     {
         "title": "🏠 Card 1 — Data & Setup",
         "body": (
-            "Start here. Click the card to load your participant cohort from Firebase or upload "
-            "CSV/JSON files. The simulation matches real consumer baskets against your product "
-            "catalogue before each run."
+            "Start here every session. Load your DCE participant cohort from Firebase "
+            "or upload CSV/JSON files. The data tab shows cohort demographics, "
+            "behavioural archetype clustering (K-Means, k=4), and the product catalogue. "
+            "All other sections depend on data being loaded first."
         ),
     },
     {
-        "title": "🔬 Card 2 — Simulation",
+        "title": "🔬 Card 2 — Simulation (2 sections)",
         "body": (
-            "Choose Interactive Demo for live day-by-day charts, or Scientific Analysis for "
-            "Monte Carlo runs with p10–p90 confidence bands and AI-driven parameter recommendations."
+            "• Interactive Demo — run a live Baseline vs Crisis paired simulation with "
+            "animated day-by-day revenue, stock and consumer charts. Save any run as a "
+            "named scenario for later comparison.\n"
+            "• Scientific Analysis — Monte Carlo (multi-run) with p10/p25/p75/p90 "
+            "percentile confidence bands, AI storage recommendations, and a full "
+            "Baseline vs Crisis statistical comparison with downloadable PDF report."
         ),
     },
     {
-        "title": "📊 Card 3 — Analysis",
+        "title": "📊 Card 3 — Analysis (6 sections)",
         "body": (
-            "Six deep-dive sections: Food Waste, Per-Product stock, Behavioural Theory (Prospect "
-            "Theory, TPB, FIES), Sensitivity sweeps, Scenario Comparison, and the Agent Replay "
-            "viewer for day-level individual agent decisions."
+            "• Food Waste — waste log, drivers, and CO₂ footprint\n"
+            "• Per-Product — stock, sales, price per SKU over time\n"
+            "• Behavioural Theory — Prospect Theory loss aversion, TPB intention scores, "
+            "FIES food-insecurity scale, and stockpile pressure\n"
+            "• Sensitivity Analysis — parameter sweep tornado charts\n"
+            "• Compare Scenarios — side-by-side charts from saved simulation runs\n"
+            "• Agent Replay — slider to step through any day; scatter plot of every "
+            "shopper's panic vs PBC, archetype breakdown, income vulnerability heatmap"
         ),
     },
     {
-        "title": "🏛️ Card 4 — Policy & Strategy",
+        "title": "🏛️ Card 4 — Policy & Strategy (5 sections)",
         "body": (
-            "Test fat taxes, subsidies, purchase caps, and labelling in Policy Analysis. "
-            "Run automated stress tests, simulate multi-store networks with panic contagion, "
-            "and explore the Finnish regional food-security map."
+            "• Policy Analysis — fat tax, domestic/organic subsidy, purchase-cap nudge, "
+            "nutritional labelling; auto-generates a branded PDF policy brief\n"
+            "• Stakeholder View — KPI dashboards and policy narrative for decision-makers\n"
+            "• Stress Test — automated 6-scenario battery (supply collapse, price spike, "
+            "panic wave, import crisis, demand surge, cold-chain failure)\n"
+            "• Multi-Store Network — simulate up to 8 Finnish stores in lockstep with "
+            "panic contagion and emergency redistribution; results link directly to the map\n"
+            "• Regional Map — 33 Finnish store locations; after a multi-store run the map "
+            "shows a risk-level overlay (🔴 Critical → 🟢 Low) for each simulated store"
         ),
     },
     {
         "title": "🌿 SecureFood Scenario Simulator",
         "body": (
-            "Dedicated tool for the Horizon Europe SecureFood project. "
-            "Simulate climate disruption in Finnish dairy supply chains from the perspective "
-            "of a Supply Chain Actor or Policy Maker."
+            "Dedicated tool for the Horizon Europe SecureFood project (grant No. 101136583). "
+            "Choose Supply Chain Actor or Policy Maker perspective, configure a climate "
+            "disruption scenario for Finnish dairy, and receive a structured 9-chart "
+            "analysis with downloadable PDF scenario walkthrough. "
+            "Access it via the 🌿 Scenario Simulator button at the top of the page."
         ),
     },
     {
-        "title": "✅ You're all set!",
+        "title": "📤 Card 5 — Export  ·  ✅ You're all set!",
         "body": (
-            "Use Card 5 — Export to download all results as CSV bundles or generate a branded "
-            "PDF report. Click the '🎓 Tour' button in the sidebar to replay this tour any time."
+            "Card 5 — Export gives you:\n"
+            "• Individual CSV downloads for every simulation dataset "
+            "(daily aggregates, per-product stock, SCM log, food waste, policy runs)\n"
+            "• Full bundle (all sheets in one CSV)\n"
+            "• 📄 Generate PDF Report — a 7-section branded PDF covering parameters, "
+            "revenue charts, supply chain summary, policy KPIs, stress-test ranking, "
+            "saved scenario comparison, and methodology note.\n\n"
+            "Click '🎓 Tour' in the sidebar any time to replay this tour."
         ),
     },
 ]
@@ -1942,6 +1971,7 @@ def _render_sf_sc_results(data: dict):
         xaxis_title="Simulation Day", yaxis_title="Daily Revenue (€)",
         title="Constant-Price Revenue vs Nominal Revenue — Inflation-Volume Decomposition",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig1, use_container_width=True)
     nom_dir = "rose" if nom_gain > 0 else "fell"
@@ -1974,6 +2004,7 @@ def _render_sf_sc_results(data: dict):
         yaxis2=dict(title="Cumulative (€)", overlaying="y", side="right"),
         title="Revenue Lost to Stockouts — Daily Events and Cumulative Accumulation",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig2, use_container_width=True)
     _sf_analysis_box(
@@ -2011,6 +2042,7 @@ def _render_sf_sc_results(data: dict):
             xaxis_title="Simulation Day", yaxis_title="Total Units on Shelf",
             title="Shelf Stock by Category — Baseline (dashed) vs Crisis (solid)",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            margin=dict(t=110, b=40, l=60, r=30),
         )
         st.plotly_chart(fig3, use_container_width=True)
         worst_cat, worst_drop = "—", 0.0
@@ -2054,6 +2086,7 @@ def _render_sf_sc_results(data: dict):
                     side="right", range=[0, 1.05]),
         title="Consumer Panic Level and Stockpile Pressure — Behavioural Demand Amplification",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig4, use_container_width=True)
     if panic_threshold_day_val is not None:
@@ -2179,6 +2212,7 @@ def _render_sf_pm_results(data: dict):
         yaxis=dict(range=[0, 105]),
         title="Consumer Basket Fulfilment Rate by Income Group — Crisis Scenario",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig1, use_container_width=True)
     policy_hint = ("A purchase cap is active — check Chart 5 for its equity effect."
@@ -2214,6 +2248,7 @@ def _render_sf_pm_results(data: dict):
         xaxis_title="Simulation Day", yaxis_title="Severely Food-Insecure (%)",
         title="FIES Severe Food Insecurity by Income Bracket — Crisis vs Baseline (dotted)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig2, use_container_width=True)
     _sf_analysis_box(
@@ -2250,6 +2285,7 @@ def _render_sf_pm_results(data: dict):
                     side="right", range=[0, 1]),
         title="Budget Exhaustion by Income Group and Access Inequality (Gini Index)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig3, use_container_width=True)
     gini_action = "action required" if mean_gini_c > 0.3 else "within acceptable range"
@@ -2285,6 +2321,7 @@ def _render_sf_pm_results(data: dict):
         xaxis_title="Simulation Day", yaxis_title="Units Sold",
         title="Domestic vs Import Sales Volume — Food Sovereignty & Supply Chain Resilience",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig4, use_container_width=True)
     dom_dir = "increased" if dom_change >= 0 else "decreased"
@@ -5103,7 +5140,7 @@ def _plot_ci_band(df: pd.DataFrame, title: str, color: str = "#44A1A0"):
         xaxis_title="Day",
         yaxis_title="Revenue (€)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        margin=dict(l=50, r=20, t=60, b=40),
+        margin=dict(l=50, r=20, t=90, b=40),
     )
     st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
 
@@ -5123,7 +5160,7 @@ def _plot_ci_dual(df_base: pd.DataFrame, df_cri: pd.DataFrame, label_base: str):
         yaxis_title="Revenue (€)",
         template="plotly_white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        margin=dict(l=50, r=20, t=60, b=40),
+        margin=dict(l=50, r=20, t=130, b=40),
     )
     st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
 
@@ -8107,6 +8144,7 @@ def render_agent_replay_tab():
         xaxis=dict(range=[-0.05, 1.05]),
         yaxis=dict(range=[-0.05, 1.05]),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(t=90, b=40, l=50, r=20),
     )
     # Danger zone annotation
     fig_scatter.add_shape(
@@ -8388,7 +8426,7 @@ def render_regional_map_tab():
     )
     fig_map.update_layout(
         legend=dict(orientation="h", yanchor="bottom", y=1.01),
-        margin=dict(l=0, r=0, t=40, b=0),
+        margin=dict(l=0, r=0, t=70, b=0),
     )
     st.plotly_chart(fig_map, use_container_width=True, config=_PLOTLY_CFG)
 
@@ -8556,7 +8594,7 @@ def render_regional_map_tab():
                 )
                 fig_overlay.update_layout(
                     legend=dict(orientation="h", yanchor="bottom", y=1.01),
-                    margin=dict(l=0, r=0, t=40, b=0),
+                    margin=dict(l=0, r=0, t=70, b=0),
                 )
                 st.plotly_chart(fig_overlay, use_container_width=True, config=_PLOTLY_CFG)
 
@@ -8965,7 +9003,9 @@ def render_multistore_tab(params: dict):
         title="Daily Revenue by Store",
         xaxis_title="Day", yaxis_title="Revenue (€)",
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=9)),
+        legend=dict(orientation="v", x=1.01, y=1, xanchor="left", yanchor="top",
+                    font=dict(size=9)),
+        margin=dict(t=60, b=40, l=50, r=160),
         height=420,
     )
     st.plotly_chart(fig_ts, use_container_width=True, config=_PLOTLY_CFG)
