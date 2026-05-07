@@ -6768,287 +6768,973 @@ def render_behaviour_tab(params):
 
 def _make_branded_pdf_report(params: dict | None = None) -> bytes:
     """
-    Generate a comprehensive branded GROCERYsim / SecureFood PDF report
-    covering all available simulation results stored in st.session_state.
-
-    Sections included (skipped when data is absent):
-      0. Cover page
-      1. Simulation parameters
-      2. Interactive Demo — key metrics + revenue/waste/lost-sales charts
-      3. Supply chain log summary
-      4. Policy analysis KPIs + revenue comparison chart
-      5. Stress-test risk ranking (if available)
-      6. Saved scenario comparison table (if available)
-      7. Methodology note
+    Generate a comprehensive, branded GROCERYsim PDF report from session results.
+    Uses the same _SFReport visual style (dark cover, amber accents, Arial fonts).
+    Sections are data-driven and skipped gracefully when data is absent.
     """
     from datetime import datetime as _dt
+    from fpdf.enums import XPos, YPos
 
-    pdf = _PDF()
-    now_str = _dt.now().strftime("%d %b %Y, %H:%M")
+    # ── Local subclass: override header text only ────────────────────────────
+    class _GROCERYReport(_SFReport):
+        def header(self):
+            if self.page_no() == 1:
+                return
+            self.set_fill_color(*_SF_DARK)
+            self.rect(0, 0, 210, 7, "F")
+            self.set_fill_color(*_SF_AMBER)
+            self.rect(0, 0, 3, 7, "F")
+            self.set_font("Ar", "B", 6.5)
+            self.set_text_color(*_SF_WHITE)
+            self.set_xy(6, 0.8)
+            self.cell(130, 5.5, "GROCERYsim ABM v2.0 -- Strategic Resilience & Food-System Report")
+            self.set_font("Ar", "I", 6.5)
+            self.set_text_color(*_SF_AMBER)
+            self.set_xy(136, 0.8)
+            self.cell(59, 5.5, self._sec, align="R")
+            self.set_y(10)
+            self.set_text_color(*_SF_BODY)
 
-    # ── 0. Cover ────────────────────────────────────────────────────────────
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 22)
-    pdf.ln(20)
-    pdf.cell(0, 14, "GROCERYsim ABM v2.0", 0, 1, "C")
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Strategic Resilience & Food-System Report", 0, 1, "C")
-    pdf.ln(6)
-    pdf.set_font("Arial", "", 11)
-    pdf.cell(0, 8, _to_latin1(f"Generated: {now_str}"), 0, 1, "C")
-    pdf.cell(0, 8, "SecureFood / Horizon Europe -- grant agreement No. 101136583", 0, 1, "C")
-    pdf.ln(10)
-    pdf.set_font("Arial", "I", 9)
-    pdf.set_text_color(80, 80, 80)
-    pdf.multi_cell(
-        0, 5,
-        _to_latin1(
-            "This report is automatically generated from a single simulation session. "
-            "Results are stochastic; re-running with the same parameters may yield "
-            "slightly different outcomes due to ABM randomness."
-        ),
-    )
-    pdf.set_text_color(0, 0, 0)
+    # ── Shared matplotlib style ───────────────────────────────────────────────
+    plt.rcParams.update({
+        "font.family": "sans-serif", "axes.spines.top": False,
+        "axes.spines.right": False, "axes.grid": True,
+        "grid.alpha": 0.22, "grid.linestyle": "--",
+        "font.size": 9, "axes.titlesize": 10, "axes.titleweight": "bold",
+    })
+    _C = {
+        "b": "#2980b9", "r": "#c0392b", "g": "#27ae60", "o": "#e67e22",
+        "p": "#8e44ad", "t": "#44A1A0", "gr": "#95a5a6", "a": "#DBA159",
+        "lo": "#e74c3c", "mi": "#e67e22", "hi": "#27ae60",
+    }
+    _COLS4 = [_C["b"], _C["r"], _C["g"], _C["o"], _C["p"]]
 
-    # ── 1. Simulation parameters ─────────────────────────────────────────────
-    if params:
-        pdf.add_page()
-        pdf.section("1. Simulation Parameters")
-        _PARAM_LABELS = {
-            "n_agents":         "Number of consumer agents",
-            "n_days":           "Simulation horizon (days)",
-            "disruption_days":  "Supply disruption (days)",
-            "inflation_rate":   "Inflation rate",
-            "panic_prob":       "Panic-buying probability",
-            "hoard_mult":       "Hoarding demand multiplier",
-            "base_con_mult":    "Baseline consumption multiplier",
-            "fat_tax":          "Fat-tax surcharge (EUR/unit)",
-            "domestic_subsidy": "Domestic supply subsidy (EUR/unit)",
-            "organic_subsidy":  "Organic supply subsidy (EUR/unit)",
-            "nudge_enabled":    "Purchase-limit nudge active",
-            "nudge_cap":        "Nudge cap (units/visit)",
-        }
-        pdf.set_font("Arial", "B", 9)
-        pdf.cell(100, 6, "Parameter", 1)
-        pdf.cell(75,  6, "Value",     1)
-        pdf.ln()
-        pdf.set_font("Arial", "", 9)
-        for key, label in _PARAM_LABELS.items():
-            if key in params:
-                val = params[key]
-                if isinstance(val, float):
-                    val_str = f"{val:.4g}"
-                else:
-                    val_str = str(val)
-                pdf.cell(100, 6, _to_latin1(label), 1)
-                pdf.cell(75,  6, _to_latin1(val_str), 1)
-                pdf.ln()
+    # helper: styled horizontal table -----------------------------------------
+    def _tbl_hdr(p, cols):
+        """cols: list of (label, width) tuples"""
+        p.set_font("Ar", "B", 8.5)
+        p.set_fill_color(*_SF_AMBER)
+        p.set_text_color(*_SF_WHITE)
+        for h, w in cols:
+            p.cell(w, 6, _to_latin1(str(h)), border=1, fill=True)
+        p.ln()
 
-    # ── 2. Interactive Demo results ──────────────────────────────────────────
-    df_sim = st.session_state.get("sim_results")
-    if df_sim is not None and not df_sim.empty:
-        pdf.add_page()
-        pdf.section("2. Interactive Demo -- Key Metrics")
+    def _tbl_row(p, vals_widths, idx):
+        bg = _SF_CREAM2 if idx % 2 == 0 else _SF_WHITE
+        p.set_fill_color(*bg)
+        p.set_font("Ar", "", 8.0)
+        p.set_text_color(*_SF_DARK)
+        for val, w in vals_widths:
+            p.cell(w, 5.5, _to_latin1(str(val)), border=1, fill=True)
+        p.ln()
 
-        scenarios = df_sim["Scenario"].unique() if "Scenario" in df_sim.columns else []
-        for sc in scenarios:
-            sub = df_sim[df_sim["Scenario"] == sc] if len(scenarios) > 0 else df_sim
-            rev   = sub["Revenue"].mean()   if "Revenue"   in sub.columns else 0
-            waste = sub["Waste"].mean()     if "Waste"     in sub.columns else 0
-            lost  = sub["LostSales"].mean() if "LostSales" in sub.columns else 0
-            pdf.set_font("Arial", "B", 9)
-            pdf.cell(0, 6, _to_latin1(f"Scenario: {sc}"), 0, 1)
-            pdf.set_font("Arial", "", 9)
-            pdf.cell(0, 5,
-                     _to_latin1(
-                         f"  Avg daily revenue: EUR {rev:,.2f}   |  "
-                         f"Avg daily waste: {waste:.1f} units   |  "
-                         f"Avg daily lost sales: {lost:.1f} units"
-                     ), 0, 1)
-            pdf.ln(1)
+    # ── Init PDF ──────────────────────────────────────────────────────────────
+    pdf = _GROCERYReport()
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf._lf()
+    now_str = _dt.now().strftime("%d %B %Y, %H:%M")
 
-        # Revenue time-series
-        pdf.add_page()
-        pdf.section("2a. Revenue Over Time")
-        fig, ax = plt.subplots(figsize=(9, 3.8))
-        _COLORS = ["steelblue", "firebrick", "seagreen", "darkorange", "purple"]
-        for i, sc in enumerate(scenarios):
-            sub = df_sim[df_sim["Scenario"] == sc]
-            ax.plot(sub.groupby("Day")["Revenue"].mean(),
-                    color=_COLORS[i % len(_COLORS)], label=sc)
-        ax.set_xlabel("Day"); ax.set_ylabel("Revenue (EUR)")
-        ax.set_title("Daily Mean Revenue by Scenario")
-        ax.legend(fontsize=8); ax.grid(alpha=0.3)
-        plt.tight_layout()
-        pdf.add_mpl(fig); plt.close(fig)
-
-        # Waste & Lost Sales
-        pdf.section("2b. Food Waste & Lost Sales")
-        fig2, axes2 = plt.subplots(1, 2, figsize=(9, 3.5))
-        for i, sc in enumerate(scenarios):
-            sub = df_sim[df_sim["Scenario"] == sc]
-            col_c = _COLORS[i % len(_COLORS)]
-            if "Waste" in sub.columns:
-                axes2[0].plot(sub.groupby("Day")["Waste"].mean(), color=col_c, label=sc)
-            if "LostSales" in sub.columns:
-                axes2[1].plot(sub.groupby("Day")["LostSales"].mean(), color=col_c, label=sc)
-        axes2[0].set_title("Daily Food Waste (units)"); axes2[0].set_xlabel("Day"); axes2[0].legend(fontsize=7)
-        axes2[1].set_title("Daily Lost Sales (units)"); axes2[1].set_xlabel("Day"); axes2[1].legend(fontsize=7)
-        for ax_ in axes2:
-            ax_.grid(alpha=0.3)
-        plt.tight_layout()
-        pdf.add_mpl(fig2); plt.close(fig2)
-
-    # ── 3. Supply chain log ───────────────────────────────────────────────────
-    df_scm = st.session_state.get("sim_scm_log")
-    if df_scm is not None and not df_scm.empty:
-        pdf.add_page()
-        pdf.section("3. Supply Chain Log -- Summary")
-        if "Type" in df_scm.columns:
-            total_orders     = len(df_scm[df_scm["Type"] == "Order"])
-            total_deliveries = len(df_scm[df_scm["Type"] == "Delivery"])
-        else:
-            total_orders = total_deliveries = "n/a"
-        pdf.body(
-            f"Total order events: {total_orders}   |   "
-            f"Total delivery events: {total_deliveries}   |   "
-            f"Log rows: {len(df_scm):,}"
-        )
-        # Show first 10 rows as sample
-        pdf.set_font("Arial", "B", 8)
-        cols_to_show = list(df_scm.columns[:6])
-        col_w = 175 // max(len(cols_to_show), 1)
-        for c in cols_to_show:
-            pdf.cell(col_w, 5, _to_latin1(str(c)[:14]), 1)
-        pdf.ln()
-        pdf.set_font("Arial", "", 7)
-        for _, row in df_scm.head(10).iterrows():
-            for c in cols_to_show:
-                pdf.cell(col_w, 5, _to_latin1(str(row[c])[:14]), 1)
-            pdf.ln()
-
-    # ── 4. Policy analysis ────────────────────────────────────────────────────
+    # ── Collect session data ──────────────────────────────────────────────────
+    df_sim      = st.session_state.get("sim_results")
     df_pol_base = st.session_state.get("policy_baseline")
     df_pol_scen = st.session_state.get("policy_scenario")
     pol_label   = st.session_state.get("policy_label", "Policy Scenario")
-    if (df_pol_base is not None and df_pol_scen is not None
-            and not df_pol_base.empty and not df_pol_scen.empty):
-        pdf.add_page()
-        pdf.section("4. Policy Analysis -- KPI Comparison")
-        _kpi_defs = [
-            ("Revenue/day (EUR)",    "Revenue",              False),
-            ("Waste/day (units)",    "Waste",                False),
-            ("CO2 total/day (kg)",   "CO2Total",             False),
-            ("Budget Exhaustion %",  "BudgetExhaustionRate", True),
-            ("Food Stressed %",      "FoodStressedPct",      True),
-            ("Fulfillment %",        "FulfillmentRate",      True),
+    stress_res  = st.session_state.get("stress_results")
+    saved       = st.session_state.get("saved_scenarios", [])
+    df_scm      = st.session_state.get("sim_scm_log")
+    df_waste    = st.session_state.get("sim_waste")
+
+    has_sim    = df_sim is not None and not df_sim.empty
+    has_pol    = (df_pol_base is not None and df_pol_scen is not None
+                  and not df_pol_base.empty and not df_pol_scen.empty)
+    has_stress = (stress_res is not None and hasattr(stress_res, "iterrows")
+                  and not stress_res.empty)
+    has_saved  = len(saved) >= 2
+    has_scm    = df_scm is not None and not df_scm.empty
+
+    modules_run = (
+        (["Interactive Simulation Demo"] if has_sim else [])
+        + ([f"Policy Analysis: {pol_label}"] if has_pol else [])
+        + (["Automated Stress-Test"] if has_stress else [])
+        + ([f"Scenario Comparison ({len(saved)} scenarios)"] if has_saved else [])
+        + (["Supply Chain Event Log"] if has_scm else [])
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # COVER PAGE
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.add_page()
+    pdf.set_fill_color(*_SF_DARK)
+    pdf.rect(0, 0, 210, 297, "F")
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(0, 0, 210, 5, "F")
+    pdf.rect(0, 292, 210, 5, "F")
+
+    # Logo row: GROCERYsim left, SecureFood right
+    try:
+        gs_p = _sf_logo_on("GROCERYsim.png", 360, _SF_DARK)
+        sf_p = _sf_logo_on("SecureFood.png",  260, _SF_DARK)
+        from PIL import Image as _PILImg
+        gs_img = _PILImg.open(gs_p);  sf_img = _PILImg.open(sf_p)
+        gs_w = 80;  gs_h_mm = 80 * gs_img.height / gs_img.width
+        sf_w = 58;  sf_h_mm = 58 * sf_img.height / sf_img.width
+        row_h = max(gs_h_mm, sf_h_mm)
+        pdf.image(gs_p, x=15,              y=16, w=gs_w)
+        pdf.image(sf_p, x=210 - 15 - sf_w, y=16, w=sf_w)
+        logo_bottom = 16 + row_h + 4
+    except Exception:
+        logo_bottom = 30
+
+    # Amber rule
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(15, logo_bottom, 180, 0.7, "F")
+
+    # Title block
+    pdf.set_y(logo_bottom + 5)
+    pdf.set_font("Ar", "B", 30)
+    pdf.set_text_color(*_SF_WHITE)
+    pdf.cell(0, 14, "GROCERYsim ABM v2.0",
+             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Ar", "", 14)
+    pdf.set_text_color(*_SF_AMBER)
+    pdf.cell(0, 9, "Strategic Resilience & Food-System Report",
+             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(4)
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(15, pdf.get_y(), 180, 0.5, "F")
+    pdf.ln(7)
+
+    # Metadata
+    pdf.set_font("Ar", "", 10)
+    pdf.set_text_color(200, 220, 215)
+    pdf.cell(0, 7, f"Generated: {now_str}",
+             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 7, "Horizon Europe SecureFood Consortium -- Grant No. 101136583",
+             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(6)
+
+    # Modules run
+    pdf.set_font("Ar", "B", 10)
+    pdf.set_text_color(*_SF_AMBER)
+    pdf.cell(0, 7, "Session Analysis Coverage:",
+             align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("Ar", "", 9.5)
+    pdf.set_text_color(190, 210, 208)
+    if modules_run:
+        for m in modules_run:
+            pdf.cell(0, 6, f"  ▶  {m}",
+                     align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    else:
+        pdf.cell(0, 6, "  No simulation results recorded in this session.",
+                 align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(8)
+
+    # Disclaimer
+    pdf.set_font("Ar", "I", 8)
+    pdf.set_text_color(130, 155, 152)
+    pdf.set_x(30)
+    pdf.multi_cell(
+        150, 4.8,
+        "This report is auto-generated from a single simulation session. "
+        "ABM results are stochastic; re-running with identical parameters may yield "
+        "slightly different values. Cite as: Duric, I. (2026). GROCERYsim ABM v2.0. "
+        "IAMO XR Lab, SecureFood / Horizon Europe.",
+        align="C",
+    )
+
+    # Partner logos at bottom
+    try:
+        _logo_specs = [("IAMO.png", 36), ("EU.png", 28), ("Logo_lab.png", 30)]
+        _total_w = sum(w for _, w in _logo_specs) + 10 * (len(_logo_specs) - 1)
+        _x_cur   = (210 - _total_w) / 2
+        for _nm, _pw in _logo_specs:
+            _lp = _sf_logo_on(_nm, int(_pw * 3.78), _SF_DARK)
+            pdf.image(_lp, x=_x_cur, y=254, w=_pw)
+            _x_cur += _pw + 10
+    except Exception:
+        pass
+
+    pdf.set_text_color(0, 0, 0)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 1: SIMULATION PARAMETERS
+    # ─────────────────────────────────────────────────────────────────────────
+    if params:
+        pdf.chapter(1, "Simulation Parameters", "Parameters")
+        pdf.body(
+            "The following parameters were active for the last simulation run in this session. "
+            "They define the supply chain configuration, consumer population, crisis severity, "
+            "and any policy interventions applied."
+        )
+        _PARAM_MAP = [
+            ("base_con",      "Consumer agents",               "agents"),
+            ("days",          "Simulation duration",           "days"),
+            ("month",         "Start month",                   "1=Jan"),
+            ("reorder",       "Reorder point",                 "units"),
+            ("target",        "Target stock level",            "units"),
+            ("lead",          "Lead time",                     "days"),
+            ("cri_start",     "Crisis onset",                  "day"),
+            ("cri_duration",  "Crisis duration",               "days"),
+            ("inf",           "Price inflation (crisis)",      "%"),
+            ("dis",           "Supply disruption",             "days"),
+            ("panic",         "Panic-buying sensitivity",      "0-1"),
+            ("hoard",         "Hoarding demand multiplier",    "x"),
+            ("purchase_limit","Purchase limit (nudge)",        "units/visit"),
+            ("media_intensity","Media intensity",              "0-1"),
         ]
-        pdf.set_font("Arial", "B", 9)
-        pdf.cell(70, 6, "Metric",   1)
-        pdf.cell(35, 6, "Baseline", 1)
-        pdf.cell(35, 6, _to_latin1(str(pol_label)[:18]), 1)
-        pdf.cell(35, 6, "Delta (%)", 1)
-        pdf.ln()
-        pdf.set_font("Arial", "", 9)
-        for lbl, col, is_pct in _kpi_defs:
+        rows = []
+        for key, lbl, unit in _PARAM_MAP:
+            if key in params and params[key] is not None:
+                v = params[key]
+                vs = f"{v:.4g}" if isinstance(v, float) else str(v)
+                rows.append((lbl, f"{vs} {unit}".strip()))
+        pdf.kv(rows)
+
+        pol_cfg = params.get("policy_cfg", {})
+        if pol_cfg:
+            pdf.sub("Active Policy Interventions")
+            pol_rows = []
+            if pol_cfg.get("fat_tax_active"):
+                pol_rows.append((
+                    "Fat tax",
+                    f"{pol_cfg.get('fat_tax_rate', 0)*100:.1f}% on products "
+                    f">{pol_cfg.get('fat_tax_threshold', 3.5):.1f} g fat/100 ml"
+                ))
+            if pol_cfg.get("subsidy_active"):
+                pol_rows.append((
+                    "Supply subsidy",
+                    f"{pol_cfg.get('subsidy_rate', 0)*100:.1f}% on "
+                    f"{pol_cfg.get('subsidy_target', 'domestic')} products"
+                ))
+            if pol_cfg.get("labelling_active"):
+                pol_rows.append((
+                    "Eco-labelling",
+                    f"Active from day {pol_cfg.get('labelling_day', 1)} -- "
+                    f"health boost {pol_cfg.get('labelling_health_boost', 0)*100:.1f}%, "
+                    f"organic boost {pol_cfg.get('labelling_organic_boost', 0)*100:.1f}%"
+                ))
+            if pol_cfg.get("domestic_shock_active"):
+                pol_rows.append((
+                    "Domestic supply shock",
+                    f"Day {pol_cfg.get('domestic_shock_day', 30)}, "
+                    f"{pol_cfg.get('domestic_shock_duration', 30)} days, "
+                    f"severity {pol_cfg.get('domestic_shock_severity', 0.5):.0%}"
+                ))
+            if pol_rows:
+                pdf.kv(pol_rows)
+            else:
+                pdf.body("No policy interventions were active in this configuration.")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 2: INTERACTIVE DEMO ANALYSIS
+    # ─────────────────────────────────────────────────────────────────────────
+    if has_sim:
+        pdf.chapter(2, "Interactive Demo Analysis", "Demo Results")
+        pdf.body(
+            "The Interactive Demo module runs parallel Baseline and Crisis simulations "
+            "using the Mesa ABM framework. Consumer agents are calibrated from Discrete "
+            "Choice Experiment (DCE) preference data collected under the SecureFood project. "
+            "Results below reflect the user-configured scenario as run in this session."
+        )
+
+        scenarios = (df_sim["Scenario"].unique().tolist()
+                     if "Scenario" in df_sim.columns else [])
+        sc_b = (df_sim[df_sim["Scenario"] == "Baseline"].reset_index(drop=True)
+                if "Baseline" in scenarios else df_sim.copy())
+        sc_c = (df_sim[df_sim["Scenario"] == "Crisis"].reset_index(drop=True)
+                if "Crisis" in scenarios else pd.DataFrame())
+
+        # ── 2.1 Revenue ─────────────────────────────────────────────────────
+        pdf.sub("2.1  Revenue Impact")
+        rev_b  = sc_b["Revenue"].mean()   if not sc_b.empty and "Revenue" in sc_b.columns else 0
+        rev_c  = sc_c["Revenue"].mean()   if not sc_c.empty and "Revenue" in sc_c.columns else 0
+        nom_c  = sc_c["NominalRevenue"].mean() if not sc_c.empty and "NominalRevenue" in sc_c.columns else 0
+        rev_drop_pct = (rev_b - rev_c) / max(rev_b, 1) * 100
+        price_b = sc_b["AvgPrice"].mean() if not sc_b.empty and "AvgPrice" in sc_b.columns else 0
+        price_c = sc_c["AvgPrice"].mean() if not sc_c.empty and "AvgPrice" in sc_c.columns else 0
+        price_delta = (price_c / max(price_b, 0.01) - 1) * 100
+
+        pdf.metric_row([
+            ("Baseline Revenue/Day",  f"EUR {rev_b:,.0f}",
+             "constant-price base",   True),
+            ("Crisis Revenue/Day",    f"EUR {rev_c:,.0f}",
+             f"{rev_drop_pct:.1f}% below baseline", rev_drop_pct < 10),
+            ("Crisis Nominal/Day",    f"EUR {nom_c:,.0f}",
+             f"avg price +{price_delta:.1f}%",       False),
+        ])
+
+        sev = ("severe" if rev_drop_pct > 25
+               else "moderate" if rev_drop_pct > 10
+               else "mild")
+        pdf.body(
+            f"The crisis scenario produced a {sev} revenue contraction of "
+            f"{rev_drop_pct:.1f}% relative to the baseline (constant-price basis). "
+            f"Average unit price rose by {price_delta:.1f}% under inflationary pressure, "
+            f"which inflates nominal revenue (EUR {nom_c:,.0f}/day) above baseline -- "
+            f"an accounting artefact rather than real economic gain, since the volume of "
+            f"units sold simultaneously fell due to stockouts and demand suppression. "
+            f"Supply chain actors should focus on the constant-price revenue gap as the "
+            f"true indicator of economic loss."
+        )
+
+        # Revenue chart
+        fig, ax = plt.subplots(figsize=(7, 3.0))
+        for i, sc in enumerate(scenarios):
+            sub = df_sim[df_sim["Scenario"] == sc]
+            ax.plot(sub.groupby("Day")["Revenue"].mean(),
+                    color=_COLS4[i % len(_COLS4)], lw=2, label=sc)
+        if not sc_c.empty and "NominalRevenue" in sc_c.columns:
+            ax.plot(sc_c.groupby("Day")["NominalRevenue"].mean(),
+                    color=_C["o"], lw=1.4, ls="--", alpha=0.8, label="Crisis Nominal")
+        ax.set_xlabel("Simulation Day"); ax.set_ylabel("Daily Revenue (EUR)")
+        ax.set_title("Daily Revenue: Baseline vs Crisis (constant-price and nominal)")
+        ax.legend(fontsize=7.5, ncol=2)
+        fig.tight_layout()
+        pdf.chart(_sf_mpl_chart(fig),
+                  caption=(
+                      "Figure 2.1: Revenue trajectories. Constant-price curves reveal true volume "
+                      "dynamics; the nominal dashed line shows inflation-distorted cash flow."
+                  ))
+
+        # ── 2.2 Food Waste & Lost Sales ──────────────────────────────────────
+        pdf.sub("2.2  Food Waste & Supply Loss")
+        waste_b = sc_b["Waste"].mean()     if not sc_b.empty and "Waste"     in sc_b.columns else 0
+        waste_c = sc_c["Waste"].mean()     if not sc_c.empty and "Waste"     in sc_c.columns else 0
+        lost_c  = sc_c["LostSales"].mean() if not sc_c.empty and "LostSales" in sc_c.columns else 0
+        cum_lost = sc_c["LostSales"].sum() if not sc_c.empty and "LostSales" in sc_c.columns else 0
+        waste_chg = (waste_c - waste_b) / max(waste_b, 0.01) * 100
+
+        pdf.metric_row([
+            ("Baseline Waste/Day",   f"{waste_b:.1f} units",
+             "daily average",         True),
+            ("Crisis Waste/Day",     f"{waste_c:.1f} units",
+             f"{waste_chg:+.1f}% vs baseline",
+             waste_chg < 5),
+            ("Cumulative Lost Sales", f"{cum_lost:,.0f} units",
+             "unrecoverable demand",   False),
+        ])
+
+        waste_dir = "increased" if waste_chg > 0 else "decreased"
+        pdf.body(
+            f"Food waste {waste_dir} by {abs(waste_chg):.1f}% under crisis conditions. "
+            + (
+                "Paradoxically, severe panic-buying can reduce waste short-term as shelves "
+                "clear faster than products expire; however, post-crisis over-ordering "
+                "typically produces waste spikes from near-expiry stock. "
+                if waste_chg < -5 else
+                "Rising waste during a crisis indicates demand suppression -- consumers "
+                "reduce basket sizes, leaving more perishable inventory unsold. "
+                if waste_chg > 10 else
+                "Waste levels were broadly stable across conditions in this run. "
+            )
+            + f"Cumulative lost sales of {cum_lost:,.0f} units represent permanently "
+            f"forgone revenue -- demand that cannot be recovered once the stockout event "
+            f"passes and panic subsides."
+        )
+
+        # Waste + Lost Sales chart
+        fig2, axes2 = plt.subplots(1, 2, figsize=(7, 2.8))
+        for i, sc in enumerate(scenarios):
+            sub = df_sim[df_sim["Scenario"] == sc]
+            col = _COLS4[i % len(_COLS4)]
+            if "Waste"     in sub.columns: axes2[0].plot(sub.groupby("Day")["Waste"].mean(),     color=col, lw=2, label=sc)
+            if "LostSales" in sub.columns: axes2[1].plot(sub.groupby("Day")["LostSales"].mean(), color=col, lw=2, label=sc)
+        axes2[0].set_title("Food Waste (units/day)");     axes2[0].set_xlabel("Day"); axes2[0].legend(fontsize=7)
+        axes2[1].set_title("Lost Sales (units/day)");     axes2[1].set_xlabel("Day"); axes2[1].legend(fontsize=7)
+        for ax_ in axes2: ax_.spines[["top", "right"]].set_visible(False)
+        fig2.tight_layout()
+        pdf.chart(_sf_mpl_chart(fig2),
+                  caption="Figure 2.2: Daily food waste and lost-sales events across scenarios.")
+
+        # ── 2.3 Consumer Panic & Behavioural Dynamics ────────────────────────
+        if "PanicLevel" in df_sim.columns and not sc_c.empty:
+            pdf.sub("2.3  Consumer Panic & Stockpile Dynamics")
+            peak_panic = float(sc_c["PanicLevel"].max()) if "PanicLevel" in sc_c.columns else 0
+            panic_day  = int(sc_c.loc[sc_c["PanicLevel"].idxmax(), "Day"]) if "PanicLevel" in sc_c.columns and "Day" in sc_c.columns else 0
+            sp_peak    = float(sc_c["StockpilePressure"].max()) if "StockpilePressure" in sc_c.columns else 0
+
+            pdf.metric_row([
+                ("Peak Panic Level",       f"{peak_panic:.3f}",
+                 f"day {panic_day}",        peak_panic < 0.3),
+                ("Avg Panic (Crisis)",      f"{sc_c['PanicLevel'].mean():.3f}",
+                 "sustained level",         sc_c["PanicLevel"].mean() < 0.2),
+                ("Peak Stockpile Pressure", f"{sp_peak:.3f}",
+                 "0=none / 1=max",          sp_peak < 0.4),
+            ])
+
+            fig3, ax3a = plt.subplots(figsize=(7, 2.6))
+            ax3a.plot(sc_c.groupby("Day")["PanicLevel"].mean(),
+                      color=_C["r"], lw=2, label="Panic level (crisis)")
+            if not sc_b.empty and "PanicLevel" in sc_b.columns:
+                ax3a.plot(sc_b.groupby("Day")["PanicLevel"].mean(),
+                          color=_C["gr"], lw=1.2, ls="--", label="Panic level (baseline)")
+            if "StockpilePressure" in sc_c.columns:
+                ax3b = ax3a.twinx()
+                ax3b.plot(sc_c.groupby("Day")["StockpilePressure"].mean(),
+                          color=_C["a"], lw=1.8, ls="-.", label="Stockpile pressure")
+                ax3b.set_ylabel("Stockpile Pressure (0-1)", fontsize=8)
+                ax3b.spines["right"].set_visible(True)
+                h1, l1 = ax3a.get_legend_handles_labels()
+                h2, l2 = ax3b.get_legend_handles_labels()
+                ax3a.legend(h1 + h2, l1 + l2, fontsize=7, ncol=2)
+            else:
+                ax3a.legend(fontsize=7)
+            ax3a.set_xlabel("Simulation Day"); ax3a.set_ylabel("Panic Level (0-1)", fontsize=8)
+            ax3a.set_title("Consumer Panic Level and Stockpile Pressure")
+            ax3a.spines[["top", "right"]].set_visible(False)
+            fig3.tight_layout()
+            pdf.chart(_sf_mpl_chart(fig3),
+                      caption=(
+                          "Figure 2.3: Panic index peaks early in the crisis window and typically "
+                          "declines within 2-3 weeks as supply normalises or consumers adapt."
+                      ))
+
+            pdf.body(
+                f"Consumer panic peaked at {peak_panic:.3f} on day {panic_day}, "
+                + ("exceeding the critical threshold that triggers hoarding multipliers across "
+                   "all archetypes -- this amplifies demand spikes far beyond genuine need. "
+                   if peak_panic > 0.4 else
+                   "remaining below the critical hoarding threshold (0.4) -- demand spikes were "
+                   "bounded and the supply chain recovered without a full hoarding cascade. ")
+                + f"Sustained mean panic of {sc_c['PanicLevel'].mean():.3f} maintained "
+                f"elevated purchase quantities throughout the crisis window, compressing "
+                f"shelf availability for later-arriving consumer cohorts (primarily low-income "
+                f"archetypes who shop later in the day or have fewer substitution options)."
+            )
+
+        # ── 2.4 Income-Stratified Consumer Welfare ───────────────────────────
+        w_cols = ["Fulfillment_Low", "Fulfillment_Mid", "Fulfillment_High"]
+        if all(c in df_sim.columns for c in w_cols) and not sc_c.empty:
+            pdf.sub("2.4  Income-Stratified Consumer Welfare")
+            ful_lo = sc_c["Fulfillment_Low"].mean()  * 100
+            ful_mi = sc_c["Fulfillment_Mid"].mean()  * 100
+            ful_hi = sc_c["Fulfillment_High"].mean() * 100
+            bud_lo = sc_c["BudgetExh_Low"].mean()  * 100 if "BudgetExh_Low"  in sc_c.columns else None
+            bud_hi = sc_c["BudgetExh_High"].mean() * 100 if "BudgetExh_High" in sc_c.columns else None
+
+            pdf.metric_row([
+                ("Fulfilment: Low Income",  f"{ful_lo:.1f}%",
+                 "of basket met on average", ful_lo >= 80),
+                ("Fulfilment: Mid Income",  f"{ful_mi:.1f}%",
+                 "of basket met on average", ful_mi >= 80),
+                ("Fulfilment: High Income", f"{ful_hi:.1f}%",
+                 "of basket met on average", ful_hi >= 80),
+            ])
+
+            fig4, ax4 = plt.subplots(figsize=(7, 3.0))
+            for col_k, col_c2, lbl in [
+                ("Fulfillment_Low",  _C["lo"], "Low income"),
+                ("Fulfillment_Mid",  _C["mi"], "Mid income"),
+                ("Fulfillment_High", _C["hi"], "High income"),
+            ]:
+                ax4.plot(sc_c.groupby("Day")[col_k].mean() * 100,
+                         color=col_c2, lw=2, label=f"{lbl} (crisis)")
+            if not sc_b.empty and "FulfillmentRate" in sc_b.columns:
+                ax4.plot(sc_b.groupby("Day")["FulfillmentRate"].mean() * 100,
+                         color=_C["gr"], lw=1.2, ls="--", label="All income (baseline)")
+            ax4.axhline(80, color=_C["r"], ls=":", lw=1, label="80% welfare threshold")
+            ax4.set_ylim(0, 105)
+            ax4.set_xlabel("Simulation Day"); ax4.set_ylabel("Basket Fulfilment Rate (%)")
+            ax4.set_title("Consumer Basket Fulfilment by Income Group")
+            ax4.legend(fontsize=7.5, ncol=2)
+            ax4.spines[["top", "right"]].set_visible(False)
+            fig4.tight_layout()
+            pdf.chart(_sf_mpl_chart(fig4),
+                      caption=(
+                          "Figure 2.4: Crisis impact concentrates in low-income archetypes "
+                          "(L-SENS cluster) whose constrained budgets are eroded first by price inflation."
+                      ))
+
+            equity_gap = ful_hi - ful_lo
+            pdf.body(
+                f"A {equity_gap:.1f} percentage-point fulfilment equity gap emerged between "
+                f"high-income ({ful_hi:.1f}%) and low-income ({ful_lo:.1f}%) archetypes. "
+                + (f"Low-income agents with budget exhaustion of {bud_lo:.1f}% could not "
+                   f"sustain pre-crisis consumption patterns; high-income exhaustion was "
+                   f"just {bud_hi:.1f}%, confirming that price inflation acts as a "
+                   f"regressive shock. "
+                   if bud_lo is not None and bud_hi is not None else "")
+                + "Policy interventions -- particularly targeted subsidies and purchase-limit "
+                "nudges -- materially reduce this equity gap by redistributing shelf access "
+                "more evenly across the population (see Section 3 for policy results)."
+            )
+
+        # ── 2.5 FIES Food Insecurity ─────────────────────────────────────────
+        if "FIESSevere_Low" in df_sim.columns and not sc_c.empty:
+            pdf.sub("2.5  FIES Food Security Indicators")
+            fies_lo_peak = sc_c["FIESSevere_Low"].max()  * 100
+            fies_mi_peak = sc_c["FIESSevere_Mid"].max()  * 100 if "FIESSevere_Mid"  in sc_c.columns else 0
+            fies_hi_peak = sc_c["FIESSevere_High"].max() * 100 if "FIESSevere_High" in sc_c.columns else 0
+            fies_b_base  = sc_b["FIESSevere_Low"].mean() * 100 if not sc_b.empty and "FIESSevere_Low" in sc_b.columns else 0
+
+            pdf.metric_row([
+                ("FIES Severe: Low Income",
+                 f"{fies_lo_peak:.1f}%", "peak during crisis", fies_lo_peak < 10),
+                ("FIES Severe: Mid Income",
+                 f"{fies_mi_peak:.1f}%", "peak during crisis", fies_mi_peak < 5),
+                ("Baseline FIES (Low)",
+                 f"{fies_b_base:.1f}%",  "pre-crisis level",   True),
+            ])
+
+            fies_lift = fies_lo_peak - fies_b_base
+            pdf.body(
+                f"The crisis elevated severe food insecurity (FIES-severe) among low-income "
+                f"agents by {fies_lift:.1f} percentage points -- from a baseline of "
+                f"{fies_b_base:.1f}% to a crisis peak of {fies_lo_peak:.1f}%. "
+                f"Mid- and high-income archetypes reached peaks of {fies_mi_peak:.1f}% and "
+                f"{fies_hi_peak:.1f}% respectively, confirming that food insecurity risk "
+                f"is highly concentrated in lower socioeconomic groups. The FIES score is "
+                f"computed per-agent per-day using a FAO-aligned methodology based on "
+                f"basket-shortfall frequency and severity."
+            )
+
+        # ── 2.6 Environmental Footprint ──────────────────────────────────────
+        if "CO2Total" in df_sim.columns:
+            pdf.sub("2.6  Environmental & CO2 Footprint")
+            co2_b  = sc_b["CO2Total"].mean()    if not sc_b.empty else 0
+            co2_c  = sc_c["CO2Total"].mean()    if not sc_c.empty else 0
+            imp_b  = sc_b["ImportDepPct"].mean() * 100 if not sc_b.empty and "ImportDepPct" in sc_b.columns else None
+            imp_c  = sc_c["ImportDepPct"].mean() * 100 if not sc_c.empty and "ImportDepPct" in sc_c.columns else None
+            co2_chg = (co2_c / max(co2_b, 0.01) - 1) * 100
+
+            kv_rows = [
+                ("CO2 emissions/day (baseline)", f"{co2_b:.2f} kg CO2-eq"),
+                ("CO2 emissions/day (crisis)",   f"{co2_c:.2f} kg CO2-eq ({co2_chg:+.1f}%)"),
+            ]
+            if imp_b is not None:
+                kv_rows.append(("Import dependency (baseline)", f"{imp_b:.1f}%"))
+            if imp_c is not None:
+                kv_rows.append(("Import dependency (crisis)",   f"{imp_c:.1f}%"))
+            pdf.kv(kv_rows)
+
+            co2_dir = "rose" if co2_chg > 0 else "fell"
+            pdf.body(
+                f"CO2-equivalent emissions {co2_dir} by {abs(co2_chg):.1f}% under crisis "
+                f"conditions ({co2_b:.2f} -> {co2_c:.2f} kg CO2-eq/day). "
+                + (f"As domestic supply tightened, import dependency shifted from "
+                   f"{imp_b:.1f}% to {imp_c:.1f}%, increasing the carbon cost per unit "
+                   f"(emission factors: Finnish conventional 1.2, imported conventional "
+                   f"2.2 kg CO2-eq/unit). "
+                   if imp_b is not None and imp_c is not None and imp_c > imp_b + 2 else
+                   "Emission factors: Finnish organic 0.8, Finnish conventional 1.2, "
+                   "Imported organic 1.5, Imported conventional 2.2 kg CO2-eq/unit. ")
+                + "Food-system resilience strategies that maintain domestic supply chains "
+                "therefore carry a co-benefit of reduced carbon footprint."
+            )
+
+    # ── Supply Chain Log ─────────────────────────────────────────────────────
+    if has_scm:
+        pdf.sub("2.7  Supply Chain Event Summary")
+        n_orders = len(df_scm[df_scm["Type"] == "Order"])      if "Type" in df_scm.columns else "n/a"
+        n_deliv  = len(df_scm[df_scm["Type"] == "Delivery"])   if "Type" in df_scm.columns else "n/a"
+        n_short  = len(df_scm[df_scm["Type"] == "Stockout"])   if "Type" in df_scm.columns else 0
+        pdf.kv([
+            ("Total order events",    str(n_orders)),
+            ("Total delivery events", str(n_deliv)),
+            ("Stockout events",       str(n_short)),
+            ("Log entries (total)",   f"{len(df_scm):,}"),
+        ])
+        pdf.body(
+            "The supply chain log records every reorder trigger, inbound delivery, and "
+            "stockout event across the simulation horizon. A high ratio of stockout events "
+            "relative to total deliveries indicates that the reorder policy is insufficiently "
+            "responsive to demand spikes -- consider lowering the reorder point or increasing "
+            "the target stock level to buffer against future disruptions."
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 3: POLICY ANALYSIS
+    # ─────────────────────────────────────────────────────────────────────────
+    if has_pol:
+        pdf.chapter(3, "Policy Analysis", "Policy")
+        pdf.body(
+            f"The Policy Analysis module compares the '{pol_label}' intervention against a "
+            f"no-intervention baseline. Interventions modelled include fat taxation, domestic "
+            f"supply subsidies, eco-labelling, and communication strategies. All results are "
+            f"averaged across the full simulation horizon unless otherwise noted."
+        )
+
+        _kpi_defs = [
+            ("Revenue/day (EUR)",    "Revenue",              False, True),
+            ("Waste/day (units)",    "Waste",                False, False),
+            ("CO2 total/day (kg)",   "CO2Total",             False, False),
+            ("Budget Exhaustion %",  "BudgetExhaustionRate", True,  False),
+            ("Food Stressed %",      "FoodStressedPct",      True,  False),
+            ("Fulfilment Rate %",    "FulfillmentRate",      True,  True),
+            ("FIES Severe Low %",    "FIESSevere_Low",       True,  False),
+            ("Import Dependency %",  "ImportDepPct",         True,  False),
+            ("Gini Access Index",    "GiniAccess",           False, False),
+            ("Panic Level",          "PanicLevel",           False, False),
+        ]
+
+        # KPI table
+        pdf.sub("3.1  KPI Comparison Table")
+        tbl_cols = [("Metric", 66), ("Baseline", 29), (str(pol_label)[:16], 29), ("Delta", 28), ("Direction", 28)]
+        _tbl_hdr(pdf, tbl_cols)
+        findings = []
+        for i, (lbl, col, is_pct, higher_better) in enumerate(_kpi_defs):
             if col not in df_pol_base.columns:
                 continue
             b_v = df_pol_base[col].mean() * (100 if is_pct else 1)
             p_v = df_pol_scen[col].mean() * (100 if is_pct else 1)
             d_p = (p_v - b_v) / max(abs(b_v), 1e-9) * 100
-            pdf.cell(70, 6, _to_latin1(lbl), 1)
-            pdf.cell(35, 6, f"{b_v:.2f}", 1)
-            pdf.cell(35, 6, f"{p_v:.2f}", 1)
-            pdf.cell(35, 6, f"{d_p:+.1f}%", 1)
-            pdf.ln()
+            improved = (d_p > 0) == higher_better
+            arrow = "+" if d_p > 0 else ""
+            direction = ("BETTER" if improved else "TRADE-OFF") if abs(d_p) > 2 else "NEUTRAL"
+            _tbl_row(pdf, [
+                (lbl, 66), (f"{b_v:.3g}", 29), (f"{p_v:.3g}", 29),
+                (f"{arrow}{d_p:.1f}%", 28), (direction, 28)
+            ], i)
+            if abs(d_p) > 5:
+                findings.append((lbl, d_p, improved))
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(3)
 
-        pdf.add_page()
-        pdf.section("4a. Policy Revenue Comparison Chart")
-        fig_p, ax_p = plt.subplots(figsize=(9, 3.8))
-        ax_p.plot(df_pol_base.groupby("Day")["Revenue"].mean(), color="steelblue", label="Baseline")
-        ax_p.plot(df_pol_scen.groupby("Day")["Revenue"].mean(), color="firebrick", label=pol_label)
-        ax_p.set_xlabel("Day"); ax_p.set_ylabel("Revenue (EUR)")
-        ax_p.set_title("Policy Impact on Daily Revenue")
-        ax_p.legend(fontsize=8); ax_p.grid(alpha=0.3)
-        plt.tight_layout()
-        pdf.add_mpl(fig_p); plt.close(fig_p)
+        # Policy interpretation
+        pdf.sub("3.2  Policy Interpretation")
+        good = [(l, d) for l, d, imp in findings if imp]
+        bad  = [(l, d) for l, d, imp in findings if not imp]
+        narrative = ""
+        if good:
+            narrative += (
+                f"The '{pol_label}' policy improved {len(good)} indicator(s): "
+                + ", ".join(
+                    f"{l} ({'+' if d > 0 else ''}{d:.1f}%)"
+                    for l, d in good[:4]
+                )
+                + (f" and {len(good) - 4} others" if len(good) > 4 else "")
+                + ". "
+            )
+        if bad:
+            narrative += (
+                f"Trade-offs were observed on {len(bad)} indicator(s): "
+                + ", ".join(
+                    f"{l} ({'+' if d > 0 else ''}{d:.1f}%)"
+                    for l, d in bad[:3]
+                )
+                + ". "
+            )
+        if not good and not bad:
+            narrative = (
+                f"The '{pol_label}' policy produced no changes exceeding the 5% materiality "
+                f"threshold. The chosen intervention intensity may be too modest to generate "
+                f"observable effects within the configured simulation horizon. "
+            )
+        narrative += (
+            "These results are consistent with supply-side intervention theory: subsidies "
+            "improve affordability and food security metrics but compress commercial margins; "
+            "eco-labelling shifts consumer preferences over time but may temporarily suppress "
+            "conventional-product sales; purchase limits reduce peak panic but can frustrate "
+            "legitimate high-volume shoppers early in the crisis window."
+        )
+        pdf.body(narrative)
 
-    # ── 5. Stress-test results ────────────────────────────────────────────────
-    stress_res = st.session_state.get("stress_results")
-    if stress_res is not None and hasattr(stress_res, "iterrows") and not stress_res.empty:
-        pdf.add_page()
-        pdf.section("5. Automated Stress-Test Risk Ranking")
-        pdf.set_font("Arial", "B", 9)
-        pdf.cell(75, 6, "Scenario",           1)
-        pdf.cell(35, 6, "Crisis Rev (EUR)",   1)
-        pdf.cell(35, 6, "Revenue Loss (%)",   1)
-        pdf.cell(30, 6, "Lost Sales (EUR)",   1)
-        pdf.ln()
-        pdf.set_font("Arial", "", 9)
-        for _, row in stress_res.iterrows():
-            sc_name  = _to_latin1(str(row.get("Scenario", ""))[:32])
-            cris_rev = row.get("Crisis Revenue", 0)
-            rev_loss = row.get("Revenue Loss (%)", 0)
-            lost     = row.get("Total Lost Sales (€)", 0)
-            pdf.cell(75, 6, sc_name,              1)
-            pdf.cell(35, 6, f"{cris_rev:,.0f}",   1)
-            pdf.cell(35, 6, f"{rev_loss:.1f}%",   1)
-            pdf.cell(30, 6, f"{lost:,.0f}",        1)
-            pdf.ln()
+        # Key finding box
+        if good:
+            best_g = max(good, key=lambda x: abs(x[1]))
+            pdf.finding(
+                f"Most impactful improvement: {best_g[0]} changed by "
+                f"{'+' if best_g[1] > 0 else ''}{best_g[1]:.1f}% under the "
+                f"'{pol_label}' policy. "
+                + ("This suggests the intervention is well-targeted to the key vulnerability "
+                   "exposed by the crisis scenario." if abs(best_g[1]) > 15 else
+                   "The effect size is moderate -- larger intervention parameters or a longer "
+                   "simulation horizon may amplify the signal.")
+            )
+        if bad:
+            worst_b = max(bad, key=lambda x: abs(x[1]))
+            pdf.finding(
+                f"Main trade-off: {worst_b[0]} worsened by "
+                f"{'+' if worst_b[1] > 0 else ''}{worst_b[1]:.1f}%. "
+                "Policy makers should weigh this cost against the welfare gains above "
+                "when designing the final intervention package."
+            )
 
-    # ── 6. Saved scenario comparison ─────────────────────────────────────────
-    saved = st.session_state.get("saved_scenarios", [])
-    if len(saved) >= 2:
-        pdf.add_page()
-        pdf.section("6. Saved Scenario Comparison")
-        pdf.set_font("Arial", "B", 9)
-        pdf.cell(60, 6, "Scenario",      1)
-        pdf.cell(45, 6, "Avg Rev (EUR)", 1)
-        pdf.cell(35, 6, "Avg Waste",     1)
-        pdf.cell(35, 6, "Avg LostSales", 1)
-        pdf.ln()
-        pdf.set_font("Arial", "", 9)
+        # Revenue chart
+        pdf.sub("3.3  Revenue Comparison")
+        fig_p, ax_p = plt.subplots(figsize=(7, 3.0))
+        ax_p.plot(df_pol_base.groupby("Day")["Revenue"].mean(),
+                  color=_C["b"], lw=2, label="Baseline (no policy)")
+        ax_p.plot(df_pol_scen.groupby("Day")["Revenue"].mean(),
+                  color=_C["r"], lw=2, label=str(pol_label))
+        ax_p.fill_between(
+            df_pol_base.groupby("Day")["Revenue"].mean().index,
+            df_pol_base.groupby("Day")["Revenue"].mean(),
+            df_pol_scen.groupby("Day")["Revenue"].mean(),
+            alpha=0.08, color=_C["r"],
+        )
+        ax_p.set_xlabel("Simulation Day"); ax_p.set_ylabel("Daily Revenue (EUR)")
+        ax_p.set_title(f"Revenue: Baseline vs {pol_label}")
+        ax_p.legend(fontsize=8)
+        ax_p.spines[["top", "right"]].set_visible(False)
+        fig_p.tight_layout()
+        pdf.chart(_sf_mpl_chart(fig_p),
+                  caption=(
+                      "Figure 3.1: Revenue trajectories. The shaded area represents the "
+                      "policy-induced revenue change; downward shift indicates commercial cost."
+                  ))
+
+        # Welfare chart
+        if "FulfillmentRate" in df_pol_base.columns:
+            fig_w, axes_w = plt.subplots(1, 2, figsize=(7, 2.8))
+            axes_w[0].plot(df_pol_base.groupby("Day")["FulfillmentRate"].mean() * 100,
+                           color=_C["b"], lw=2, label="Baseline")
+            axes_w[0].plot(df_pol_scen.groupby("Day")["FulfillmentRate"].mean() * 100,
+                           color=_C["r"], lw=2, label=str(pol_label))
+            axes_w[0].axhline(80, color=_C["lo"], ls=":", lw=1)
+            axes_w[0].set_title("Basket Fulfilment (%)"); axes_w[0].set_ylim(0, 105)
+            axes_w[0].legend(fontsize=7); axes_w[0].set_xlabel("Day")
+
+            if "FoodStressedPct" in df_pol_base.columns:
+                axes_w[1].plot(df_pol_base.groupby("Day")["FoodStressedPct"].mean() * 100,
+                               color=_C["b"], lw=2, label="Baseline")
+                axes_w[1].plot(df_pol_scen.groupby("Day")["FoodStressedPct"].mean() * 100,
+                               color=_C["r"], lw=2, label=str(pol_label))
+                axes_w[1].set_title("Food-Stressed Agents (%)"); axes_w[1].legend(fontsize=7)
+                axes_w[1].set_xlabel("Day")
+
+            for ax_ in axes_w: ax_.spines[["top", "right"]].set_visible(False)
+            fig_w.tight_layout()
+            pdf.chart(_sf_mpl_chart(fig_w),
+                      caption=(
+                          "Figure 3.2: Consumer welfare metrics. Policies that raise fulfilment "
+                          "above 80% and reduce food stress demonstrate measurable social value."
+                      ))
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 4: AUTOMATED STRESS TEST
+    # ─────────────────────────────────────────────────────────────────────────
+    if has_stress:
+        pdf.chapter(4, "Stress-Test Risk Ranking", "Stress Test")
+        pdf.body(
+            "The Automated Stress Test sweeps a grid of disruption magnitudes and durations, "
+            "running an independent simulation for each combination. The resulting risk table "
+            "ranks scenarios by revenue loss severity, identifying the critical parameter "
+            "thresholds beyond which the supply chain fails to recover within the horizon."
+        )
+
+        # Find column names defensively
+        _rev_loss_col = "Revenue Loss (%)" if "Revenue Loss (%)" in stress_res.columns else None
+        _base_rev_col = ("Baseline Revenue" if "Baseline Revenue" in stress_res.columns
+                         else "Base Revenue" if "Base Revenue" in stress_res.columns else None)
+        _cris_rev_col = "Crisis Revenue" if "Crisis Revenue" in stress_res.columns else None
+        _lost_col = ("Total Lost Sales (EUR)" if "Total Lost Sales (EUR)" in stress_res.columns
+                     else "Total Lost Sales (EUR)" if "Total Lost Sales (EUR)" in stress_res.columns
+                     else next((c for c in stress_res.columns if "Lost" in c and "Sales" in c), None))
+
+        tbl_cols_s = [("Scenario", 68), ("Baseline Rev", 30), ("Crisis Rev", 30),
+                      ("Loss %", 22), ("Lost Sales", 30)]
+        _tbl_hdr(pdf, tbl_cols_s)
+        for i, (_, row) in enumerate(stress_res.iterrows()):
+            sc_nm  = str(row.get("Scenario", ""))[:34]
+            b_rv   = row.get(_base_rev_col, 0) if _base_rev_col else 0
+            c_rv   = row.get(_cris_rev_col, 0) if _cris_rev_col else 0
+            r_loss = row.get(_rev_loss_col, 0) if _rev_loss_col else 0
+            l_s    = row.get(_lost_col, 0)     if _lost_col else 0
+            _tbl_row(pdf, [
+                (sc_nm, 68), (f"{b_rv:,.0f}", 30), (f"{c_rv:,.0f}", 30),
+                (f"{r_loss:.1f}%", 22), (f"{l_s:,.0f}", 30),
+            ], i)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(3)
+
+        # Risk bar chart
+        if _rev_loss_col and "Scenario" in stress_res.columns:
+            n_sc = len(stress_res)
+            fig_s, ax_s = plt.subplots(figsize=(7, max(2.5, n_sc * 0.38)))
+            colors_s = [
+                _C["r"] if v > 20 else _C["o"] if v > 10 else _C["g"]
+                for v in stress_res[_rev_loss_col]
+            ]
+            ax_s.barh(stress_res["Scenario"].astype(str), stress_res[_rev_loss_col],
+                      color=colors_s, edgecolor="none")
+            ax_s.axvline(10, color=_C["o"], ls="--", lw=1, label="10% threshold")
+            ax_s.axvline(20, color=_C["r"], ls="--", lw=1, label="20% threshold")
+            ax_s.set_xlabel("Revenue Loss (%)"); ax_s.set_title("Stress-Test Risk Ranking")
+            ax_s.legend(fontsize=7.5); ax_s.spines[["top", "right"]].set_visible(False)
+            fig_s.tight_layout()
+            pdf.chart(_sf_mpl_chart(fig_s),
+                      caption=(
+                          "Figure 4.1: Revenue loss by scenario. Red = high-risk (>20%), "
+                          "orange = moderate (10-20%), green = resilient (<10%)."
+                      ))
+
+        # Interpretation
+        if _rev_loss_col:
+            worst = stress_res.loc[stress_res[_rev_loss_col].idxmax()]
+            best  = stress_res.loc[stress_res[_rev_loss_col].idxmin()]
+            q3    = stress_res[_rev_loss_col].quantile(0.75)
+            high_risk_count = (stress_res[_rev_loss_col] > 20).sum()
+            pdf.body(
+                f"The highest-risk scenario -- '{worst.get('Scenario', 'N/A')}' -- "
+                f"produced a {worst.get(_rev_loss_col, 0):.1f}% revenue contraction, "
+                f"while the most resilient -- '{best.get('Scenario', 'N/A')}' -- "
+                f"lost only {best.get(_rev_loss_col, 0):.1f}%. "
+                f"{high_risk_count} of {len(stress_res)} tested configurations crossed "
+                f"the 20% high-risk threshold. "
+                f"Scenarios in the upper quartile (>{q3:.1f}% loss) represent the "
+                f"'tail risk' configurations that supply chain managers should prioritise "
+                f"in contingency planning -- these are the disruption levels where standard "
+                f"(s,S) inventory policies fail to contain damage within an acceptable range."
+            )
+            pdf.finding(
+                f"Critical vulnerability threshold: scenarios above {q3:.1f}% revenue loss "
+                f"({high_risk_count} configurations) require structural resilience measures "
+                f"beyond parameter tuning -- such as dual sourcing, strategic reserves, "
+                f"or pre-agreed demand-management protocols with retail partners."
+            )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 5: SAVED SCENARIO COMPARISON
+    # ─────────────────────────────────────────────────────────────────────────
+    if has_saved:
+        pdf.chapter(5, "Saved Scenario Comparison", "Scenarios")
+        pdf.body(
+            f"{len(saved)} parameter configurations were saved and compared during this "
+            f"session. The table and chart below provide a side-by-side view of the "
+            f"crisis-phase performance of each user-defined scenario."
+        )
+
+        sc_metrics = []
         for sc in saved:
             name = sc.get("name", "Unnamed")
             df_s = sc.get("df")
             if df_s is None or df_s.empty:
                 continue
-            avg_r = df_s["Revenue"].mean()   if "Revenue"   in df_s.columns else 0
-            avg_w = df_s["Waste"].mean()     if "Waste"     in df_s.columns else 0
-            avg_l = df_s["LostSales"].mean() if "LostSales" in df_s.columns else 0
-            pdf.cell(60, 6, _to_latin1(name[:28]), 1)
-            pdf.cell(45, 6, f"{avg_r:,.2f}",        1)
-            pdf.cell(35, 6, f"{avg_w:.1f}",          1)
-            pdf.cell(35, 6, f"{avg_l:.1f}",          1)
-            pdf.ln()
+            df_cr = (df_s[df_s["Scenario"] == "Crisis"]
+                     if "Scenario" in df_s.columns else df_s)
+            avg_r  = df_cr["Revenue"].mean()             if "Revenue"             in df_cr.columns else 0
+            avg_w  = df_cr["Waste"].mean()               if "Waste"               in df_cr.columns else 0
+            avg_l  = df_cr["LostSales"].mean()           if "LostSales"           in df_cr.columns else 0
+            avg_f  = df_cr["FulfillmentRate"].mean()*100 if "FulfillmentRate"     in df_cr.columns else None
+            avg_s  = df_cr["FoodStressedPct"].mean()*100 if "FoodStressedPct"     in df_cr.columns else None
+            avg_p  = df_cr["PanicLevel"].max()           if "PanicLevel"          in df_cr.columns else None
+            sc_metrics.append((name, avg_r, avg_w, avg_l, avg_f, avg_s, avg_p))
 
-    # ── 7. Methodology ────────────────────────────────────────────────────────
-    pdf.add_page()
-    pdf.section("7. Methodology Note")
+        tbl_cols_cmp = [
+            ("Scenario", 48), ("Rev/Day EUR", 25), ("Waste/Day", 20),
+            ("LostSales/Day", 24), ("Fulfilment %", 22), ("FoodStress %", 22), ("Peak Panic", 19),
+        ]
+        _tbl_hdr(pdf, tbl_cols_cmp)
+        for i, (name, r, w, l, f, s, pa) in enumerate(sc_metrics):
+            _tbl_row(pdf, [
+                (name[:22], 48), (f"{r:,.0f}", 25), (f"{w:.1f}", 20),
+                (f"{l:.1f}", 24),
+                (f"{f:.1f}%" if f is not None else "n/a", 22),
+                (f"{s:.1f}%" if s is not None else "n/a", 22),
+                (f"{pa:.3f}" if pa is not None else "n/a", 19),
+            ], i)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(3)
+
+        # Best/worst by revenue
+        if sc_metrics:
+            best_rev  = max(sc_metrics, key=lambda x: x[1])
+            worst_rev = min(sc_metrics, key=lambda x: x[1])
+            pdf.body(
+                f"Among the saved configurations, '{best_rev[0]}' achieved the highest "
+                f"crisis-phase revenue (EUR {best_rev[1]:,.0f}/day), while '{worst_rev[0]}' "
+                f"recorded the lowest (EUR {worst_rev[1]:,.0f}/day). "
+                f"This spread of EUR {best_rev[1] - worst_rev[1]:,.0f}/day illustrates "
+                f"the sensitivity of financial outcomes to parameter choices, and underlines "
+                f"the value of systematic scenario exploration before committing to a supply "
+                f"chain configuration in practice."
+            )
+
+        # Comparison chart
+        fig_cmp, ax_cmp = plt.subplots(figsize=(7, 3.0))
+        for i, sc in enumerate(saved[:6]):
+            name = sc.get("name", f"Scenario {i+1}")
+            df_s = sc.get("df")
+            if df_s is None or df_s.empty:
+                continue
+            df_cr = df_s[df_s["Scenario"] == "Crisis"] if "Scenario" in df_s.columns else df_s
+            if "Revenue" in df_cr.columns and "Day" in df_cr.columns:
+                ax_cmp.plot(df_cr.groupby("Day")["Revenue"].mean(),
+                            color=_COLS4[i % len(_COLS4)], lw=2, label=name[:18])
+        ax_cmp.set_xlabel("Simulation Day"); ax_cmp.set_ylabel("Daily Revenue (EUR)")
+        ax_cmp.set_title("Crisis-Phase Revenue Across Saved Scenarios")
+        ax_cmp.legend(fontsize=7.5, ncol=2)
+        ax_cmp.spines[["top", "right"]].set_visible(False)
+        fig_cmp.tight_layout()
+        pdf.chart(_sf_mpl_chart(fig_cmp),
+                  caption=(
+                      "Figure 5.1: Revenue trajectories during the crisis window for all "
+                      "saved configurations. Spread between curves indicates parameter sensitivity."
+                  ))
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 6: METHODOLOGY & CITATION
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter(6, "Methodology & Citation", "Methodology")
+
+    pdf.sub("6.1  Model Architecture")
     pdf.body(
         "GROCERYsim ABM v2.0 is a Mesa-based agent-based model for Finnish dairy retail "
-        "and food-system resilience research. Consumer agents (default: 200) are calibrated "
-        "from Discrete Choice Experiment (DCE) preference scores and questionnaire data "
-        "collected under the SecureFood / Horizon Europe project. "
-        "\n\n"
-        "Population archetypes: K-Means clustering (k=4) on price sensitivity, health "
-        "consciousness, and local preference scores. Stratified bootstrap sampling ensures "
-        "realistic income-group representation (Low 30%, Mid 50%, High 20%). "
-        "\n\n"
-        "Utility function: U = origin_bonus + organic_bonus + fat_match - price_disutility. "
-        "Agents update preferences via archetype-specific Bayesian learning rules "
-        "(base rate 0.015/day). "
-        "\n\n"
-        "CO2 emission factors (kg CO2-eq/unit): Finnish organic 0.8, "
+        "and food-system resilience research. The model implements three agent classes: "
+        "(1) Consumer agents calibrated from Discrete Choice Experiment (DCE) preference "
+        "data collected under the SecureFood project; "
+        "(2) Product agents representing Finnish dairy SKUs with dynamic pricing, stock "
+        "management, and per-unit CO2 tracking; "
+        "(3) a SupermarketModel orchestrating daily supply-chain events, crisis triggers, "
+        "policy lever application, and population-level metric aggregation."
+    )
+
+    pdf.sub("6.2  Consumer Archetypes & Calibration")
+    pdf.body(
+        "Population archetypes are derived from K-Means clustering (k=4) on price "
+        "sensitivity, health consciousness, and local-product preference scores from the "
+        "DCE survey (SecureFood, 2024-2026). Four archetypes: H-SENS (high price "
+        "sensitivity), L-SENS (low price sensitivity, high WTP), ORG-PREF (organic "
+        "preference), LOCAL (Finnish-origin preference). Stratified bootstrap sampling "
+        "ensures realistic income-group representation (Low 30%, Mid 50%, High 20%). "
+        "Consumer utility: U = origin_bonus + organic_bonus + fat_match - price_disutility. "
+        "Agents update preferences via archetype-specific Bayesian learning (base rate 0.015/day)."
+    )
+
+    pdf.sub("6.3  Supply Chain & Crisis Mechanics")
+    pdf.body(
+        "Product agents implement (s, S) inventory policies with configurable reorder "
+        "points and target stock levels. The crisis window introduces: supply disruption "
+        "reducing inbound deliveries; price inflation on all products; increased panic "
+        "sensitivity activating hoarding multipliers. Monte Carlo confidence bands (when "
+        "enabled) use non-parametric percentiles (p10/p25/p75/p90) -- more robust than "
+        "Gaussian assumptions for short-horizon ABM outputs."
+    )
+
+    pdf.sub("6.4  Food Security & Welfare Metrics")
+    pdf.body(
+        "FIES (Food Insecurity Experience Scale) scores are computed per-agent per-day "
+        "using a FAO 2016-aligned methodology based on basket-shortfall frequency and "
+        "severity. The Gini Access Index measures inequality of basket fulfilment across "
+        "the agent population (0 = perfect equality, 1 = complete inequality). Budget "
+        "exhaustion measures the fraction of agents whose daily food spend reaches the "
+        "maximum before their basket is complete."
+    )
+
+    pdf.sub("6.5  CO2 Emission Factors")
+    pdf.body(
+        "CO2 emission factors (kg CO2-eq / unit sold): Finnish organic 0.8, "
         "Finnish conventional 1.2, Imported organic 1.5, Imported conventional 2.2. "
-        "\n\n"
-        "Monte Carlo confidence bands use non-parametric percentiles (p10/p25/p75/p90) "
-        "across independent simulation runs -- more robust than Gaussian assumptions for "
-        "short-horizon ABM outputs. "
-        "\n\n"
-        "SecureFood / Horizon Europe -- grant agreement No. 101136583. "
-        "For methodological details see: "
-        "GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf"
+        "Factors sourced from Finnish Life Cycle Assessment benchmarks for dairy products."
+    )
+
+    pdf.sub("6.6  Key References")
+    pdf.bullet([
+        "Ajzen, I. (1991). The theory of planned behavior. OBHDP, 50(2), 179-211.",
+        "FAO (2016). Methods for estimating comparable rates of food insecurity globally.",
+        "McCombs, M. & Shaw, D. (1972). The agenda-setting function of mass media. POQ, 36(2).",
+        "O'Donoghue, T. & Rabin, M. (1999). Doing it now or later. AER, 89(1), 103-124.",
+        "Sheffi, Y. (2005). The Resilient Enterprise. MIT Press.",
+        "Thaler, R. H. & Sunstein, C. R. (2008). Nudge. Yale University Press.",
+        "SecureFood Consortium (2024-2027). Horizon Europe Grant No. 101136583.",
+    ])
+
+    pdf.sub("6.7  How to Cite This Report")
+    pdf.finding(
+        "Duric, Ivan (2026). GROCERYsim Agent-Based Model for Consumer Behaviour and "
+        "Supply Chain Stress-Testing. IAMO XR Lab, SecureFood project, "
+        "Horizon Europe Grant 101136583."
     )
 
     return bytes(pdf.output())
