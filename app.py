@@ -2503,6 +2503,39 @@ def render_securefood_page():
 
     st.divider()
 
+    # ── Scenario background card ───────────────────────────────────────────────
+    st.markdown("""
+<div style="
+    background: linear-gradient(135deg, #F0E9DA 0%, #FAF6EC 100%);
+    border-left: 5px solid #DBA159;
+    border-radius: 6px;
+    padding: 20px 24px 16px 24px;
+    margin-bottom: 18px;
+">
+<h4 style="margin:0 0 10px 0; color:#042026; font-size:15px; font-weight:700; letter-spacing:-0.01em;">
+    Scenario: Climate-Driven Dairy Supply Chain Disruption
+</h4>
+<p style="margin:0 0 10px 0; color:#2c4a52; font-size:13.5px; line-height:1.65;">
+    <strong>Background and Trigger Event</strong><br>
+    Increasingly frequent and intense weather events, driven by climate change, are creating
+    critical vulnerabilities within the agricultural sector, specifically threatening the
+    stability of the milk and dairy supply chain.
+</p>
+<p style="margin:0 0 8px 0; color:#2c4a52; font-size:13.5px; line-height:1.65;">
+    <strong>Market Disruptions</strong>
+</p>
+<ul style="margin:0; padding-left:20px; color:#2c4a52; font-size:13.5px; line-height:1.75;">
+    <li><strong>Cost Inflation:</strong> Extreme weather disrupts livestock feed production,
+        driving up operational costs. These increases are subsequently passed down to the
+        consumer market, resulting in significantly higher retail prices for milk and dairy
+        products.</li>
+    <li><strong>Supply Scarcity:</strong> Simultaneous production and logistical bottlenecks
+        lead to critical stock shortages and consistently low product availability at the
+        retail level.</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
     sc_tab, pm_tab = st.tabs(["🏭 Supply Chain Actor", "🏛️ Policy Maker"])
 
     # ══════════════════════════════════════════════════════════════════════════
