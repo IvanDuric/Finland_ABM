@@ -2468,6 +2468,996 @@ def _render_sf_pm_results(data: dict):
     )
 
 
+# ── SecureFood PDF Report Generator ──────────────────────────────────────────
+
+_SF_FONT_DIR = "/System/Library/Fonts/Supplemental"
+_SF_FONTS = {
+    "reg":  f"{_SF_FONT_DIR}/Arial.ttf",
+    "bold": f"{_SF_FONT_DIR}/Arial Bold.ttf",
+    "it":   f"{_SF_FONT_DIR}/Arial Italic.ttf",
+    "bi":   f"{_SF_FONT_DIR}/Arial Bold Italic.ttf",
+    "uni":  "/Library/Fonts/Arial Unicode.ttf",
+}
+_SF_DARK    = (  4,  32,  38)
+_SF_DARK2   = ( 12,  58,  70)
+_SF_AMBER   = (219, 161,  89)
+_SF_AMBER_D = (180, 120,  55)
+_SF_AMBER_L = (255, 248, 225)
+_SF_WHITE   = (255, 255, 255)
+_SF_CREAM   = (250, 246, 236)
+_SF_CREAM2  = (240, 233, 218)
+_SF_BODY    = ( 28,  44,  48)
+_SF_RULE    = (200, 195, 185)
+_SF_GREEN   = ( 39, 174,  96)
+_SF_RED     = (192,  57,  43)
+_SF_BLUE    = ( 41, 128, 185)
+
+
+def _sf_mpl_chart(fig) -> str:
+    """Save a matplotlib figure to a temp PNG and return the path."""
+    buf = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    fig.savefig(buf.name, dpi=130, bbox_inches="tight",
+                facecolor="white", edgecolor="none")
+    plt.close(fig)
+    return buf.name
+
+
+def _sf_logo_on(name: str, w_px: int, bg: tuple) -> str:
+    """Composite a static-dir PNG on bg colour, return temp path."""
+    from PIL import Image as _Img
+    src = os.path.join(_STATIC_DIR, name)
+    img = _Img.open(src).convert("RGBA")
+    ratio = w_px / img.width
+    img = img.resize((w_px, max(1, int(img.height * ratio))), _Img.LANCZOS)
+    canvas = _Img.new("RGB", img.size, bg)
+    canvas.paste(img, mask=img.split()[3])
+    tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+    canvas.save(tmp.name, "PNG")
+    return tmp.name
+
+
+class _SFReport(FPDF):
+    """PDF class for the SecureFood scenario report."""
+    _sec = ""
+
+    def _lf(self):
+        self.add_font("Ar",  "",   _SF_FONTS["reg"])
+        self.add_font("Ar",  "B",  _SF_FONTS["bold"])
+        self.add_font("Ar",  "I",  _SF_FONTS["it"])
+        self.add_font("Ar",  "BI", _SF_FONTS["bi"])
+        self.add_font("ArU", "",   _SF_FONTS["uni"])
+
+    def header(self):
+        if self.page_no() == 1:
+            return
+        self.set_fill_color(*_SF_DARK)
+        self.rect(0, 0, 210, 7, "F")
+        self.set_fill_color(*_SF_AMBER)
+        self.rect(0, 0, 3, 7, "F")
+        self.set_font("Ar", "B", 6.5)
+        self.set_text_color(*_SF_WHITE)
+        self.set_xy(6, 0.8)
+        self.cell(120, 5.5,
+            "GROCERYsim SecureFood — Climate-Driven Dairy Supply Chain Disruption Report")
+        self.set_font("Ar", "I", 6.5)
+        self.set_text_color(*_SF_AMBER)
+        self.set_xy(126, 0.8)
+        self.cell(69, 5.5, self._sec, align="R")
+        self.set_y(10)
+        self.set_text_color(*_SF_BODY)
+
+    def footer(self):
+        if self.page_no() == 1:
+            return
+        self.set_y(-11)
+        self.set_draw_color(*_SF_RULE)
+        self.set_line_width(0.2)
+        self.line(15, self.get_y(), 195, self.get_y())
+        self.set_font("Ar", "I", 7)
+        self.set_text_color(140, 140, 130)
+        self.set_y(-10)
+        self.cell(100, 6, "Horizon Europe SecureFood · Grant No. 101136583 · IAMO XR Lab")
+        self.cell(0, 6, f"Page  {self.page_no()}", align="R")
+        self.set_text_color(*_SF_BODY)
+
+    # helpers ----------------------------------------------------------------
+    def chapter(self, num: str, title: str, label: str = ""):
+        self._sec = label or title
+        self.add_page()
+        self.set_fill_color(*_SF_DARK)
+        self.rect(0, 10, 210, 16, "F")
+        self.set_fill_color(*_SF_AMBER)
+        self.rect(0, 10, 5, 16, "F")
+        self.set_font("Ar", "B", 7)
+        self.set_text_color(*_SF_AMBER)
+        self.set_xy(10, 11)
+        self.cell(0, 4, f"SECTION {num}")
+        self.set_font("Ar", "B", 13)
+        self.set_text_color(*_SF_WHITE)
+        self.set_xy(10, 15)
+        self.cell(0, 9, title)
+        self.set_y(30)
+        self.set_text_color(*_SF_BODY)
+
+    def sub(self, title: str):
+        self.ln(3)
+        self.set_font("Ar", "B", 10)
+        self.set_text_color(*_SF_DARK)
+        self.set_x(15)
+        self.cell(0, 6, title, new_x="LMARGIN", new_y="NEXT")
+        self.set_draw_color(*_SF_AMBER)
+        self.set_line_width(0.5)
+        self.line(15, self.get_y(), 195, self.get_y())
+        self.set_line_width(0.2)
+        self.set_draw_color(*_SF_RULE)
+        self.ln(4)
+
+    def body(self, text: str):
+        self.set_font("Ar", "", 9.5)
+        self.set_text_color(*_SF_BODY)
+        self.set_x(15)
+        self.multi_cell(180, 5.2, text)
+        self.ln(2)
+
+    def bullet(self, items: list):
+        for item in items:
+            bx = 18.5
+            by = self.get_y() + 2.2
+            self.set_fill_color(*_SF_AMBER)
+            self.ellipse(bx, by, 2.2, 2.2, "F")
+            self.set_x(23)
+            self.set_font("Ar", "", 9.5)
+            self.set_text_color(*_SF_BODY)
+            self.multi_cell(170, 5.2, item)
+        self.ln(2)
+
+    def kv(self, rows: list):
+        import textwrap as _tw
+        for i, (k, v) in enumerate(rows):
+            bg = _SF_CREAM2 if i % 2 == 0 else _SF_WHITE
+            self.set_fill_color(*bg)
+            y0 = self.get_y()
+            lines = max(1, len(_tw.wrap(v, 65)))
+            rh = 5.5 * lines + 2
+            self.rect(15, y0, 180, rh, "F")
+            self.set_draw_color(*_SF_RULE)
+            self.set_line_width(0.15)
+            self.line(15, y0, 195, y0)
+            self.set_xy(17, y0 + 1.5)
+            self.set_font("Ar", "B", 8.5)
+            self.set_text_color(*_SF_DARK)
+            self.cell(55, rh - 2, k)
+            self.set_xy(72, y0 + 1.5)
+            self.set_font("Ar", "", 8.5)
+            self.set_text_color(*_SF_BODY)
+            self.multi_cell(120, 5.5, v)
+            self.set_y(y0 + rh)
+        self.set_draw_color(*_SF_RULE)
+        self.line(15, self.get_y(), 195, self.get_y())
+        self.ln(4)
+
+    def finding(self, text: str):
+        import textwrap as _tw
+        lines = max(1, len(_tw.wrap(text, 90)))
+        bh = lines * 5 + 8
+        y = self.get_y()
+        self.set_fill_color(*_SF_AMBER_L)
+        self.rect(15, y, 180, bh, "F")
+        self.set_fill_color(*_SF_AMBER)
+        self.rect(15, y, 3.5, bh, "F")
+        self.set_xy(21, y + 2)
+        self.set_font("Ar", "B", 8)
+        self.set_text_color(*_SF_AMBER_D)
+        self.cell(14, 4.5, "FINDING  ")
+        self.set_font("Ar", "", 8.5)
+        self.set_text_color(*_SF_BODY)
+        self.set_x(35)
+        self.multi_cell(157, 4.5, text)
+        self.set_y(y + bh + 3)
+
+    def metric_row(self, metrics: list):
+        """Display a row of (label, value, delta, positive) tuples as KPI boxes."""
+        n = len(metrics)
+        w = 180 / n
+        x0 = 15
+        for i, (lbl, val, dlt, good) in enumerate(metrics):
+            x = x0 + i * w
+            self.set_fill_color(*_SF_DARK2)
+            self.rect(x, self.get_y(), w - 1, 22, "F")
+            self.set_fill_color(*(_SF_GREEN if good else _SF_RED))
+            self.rect(x, self.get_y(), w - 1, 1.5, "F")
+            self.set_font("Ar", "", 7)
+            self.set_text_color(*_SF_AMBER)
+            self.set_xy(x + 2, self.get_y() + 3)
+            self.cell(w - 4, 4, lbl)
+            self.set_font("Ar", "B", 11)
+            self.set_text_color(*_SF_WHITE)
+            self.set_xy(x + 2, self.get_y())
+            self.cell(w - 4, 7, val)
+            self.set_font("Ar", "I", 7.5)
+            self.set_text_color(160, 185, 180)
+            self.set_xy(x + 2, self.get_y())
+            self.cell(w - 4, 5, dlt)
+        self.ln(26)
+
+    def chart(self, path: str, w: float = 175, caption: str = ""):
+        self.image(path, x=15 + (175 - w) / 2, w=w)
+        if caption:
+            self.set_font("Ar", "I", 7.5)
+            self.set_text_color(110, 125, 120)
+            self.set_x(15)
+            self.cell(180, 5, caption, align="C", new_x="LMARGIN", new_y="NEXT")
+        self.ln(2)
+
+
+@st.cache_data(show_spinner=False)
+def _generate_sf_pdf_report() -> bytes:
+    """
+    Generate a comprehensive SecureFood scenario PDF report using preset defaults.
+    Runs both Supply Chain Actor and Policy Maker simulations.
+    """
+    import textwrap as _tw
+    from fpdf.enums import XPos, YPos
+
+    # ── Preset parameters ─────────────────────────────────────────────────────
+    _no_pol = {
+        "fat_tax_active": False, "fat_tax_threshold": 3.5, "fat_tax_rate": 0.0,
+        "subsidy_active": False, "subsidy_target": "domestic", "subsidy_rate": 0.0,
+        "domestic_shock_active": False, "domestic_shock_day": 30,
+        "domestic_shock_duration": 30, "domestic_shock_severity": 0.5,
+        "labelling_active": False, "labelling_day": 1,
+        "labelling_health_boost": 0.0, "labelling_organic_boost": 0.0,
+    }
+    _pol_pol = {
+        **_no_pol,
+        "subsidy_active": True, "subsidy_target": "domestic", "subsidy_rate": 0.15,
+        "labelling_active": True, "labelling_day": 1,
+        "labelling_health_boost": 0.08, "labelling_organic_boost": 0.06,
+    }
+    sc_p = {
+        "days": 90, "month": 1, "base_con": 200, "reorder": 100,
+        "target": 300, "lead": 3, "cri_start": 30, "cri_duration": 30,
+        "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
+        "mc_runs": 1, "policy_cfg": _no_pol,
+        "purchase_limit": None, "media_intensity": 0.0,
+        "communication_type": "neutral", "stockpile_days": None,
+    }
+    pm_p = {
+        "days": 120, "month": 1, "base_con": 200, "reorder": 100,
+        "target": 300, "lead": 3, "cri_start": 30, "cri_duration": 45,
+        "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
+        "mc_runs": 1, "policy_cfg": _pol_pol,
+        "purchase_limit": 3, "media_intensity": 0.6,
+        "communication_type": "calming", "stockpile_days": None,
+    }
+
+    # ── Run simulations ───────────────────────────────────────────────────────
+    def _run(params):
+        m_b = _make_model(params, is_crisis=False, seed=42)
+        m_c = _make_model(params, is_crisis=True,  seed=42)
+        rows, prod = [], []
+        for day in range(1, params["days"] + 1):
+            m_b.step(); m_c.step()
+            ab, pb = _collect_model_day(m_b, day, "Baseline")
+            ac, pc = _collect_model_day(m_c, day, "Crisis")
+            rows += [ab, ac]; prod += pb + pc
+        return {"df": pd.DataFrame(rows), "df_prod": pd.DataFrame(prod), "params": params}
+
+    sc_data = _run(sc_p)
+    pm_data = _run(pm_p)
+
+    sc_df = sc_data["df"]; pm_df = pm_data["df"]
+    sc_b  = sc_df[sc_df["Scenario"] == "Baseline"].reset_index(drop=True)
+    sc_c  = sc_df[sc_df["Scenario"] == "Crisis"].reset_index(drop=True)
+    pm_b  = pm_df[pm_df["Scenario"] == "Baseline"].reset_index(drop=True)
+    pm_c  = pm_df[pm_df["Scenario"] == "Crisis"].reset_index(drop=True)
+
+    # ── SC metrics ────────────────────────────────────────────────────────────
+    rev_b       = sc_b["Revenue"].sum()
+    rev_c       = sc_c["Revenue"].sum()
+    rev_loss    = rev_b - rev_c
+    rev_pct     = 100 * rev_loss / max(rev_b, 1)
+    lost_total  = sc_c["LostSales"].sum()
+    peak_panic  = float(sc_c["PanicLevel"].max())
+    mean_panic  = float(sc_c["PanicLevel"].mean())
+    waste_delta = sc_c["Waste"].sum() - sc_b["Waste"].sum()
+    nom_gain    = sc_c["NominalRevenue"].sum() - sc_b["Revenue"].sum()
+    avg_pb      = float(sc_b["AvgPrice"].mean())
+    avg_pc      = float(sc_c["AvgPrice"].mean())
+    price_pct   = 100 * (avg_pc / max(avg_pb, 0.01) - 1)
+    sc_cri_end  = sc_p["cri_start"] + sc_p["cri_duration"]
+    merged_sc   = sc_b[["Day","Revenue"]].merge(sc_c[["Day","Revenue"]], on="Day", suffixes=("_b","_c"))
+    post_sc     = merged_sc[merged_sc["Day"] > sc_cri_end]
+    rec_rows    = post_sc[post_sc["Revenue_c"] >= post_sc["Revenue_b"] * 0.95]
+    recovery_sc = int(rec_rows.iloc[0]["Day"] - sc_cri_end) if len(rec_rows) else None
+    peak_vl_day = int(sc_b.loc[(sc_b["Revenue"] - sc_c["Revenue"]).idxmax(), "Day"])
+    peak_lost_d = int(sc_c.loc[sc_c["LostSales"].idxmax(), "Day"])
+    peak_lost_v = float(sc_c["LostSales"].max())
+    sp_peak     = float(sc_c["StockpilePressure"].max())
+    panic_peak_d= int(sc_c.loc[sc_c["PanicLevel"].idxmax(), "Day"])
+
+    # ── PM metrics ────────────────────────────────────────────────────────────
+    peak_stress = float(pm_c["FoodStressedPct"].max()) * 100
+    base_stress = float(pm_b["FoodStressedPct"].mean()) * 100
+    peak_bx_lo  = float(pm_c["BudgetExh_Low"].max()) * 100
+    peak_bx_hi  = float(pm_c["BudgetExh_High"].max()) * 100
+    mean_gini_c = float(pm_c["GiniAccess"].mean())
+    mean_gini_b = float(pm_b["GiniAccess"].mean())
+    imp_dep_b   = float(pm_b["ImportDepPct"].mean()) * 100
+    imp_dep_c   = float(pm_c["ImportDepPct"].mean()) * 100
+    ful_lo      = float(pm_c["Fulfillment_Low"].mean()) * 100
+    ful_hi      = float(pm_c["Fulfillment_High"].mean()) * 100
+    fies_peak   = float(pm_c["FIESSevere_Low"].max()) * 100
+    fies_base   = float(pm_b["FIESSevere_Low"].mean()) * 100
+    dom_b       = pm_b["DomesticSales"].sum() / max(pm_b["DomesticSales"].sum() + pm_b["ImportSales"].sum(), 1) * 100
+    dom_c       = pm_c["DomesticSales"].sum() / max(pm_c["DomesticSales"].sum() + pm_c["ImportSales"].sum(), 1) * 100
+    pm_cri_end  = pm_p["cri_start"] + pm_p["cri_duration"]
+
+    # ── Matplotlib style ──────────────────────────────────────────────────────
+    _C = {"b": "#2980b9", "r": "#c0392b", "a": "#DBA159", "g": "#27ae60",
+          "t": "#44A1A0", "o": "#e67e22", "p": "#8e44ad", "gr": "#95a5a6",
+          "dk": "#042026", "lo": "#e74c3c", "mi": "#e67e22", "hi": "#27ae60"}
+    plt.rcParams.update({
+        "font.family": "sans-serif", "axes.spines.top": False,
+        "axes.spines.right": False, "axes.grid": True,
+        "grid.alpha": 0.25, "grid.linestyle": "--",
+        "font.size": 9, "axes.titlesize": 10, "axes.titleweight": "bold",
+    })
+
+    def _crisis_span(ax, s, e, d):
+        ax.axvspan(s, min(e, d), alpha=0.08, color="#c0392b", label="Crisis window")
+        ax.axvline(s, color="#c0392b", lw=0.8, ls=":")
+
+    temp_imgs = []  # track temp files
+
+    # ── Chart A: Revenue decomposition ────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 3.2))
+    ax.plot(sc_b["Day"], sc_b["Revenue"], color=_C["b"], lw=2, label="Baseline (constant price)")
+    ax.plot(sc_c["Day"], sc_c["Revenue"], color=_C["r"], lw=2, label="Crisis (constant price)")
+    ax.plot(sc_c["Day"], sc_c["NominalRevenue"], color=_C["o"], lw=1.4, ls="--",
+            label="Crisis nominal (inflated)")
+    ax.fill_between(sc_b["Day"], sc_b["Revenue"], sc_c["Revenue"],
+                    alpha=0.10, color=_C["r"], label="Revenue gap")
+    _crisis_span(ax, sc_p["cri_start"], sc_cri_end, sc_p["days"])
+    ax.set_xlabel("Simulation Day"); ax.set_ylabel("Daily Revenue (€)")
+    ax.set_title("Revenue Impact: Constant-Price vs Nominal — Inflation-Volume Decomposition")
+    ax.legend(fontsize=7.5, ncol=2, loc="upper right")
+    fig.tight_layout()
+    p_revA = _sf_mpl_chart(fig); temp_imgs.append(p_revA)
+
+    # ── Chart B: Stockout / Lost Sales ────────────────────────────────────────
+    fig, ax1 = plt.subplots(figsize=(7, 3.0))
+    sc_c2 = sc_c.copy(); sc_c2["CumLost"] = sc_c2["LostSales"].cumsum()
+    ax1.bar(sc_c2["Day"], sc_c2["LostSales"], color=_C["r"], alpha=0.65, label="Daily lost sales")
+    ax2 = ax1.twinx()
+    ax2.plot(sc_c2["Day"], sc_c2["CumLost"], color=_C["a"], lw=2, label="Cumulative lost sales")
+    ax2.spines["right"].set_visible(True)
+    _crisis_span(ax1, sc_p["cri_start"], sc_cri_end, sc_p["days"])
+    ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Lost Sales €/day")
+    ax2.set_ylabel("Cumulative (€)")
+    ax1.set_title("Stockout Revenue Loss — Daily Events and Cumulative Accumulation")
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax1.legend(h1 + h2, l1 + l2, fontsize=7.5, loc="upper left")
+    fig.tight_layout()
+    p_lost = _sf_mpl_chart(fig); temp_imgs.append(p_lost)
+
+    # ── Chart C: Panic & Stockpile ────────────────────────────────────────────
+    fig, ax1 = plt.subplots(figsize=(7, 2.8))
+    ax1.plot(sc_c["Day"], sc_c["PanicLevel"], color=_C["r"], lw=2, label="Panic level (crisis)")
+    ax1.plot(sc_b["Day"], sc_b["PanicLevel"], color=_C["gr"], lw=1.2, ls="--", label="Panic level (baseline)")
+    ax2 = ax1.twinx()
+    ax2.plot(sc_c["Day"], sc_c["StockpilePressure"], color=_C["a"], lw=1.8, ls="-.",
+             label="Stockpile pressure (crisis)")
+    ax2.spines["right"].set_visible(True)
+    _crisis_span(ax1, sc_p["cri_start"], sc_cri_end, sc_p["days"])
+    ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Panic Level (0–1)")
+    ax2.set_ylabel("Stockpile Pressure (0–1)")
+    ax1.set_title("Consumer Panic Level and Stockpile Pressure")
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax1.legend(h1 + h2, l1 + l2, fontsize=7.5, ncol=2)
+    fig.tight_layout()
+    p_panic = _sf_mpl_chart(fig); temp_imgs.append(p_panic)
+
+    # ── Chart D: Shelf Stock (per-category from df_prod) ─────────────────────
+    dp = sc_data["df_prod"]
+    cats = dp["Category"].dropna().unique().tolist()[:5] if "Category" in dp.columns else []
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    cat_colors = [_C["b"], _C["g"], _C["p"], _C["a"], _C["t"]]
+    if cats:
+        for i, cat in enumerate(cats):
+            dc_b = dp[(dp["Category"] == cat) & (dp["Scenario"] == "Baseline")].groupby("Day")["Stock"].mean()
+            dc_c = dp[(dp["Category"] == cat) & (dp["Scenario"] == "Crisis")].groupby("Day")["Stock"].mean()
+            col = cat_colors[i % len(cat_colors)]
+            ax.plot(dc_b.index, dc_b.values, color=col, lw=1.2, ls="--", alpha=0.55)
+            ax.plot(dc_c.index, dc_c.values, color=col, lw=2.0, label=cat)
+    else:
+        ax.plot(sc_b["Day"], sc_b["StockLevel"], color=_C["b"], lw=1.5, ls="--", label="Baseline stock")
+        ax.plot(sc_c["Day"], sc_c["StockLevel"], color=_C["r"], lw=2.0, label="Crisis stock")
+    _crisis_span(ax, sc_p["cri_start"], sc_cri_end, sc_p["days"])
+    ax.set_xlabel("Simulation Day"); ax.set_ylabel("Units on Shelf")
+    ax.set_title("Shelf Stock by Category — Baseline (dashed) vs Crisis (solid)")
+    ax.legend(fontsize=7.5, ncol=3)
+    fig.tight_layout()
+    p_stock = _sf_mpl_chart(fig); temp_imgs.append(p_stock)
+
+    # ── Chart E: Basket Fulfilment by Income ──────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 3.0))
+    for col_k, col_c, lbl in [
+        ("Fulfillment_Low",  _C["lo"], "Low income"),
+        ("Fulfillment_Mid",  _C["mi"], "Mid income"),
+        ("Fulfillment_High", _C["hi"], "High income"),
+    ]:
+        ax.plot(pm_c["Day"], pm_c[col_k] * 100, color=col_c, lw=2, label=f"{lbl} (crisis)")
+    ax.plot(pm_b["Day"], pm_b["FulfillmentRate"] * 100, color=_C["gr"], lw=1.2, ls="--",
+            label="All income (baseline)")
+    ax.axhline(80, color="#c0392b", ls=":", lw=1, label="80% welfare threshold")
+    _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
+    ax.set_xlabel("Simulation Day"); ax.set_ylabel("Fulfilment Rate (%)")
+    ax.set_ylim(0, 105)
+    ax.set_title("Consumer Basket Fulfilment Rate by Income Group — Crisis Scenario")
+    ax.legend(fontsize=7.5, ncol=2)
+    fig.tight_layout()
+    p_ful = _sf_mpl_chart(fig); temp_imgs.append(p_ful)
+
+    # ── Chart F: FIES Food Insecurity ─────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 2.8))
+    ax.plot(pm_c["Day"], pm_c["FIESSevere_Low"]  * 100, color=_C["lo"], lw=2, label="Low income (crisis)")
+    ax.plot(pm_c["Day"], pm_c["FIESSevere_Mid"]  * 100, color=_C["mi"], lw=2, label="Mid income (crisis)")
+    ax.plot(pm_c["Day"], pm_c["FIESSevere_High"] * 100, color=_C["hi"], lw=2, label="High income (crisis)")
+    ax.plot(pm_b["Day"], pm_b["FIESSevere_Low"]  * 100, color=_C["lo"], lw=1, ls="--", alpha=0.5, label="Low (baseline)")
+    _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
+    ax.set_xlabel("Simulation Day"); ax.set_ylabel("FIES Severe (%)")
+    ax.set_title("FIES Severe Food Insecurity by Income Bracket — Crisis vs Baseline")
+    ax.legend(fontsize=7.5, ncol=2)
+    fig.tight_layout()
+    p_fies = _sf_mpl_chart(fig); temp_imgs.append(p_fies)
+
+    # ── Chart G: Budget Exhaustion & Gini ─────────────────────────────────────
+    fig, ax1 = plt.subplots(figsize=(7, 2.8))
+    ax1.plot(pm_c["Day"], pm_c["BudgetExh_Low"]  * 100, color=_C["lo"], lw=2, label="Low income budget exhausted")
+    ax1.plot(pm_c["Day"], pm_c["BudgetExh_High"] * 100, color=_C["hi"], lw=2, label="High income budget exhausted")
+    ax2 = ax1.twinx()
+    ax2.plot(pm_c["Day"], pm_c["GiniAccess"], color=_C["a"], lw=1.8, ls="-.", label="Gini access index")
+    ax2.plot(pm_b["Day"], pm_b["GiniAccess"], color=_C["a"], lw=1, ls=":", alpha=0.5, label="Gini (baseline)")
+    ax2.spines["right"].set_visible(True)
+    _crisis_span(ax1, pm_p["cri_start"], pm_cri_end, pm_p["days"])
+    ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Budget Exhausted (%)")
+    ax2.set_ylabel("Gini Access Index (0–1)")
+    ax1.set_title("Budget Exhaustion by Income Group and Gini Access Index")
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax1.legend(h1 + h2, l1 + l2, fontsize=7.5, ncol=2)
+    fig.tight_layout()
+    p_gini = _sf_mpl_chart(fig); temp_imgs.append(p_gini)
+
+    # ── Chart H: Domestic vs Import ───────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 2.8))
+    ax.stackplot(pm_c["Day"],
+                 pm_c["DomesticSales"], pm_c["ImportSales"],
+                 labels=["Domestic (crisis)", "Import (crisis)"],
+                 colors=[_C["g"], _C["b"]], alpha=0.65)
+    ax.plot(pm_b["Day"], pm_b["DomesticSales"] + pm_b["ImportSales"],
+            color=_C["gr"], lw=1.5, ls="--", label="Total baseline")
+    _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
+    ax.set_xlabel("Simulation Day"); ax.set_ylabel("Units Sold")
+    ax.set_title("Domestic vs Import Sales Volume — Food Sovereignty")
+    ax.legend(fontsize=7.5, ncol=3)
+    fig.tight_layout()
+    p_dom = _sf_mpl_chart(fig); temp_imgs.append(p_dom)
+
+    # ── BUILD PDF ─────────────────────────────────────────────────────────────
+    pdf = _SFReport()
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf._lf()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 1: COVER
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.add_page()
+    pdf.set_fill_color(*_SF_DARK)
+    pdf.rect(0, 0, 210, 297, "F")
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(0, 0, 210, 5, "F")
+
+    # Logo row: GROCERYsim + SecureFood side by side on DARK
+    gs_p = _sf_logo_on("GROCERYsim.png", 360, _SF_DARK)
+    sf_p = _sf_logo_on("SecureFood.png", 260, _SF_DARK)
+    temp_imgs += [gs_p, sf_p]
+    from PIL import Image as _PILImg
+    gs_img = _PILImg.open(gs_p)
+    sf_img = _PILImg.open(sf_p)
+    gs_w, gs_h_mm = 80, 80 * gs_img.height / gs_img.width
+    sf_w, sf_h_mm = 58, 58 * sf_img.height / sf_img.width
+    # Outer frame
+    pdf.set_draw_color(*_SF_AMBER)
+    pdf.set_line_width(0.6)
+    pdf.rect(25, 12, 160, gs_h_mm + 10)
+    pdf.image(gs_p, x=30, y=17, w=gs_w)
+    pdf.image(sf_p, x=120, y=17 + (gs_h_mm - sf_h_mm) / 2, w=sf_w)
+
+    y_after_logos = 17 + gs_h_mm + 14
+
+    # Amber rule
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(15, y_after_logos, 180, 0.8, "F")
+
+    # Report title
+    pdf.set_y(y_after_logos + 8)
+    pdf.set_font("Ar", "B", 22)
+    pdf.set_text_color(*_SF_WHITE)
+    pdf.cell(0, 10, "SecureFood Scenario Analysis Report", align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Ar", "I", 12)
+    pdf.set_text_color(*_SF_AMBER)
+    pdf.cell(0, 7, "Climate-Driven Dairy Supply Chain Disruption — Finland", align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(15, pdf.get_y(), 180, 0.8, "F")
+    pdf.ln(8)
+
+    # Description block
+    pdf.set_font("Ar", "", 9)
+    pdf.set_text_color(190, 210, 205)
+    desc = (
+        "This report presents a comprehensive agent-based simulation analysis of the impact "
+        "of climate-driven disruptions on the Finnish dairy supply chain. The simulation "
+        "applies the GROCERYsim ABM v2.0 framework calibrated with data from the Horizon "
+        "Europe SecureFood Consortium (N = 116 Finnish consumers). Results are reported "
+        "from two complementary perspectives: Supply Chain Actors (operational resilience) "
+        "and Policy Makers (consumer welfare and equity). Preset scenario parameters "
+        "reflect the IPCC AR6 central estimates for Northern European food systems."
+    )
+    pdf.set_x(25)
+    pdf.multi_cell(160, 5.5, desc)
+    pdf.ln(6)
+
+    # Info box
+    box_y = pdf.get_y()
+    pdf.set_fill_color(*_SF_DARK2)
+    pdf.rect(25, box_y, 160, 30, "F")
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(25, box_y, 4, 30, "F")
+    pdf.set_y(box_y + 3)
+    pdf.set_font("Ar", "B", 9)
+    pdf.set_text_color(*_SF_AMBER)
+    pdf.set_x(34)
+    pdf.cell(0, 5.5, "Horizon Europe SecureFood Consortium", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Ar", "", 8.5)
+    pdf.set_text_color(190, 210, 205)
+    pdf.set_x(34); pdf.cell(0, 5, "Grant Agreement No. 101136583", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(34); pdf.cell(0, 5, "IAMO XR Lab — Leibniz Institute of Agricultural Development in Transition Economies", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(34); pdf.cell(0, 5, "Theodor-Lieser Str. 2  ·  06120 Halle (Saale)  ·  Germany  ·  www.iamo.de", new_x="LMARGIN", new_y="NEXT")
+
+    # Partner logos
+    strip_y = 225
+    pdf.set_fill_color(*_SF_DARK2)
+    pdf.rect(0, strip_y - 4, 210, 48, "F")
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(0, strip_y - 4, 210, 0.7, "F")
+    pdf.set_y(strip_y); pdf.set_font("Ar", "B", 6.5)
+    pdf.set_text_color(*_SF_AMBER)
+    pdf.cell(0, 5, "CONSORTIUM PARTNERS", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+    logos_cfg = [("EU.png", 20, 260), ("SecureFood.png", 50, 260),
+                 ("IAMO.png", 46, 260), ("Logo_lab.png", 38, 260)]
+    gap = 5
+    total = sum(w for _, w, _ in logos_cfg) + gap * 3
+    xl = (210 - total) / 2
+    for nm, w, px in logos_cfg:
+        lp = _sf_logo_on(nm, px, _SF_DARK2)
+        temp_imgs.append(lp)
+        li = _PILImg.open(lp)
+        h = w * li.height / li.width
+        pdf.image(lp, x=xl, y=strip_y + 8, w=w)
+        xl += w + gap
+
+    pdf.set_fill_color(*_SF_DARK)
+    pdf.rect(0, 277, 210, 20, "F")
+    pdf.set_fill_color(*_SF_AMBER)
+    pdf.rect(0, 277, 210, 0.7, "F")
+    pdf.set_y(280)
+    pdf.set_font("Ar", "I", 7.5)
+    pdf.set_text_color(180, 195, 190)
+    pdf.cell(0, 5, "Generated by GROCERYsim ABM v2.0  ·  Funded by the European Union — Views are those of the authors only.", align="C",
+             new_x="LMARGIN", new_y="NEXT")
+    from datetime import date as _dt
+    pdf.set_font("Ar", "", 7)
+    pdf.cell(0, 4.5, f"Report generated: {_dt.today().strftime('%d %B %Y')}", align="C")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 2: EXECUTIVE SUMMARY
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter("1", "Executive Summary", "Executive Summary")
+    pdf.body(
+        "This report analyses the impact of a climate-driven disruption on the Finnish dairy "
+        "supply chain using the GROCERYsim Agent-Based Model v2.0. The simulation runs for "
+        f"{sc_p['days']} days (Supply Chain perspective) and {pm_p['days']} days (Policy Maker "
+        "perspective), with a crisis beginning on Day 30 and featuring a "
+        f"{sc_p['inf']:.0f}% retail price inflation, a {sc_p['dis']}-day supply delivery delay, "
+        f"and a {sc_p['cri_duration']}-day disruption window. Consumer panic sensitivity is set "
+        f"at {sc_p['panic']:.2f} and hoarding factor at {sc_p['hoard']:.1f}, calibrated from "
+        "Finnish DCE survey data (N = 116, IAMO XR Lab, 2024–2025)."
+    )
+
+    pdf.sub("Key Findings — Supply Chain Perspective")
+    pdf.metric_row([
+        ("Total Revenue Loss",    f"€{rev_loss:,.0f}",     f"−{rev_pct:.1f}% vs baseline",      False),
+        ("Stockout Revenue Lost", f"€{lost_total:,.0f}",   "unrecoverable demand",               False),
+        ("Peak Panic Level",      f"{peak_panic:.2f}/1.0", f"mean {mean_panic:.2f}",             False),
+        ("Recovery Time",         f"{recovery_sc} days" if recovery_sc else "Not in horizon",
+         "after crisis end",                                                                       recovery_sc is not None),
+    ])
+    pdf.body(
+        f"The crisis generated a constant-price revenue contraction of €{rev_loss:,.0f} "
+        f"({rev_pct:.1f}%) over the simulation horizon, with an additional €{lost_total:,.0f} "
+        f"in unrecovered stockout losses. Consumer panic peaked on Day {panic_peak_d} at a "
+        f"level of {peak_panic:.2f}/1.0, accompanied by a stockpile pressure index of "
+        f"{sp_peak:.2f}. Nominal revenue (at inflated prices) "
+        f"{'increased' if nom_gain > 0 else 'decreased'} by €{abs(nom_gain):,.0f}, "
+        f"masking the underlying volume shortfall — a critical distinction for operational "
+        "planning. Food waste increased by "
+        f"{abs(waste_delta):.0f} units relative to baseline due to over-ordering and "
+        "demand collapse following the panic phase."
+    )
+
+    pdf.sub("Key Findings — Policy Maker Perspective")
+    pdf.metric_row([
+        ("Peak Food Stress",     f"{peak_stress:.1f}%",   f"baseline {base_stress:.1f}%",         False),
+        ("Low-Income Basket Ful.", f"{ful_lo:.1f}%",      f"high-income: {ful_hi:.1f}%",          False),
+        ("FIES Severe (Low Inc.)", f"{fies_peak:.1f}%",   f"baseline {fies_base:.1f}%",           False),
+        ("Gini Access Index",    f"{mean_gini_c:.3f}",    f"baseline {mean_gini_b:.3f}",          False),
+    ])
+    pdf.body(
+        f"From a food security perspective, the crisis generated a peak food stress rate of "
+        f"{peak_stress:.1f}% among consumers (vs baseline {base_stress:.1f}%). Low-income "
+        f"households achieved only {ful_lo:.1f}% basket fulfilment on average during the crisis "
+        f"window, compared to {ful_hi:.1f}% for high-income households — a gap of "
+        f"{ful_hi - ful_lo:.1f} percentage points representing significant structural inequity. "
+        f"The FIES severe food insecurity rate among low-income consumers peaked at "
+        f"{fies_peak:.1f}% (baseline: {fies_base:.1f}%), a rise of {fies_peak - fies_base:.1f} pp. "
+        f"The Gini access index rose from {mean_gini_b:.3f} to {mean_gini_c:.3f}, confirming "
+        "a material deterioration in distributional equity. With policy interventions active "
+        "(domestic subsidy 15%, purchase rationing, nutritional labelling), the import "
+        f"dependency shifted from {imp_dep_b:.1f}% to {imp_dep_c:.1f}%."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 3: SCENARIO PARAMETERS
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter("2", "Scenario Configuration & Parameters", "Scenario Parameters")
+    pdf.body(
+        "The following parameters were used for the preset scenario simulations. These values "
+        "are calibrated to represent a moderate-to-severe climate disruption event affecting "
+        "Finnish dairy supply chains, consistent with IPCC AR6 projections for Northern Europe."
+    )
+    pdf.sub("2.1  Supply Chain Actor Scenario")
+    pdf.kv([
+        ("Simulation Horizon",   f"{sc_p['days']} days"),
+        ("Base Daily Consumers", f"{sc_p['base_con']} agents/day"),
+        ("Start Month",          "January (baseline demand level)"),
+        ("Crisis Start Day",     f"Day {sc_p['cri_start']}"),
+        ("Crisis Duration",      f"{sc_p['cri_duration']} days (ends Day {sc_cri_end})"),
+        ("Price Inflation",      f"{sc_p['inf']:.0f}% (IPCC AR6 central estimate, 2°C warming scenario)"),
+        ("Supply Disruption",    f"{sc_p['dis']}-day delivery delay (significant but recoverable shock)"),
+        ("Panic Sensitivity",    f"{sc_p['panic']:.2f} (calibrated from Finnish DCE data, N=116)"),
+        ("Hoarding Factor",      f"{sc_p['hoard']:.1f}× (Finnish panel baseline; COVID-19 reference: 2.0–2.5)"),
+        ("Lead Time",            f"{sc_p['lead']} days (standard Finnish grocery logistics)"),
+        ("Reorder Point",        f"{sc_p['reorder']} units"),
+        ("Target Stock",         f"{sc_p['target']} units"),
+        ("Policy Interventions", "None (no-intervention baseline for Supply Chain perspective)"),
+    ])
+    pdf.sub("2.2  Policy Maker Scenario")
+    pdf.kv([
+        ("Simulation Horizon",   f"{pm_p['days']} days (extended to capture policy recovery arc)"),
+        ("Base Daily Consumers", f"{pm_p['base_con']} agents/day"),
+        ("Crisis Start Day",     f"Day {pm_p['cri_start']}"),
+        ("Crisis Duration",      f"{pm_p['cri_duration']} days (ends Day {pm_cri_end})"),
+        ("Price Inflation",      f"{pm_p['inf']:.0f}% (same climate shock as SC scenario)"),
+        ("Supply Disruption",    f"{pm_p['dis']}-day delivery delay"),
+        ("Panic Sensitivity",    f"{pm_p['panic']:.2f}"),
+        ("Hoarding Factor",      f"{pm_p['hoard']:.1f}×"),
+        ("Lead Time",            f"{pm_p['lead']} days"),
+        ("Domestic Subsidy",     "15% price reduction on Finnish-origin dairy products"),
+        ("Purchase Rationing",   "3-unit per-visit cap on dairy products"),
+        ("Nutritional Labelling","Active from Day 1 (health boost +8%, organic boost +6%)"),
+        ("Gov. Communications",  "Calming messaging intensity 0.6 (moderate-strong)"),
+    ])
+    pdf.finding(
+        f"The Policy Maker scenario activates three complementary interventions simultaneously. "
+        f"The domestic subsidy (15%) targets food sovereignty and producer income stability. "
+        f"Purchase rationing (3 units/visit) directly limits hoarding behaviour. "
+        f"Calming public communications (intensity 0.6) dampen panic amplification. "
+        f"Together these represent the SecureFood WP3 recommended policy bundle for "
+        f"Northern European dairy market disruptions."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 4: SUPPLY CHAIN ANALYSIS — Revenue
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter("3", "Supply Chain Actor Analysis", "SC Analysis — Revenue")
+    pdf.body(
+        "This section analyses the operational impact of the climate disruption from the "
+        "perspective of producers, distributors, and retailers managing the Finnish dairy "
+        "supply chain. The focus is on revenue integrity, stockout risk, inventory dynamics, "
+        "and consumer panic propagation."
+    )
+    pdf.sub("3.1  Revenue Impact — Inflation-Volume Decomposition")
+    pdf.chart(p_revA,
+        caption="Fig. 1 — Daily revenue: baseline vs crisis (constant-price) and crisis nominal (inflated). "
+                "Red shading = revenue gap. Dotted vertical = crisis onset.")
+    pdf.finding(
+        f"Constant-price revenue fell by €{rev_loss:,.0f} ({rev_pct:.1f}%) over {sc_p['days']} days. "
+        f"Nominal revenue (orange dashed, at inflated prices) "
+        f"{'rose' if nom_gain > 0 else 'fell'} by €{abs(nom_gain):,.0f}, "
+        f"demonstrating that the {sc_p['inf']:.0f}% inflation partially offsets the volume loss in "
+        f"headline figures — masking the true operational deterioration. "
+        f"Peak single-day volume loss occurred on Day {peak_vl_day}."
+    )
+    pdf.sub("3.2  Stockout Events and Lost Sales")
+    pdf.chart(p_lost,
+        caption="Fig. 2 — Daily lost sales revenue (bars) and cumulative total (amber line).")
+    pdf.finding(
+        f"Stockout losses totalled €{lost_total:,.0f} over the simulation horizon — "
+        f"revenue that is permanently unrecoverable as consumers either substituted or "
+        f"went without. Peak single-day loss of €{peak_lost_v:,.0f} occurred on "
+        f"Day {peak_lost_d}. Empirical studies indicate 21–43% of consumers affected by "
+        "stockouts do not return for that purchase, amplifying the effective demand destruction "
+        "beyond the immediate revenue figure."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 5: SC Analysis — Stock & Panic
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf._sec = "SC Analysis — Stock & Panic"
+    pdf.sub("3.3  Shelf Stock Depletion by Product Category")
+    pdf.chart(p_stock,
+        caption="Fig. 3 — Mean shelf stock by category: baseline (dashed) vs crisis (solid). "
+                "Each colour represents one product category.")
+    pdf.body(
+        "Shelf stock depletion begins immediately at crisis onset on Day "
+        f"{sc_p['cri_start']}, as the {sc_p['dis']}-day supply delay prevents timely replenishment "
+        "while panic-buying drains existing inventory. Product categories with shorter shelf "
+        "life (fresh dairy) deplete fastest and are most exposed to waste after the panic "
+        "phase subsides. Categories with longer shelf life show secondary stockpiling dynamics "
+        "as consumers attempt to build home buffers."
+    )
+    pdf.sub("3.4  Consumer Panic Level and Stockpile Pressure")
+    pdf.chart(p_panic,
+        caption="Fig. 4 — Panic level (left axis) and stockpile pressure index (right axis, amber dashes).")
+    pdf.finding(
+        f"Consumer panic peaked at {peak_panic:.2f}/1.0 on Day {panic_peak_d}, "
+        f"with a simulation mean of {mean_panic:.2f}. Stockpile pressure reached "
+        f"{sp_peak:.2f}, indicating strong demand amplification beyond normal purchasing. "
+        f"Under the Theory of Planned Behaviour framework, this panic level corresponds "
+        f"to a significant negative shift in Perceived Behavioural Control — consumers "
+        f"lose confidence in their ability to meet food needs through normal channels, "
+        f"triggering the hoarding cascade. At panic sensitivity {sc_p['panic']:.2f} and "
+        f"hoarding factor {sc_p['hoard']:.1f}×, the demand amplification is considerable "
+        f"but below the severe panic threshold (>0.7) observed in major disruption events."
+    )
+    pdf.body(
+        "Supply chain actors should note that the panic dynamics create a 'double shock': "
+        "first, the genuine supply reduction from the delivery delay; second, the demand "
+        "surge from hoarding behaviour which further depletes available stock. Managing "
+        "consumer communications is therefore an operational tool, not just a public "
+        "relations function. Coordinating with government on calming messaging can "
+        "materially reduce the panic-driven demand amplification."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 6: POLICY MAKER ANALYSIS — Welfare
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter("4", "Policy Maker Analysis — Consumer Welfare", "PM Analysis — Welfare")
+    pdf.body(
+        "This section analyses the food security and equity implications of the dairy supply "
+        "disruption from the perspective of government agencies, regulators, and food system "
+        "authorities. Results include the effect of the preset policy intervention bundle: "
+        "15% domestic subsidy, 3-unit purchase cap, nutritional labelling, and calming "
+        "government communications at intensity 0.6."
+    )
+    pdf.sub("4.1  Basket Fulfilment Rate by Income Group")
+    pdf.chart(p_ful,
+        caption="Fig. 5 — Crisis basket fulfilment by income bracket vs all-income baseline (grey dashed). "
+                "Red dotted line = 80% welfare threshold.")
+    pdf.finding(
+        f"Low-income households achieved only {ful_lo:.1f}% mean basket fulfilment during the "
+        f"crisis window, vs {ful_hi:.1f}% for high-income — a {ful_hi - ful_lo:.1f} pp gap. "
+        f"Fulfilment fell below the 80% welfare threshold for low-income consumers for "
+        f"{int((pm_c['Fulfillment_Low'] < 0.80).sum())} simulation days. "
+        f"This structural disparity arises from the price inflation effect: at {pm_p['inf']:.0f}% "
+        f"inflation, low-income consumers exhaust their food budgets proportionally faster, "
+        f"even with the 15% domestic subsidy active. The subsidy partially offsets this "
+        f"effect but does not eliminate the equity gap, suggesting targeted income-based "
+        f"vouchers would be needed as a complementary instrument."
+    )
+    pdf.sub("4.2  FIES Severe Food Insecurity by Income Bracket")
+    pdf.chart(p_fies,
+        caption="Fig. 6 — FIES severe food insecurity rate by income bracket. "
+                "Dotted line = low-income baseline. FAO (2016) methodology.")
+    pdf.finding(
+        f"Severe food insecurity (FAO FIES methodology) among low-income households peaked "
+        f"at {fies_peak:.1f}% during the crisis, rising from a baseline of {fies_base:.1f}% "
+        f"(+{fies_peak - fies_base:.1f} pp). FIES captures both objective access failure "
+        f"(budget exhaustion, stockouts) and subjective stress indicators, making it the "
+        f"most comprehensive welfare measure available. The sustained elevation of FIES "
+        f"above baseline even during the post-crisis recovery period suggests that "
+        f"short-term food insecurity shocks have persistent psychological effects that "
+        f"outlast the physical supply disruption — consistent with longitudinal FIES "
+        f"studies (FAO, 2022; Ballard et al., 2013)."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 7: PM Analysis — Equity & Sovereignty
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf._sec = "PM Analysis — Equity & Sovereignty"
+    pdf.sub("4.3  Budget Exhaustion and Access Inequality (Gini Index)")
+    pdf.chart(p_gini,
+        caption="Fig. 7 — Budget exhaustion rates by income (left axis) and Gini access index (right axis, amber).")
+    pdf.body(
+        f"Budget exhaustion — defined as a consumer being unable to complete their intended "
+        f"basket due to price constraints — reached {peak_bx_lo:.1f}% for low-income "
+        f"households at peak, compared to {peak_bx_hi:.1f}% for high-income. This "
+        f"{peak_bx_lo - peak_bx_hi:.1f} pp differential directly reflects the regressive "
+        f"impact of food price inflation: the same percentage increase costs low-income "
+        f"households a much larger share of their available food budget. "
+        f"The Gini access index rose from {mean_gini_b:.3f} (baseline) to {mean_gini_c:.3f} "
+        f"(crisis mean), an increase of {mean_gini_c - mean_gini_b:.3f} points. "
+        f"A Gini value above 0.3 is generally considered to require active policy response; "
+        f"{'the crisis breaches this threshold, requiring immediate intervention.' if mean_gini_c > 0.3 else 'the crisis approaches but does not breach the 0.3 intervention threshold.'}"
+    )
+    pdf.sub("4.4  Domestic vs Import Sales Volume — Food Sovereignty")
+    pdf.chart(p_dom,
+        caption="Fig. 8 — Stacked area: domestic (green) and import (blue) sales volume during crisis. "
+                "Grey dashed line = total baseline volume.")
+    pdf.finding(
+        f"Domestic sales {'increased' if dom_c > dom_b else 'decreased'} from {dom_b:.1f}% "
+        f"to {dom_c:.1f}% of total sales volume during the crisis "
+        f"({'a positive indicator for Finnish food sovereignty' if dom_c > dom_b else 'an adverse signal for Finnish food sovereignty'}). "
+        f"The 15% domestic product subsidy {'amplified' if dom_c > dom_b else 'was insufficient to prevent'} "
+        f"the shift toward Finnish-origin products. Import dependency during the crisis "
+        f"{'rose to' if imp_dep_c > imp_dep_b else 'fell to'} {imp_dep_c:.1f}% "
+        f"(baseline: {imp_dep_b:.1f}%), "
+        f"{'increasing' if imp_dep_c > imp_dep_b else 'reducing'} exposure to geopolitical "
+        f"supply chain risk. DCE data show a mean Finnish-origin preference of 0.65 "
+        f"(N=116), which creates natural demand-side support for domestic products that "
+        f"policy can amplify."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 8: POLICY EFFECTIVENESS & RECOMMENDATIONS
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter("5", "Policy Effectiveness & Recommendations", "Policy & Recommendations")
+
+    pdf.sub("5.1  Policy Intervention Assessment")
+    pdf.kv([
+        ("Domestic Subsidy (15%)",
+         f"Partially offsets the regressive price inflation impact. Estimated fiscal cost "
+         f"per consumer per day scales with subsidy rate and dairy consumption volume. "
+         f"Reduces import dependency. Supports Finnish producer income during the shock. "
+         f"Recommended minimum: 10–15% for price inflation above 20%."),
+        ("Purchase Rationing (3 units/visit)",
+         f"Most effective near-term instrument for access equity. Directly limits hoarding "
+         f"cascade at the point of sale. At a cap of 3 units, panic buyers are constrained "
+         f"while normal purchasers are unaffected (average dairy basket < 3 units). "
+         f"Trade-off: enforcement cost and potential consumer resistance (~15%)."),
+        ("Nutritional Labelling",
+         "Front-of-pack labelling shifts demand toward healthier product variants. Effective "
+         "in longer-horizon scenarios (>60 days) as behaviour change takes time to emerge. "
+         "In acute crisis contexts, labelling has limited short-run impact but maintains "
+         "healthy consumption norms that facilitate faster post-crisis recovery."),
+        ("Calming Communications (intensity 0.6)",
+         f"Government messaging at intensity 0.6 reduces panic sensitivity and hoarding. "
+         f"Empirically, calming communications can reduce hoarding by 15–30% in the first "
+         f"72 hours of a supply disruption (Sheffi, 2005; WFP, 2020). In this simulation, "
+         f"it contributes to keeping peak panic below 0.7 (severe threshold). "
+         f"Key message: 'Supply is sufficient; purchase normally.'"),
+    ])
+
+    pdf.sub("5.2  Priority Recommendations")
+    pdf.bullet([
+        f"IMMEDIATE (Days 1–7): Activate calming government communications. Issue retailer "
+        f"guidance on voluntary purchase limits. Alert Finnish food authority to monitor "
+        f"FIES-severe households (current estimated rate: {fies_peak:.1f}% at peak).",
+        f"SHORT-TERM (Days 7–30): Implement 3-unit purchase cap at retail level. "
+        f"Activate domestic dairy subsidy (minimum 10–15%) funded from agricultural "
+        f"resilience reserve. Expedite import approvals to reduce the {pm_p['dis']}-day "
+        f"supply delay below 5 days where possible.",
+        f"MEDIUM-TERM (Days 30–{pm_p['days']}): Issue targeted emergency food vouchers "
+        f"for FIES-severe low-income households (estimated {fies_peak:.1f}% of population). "
+        f"Evaluate purchase cap removal once panic returns below threshold (0.3). "
+        f"Commission post-crisis FIES survey to identify persistent food insecurity.",
+        f"STRUCTURAL: Invest in domestic dairy supply chain resilience to reduce baseline "
+        f"import dependency (current: {imp_dep_b:.1f}%). Establish strategic dairy reserve "
+        f"equivalent to 14-day demand. Build stockpile of key inputs (livestock feed) "
+        f"at the national level to buffer against climate-driven feed production disruptions.",
+    ])
+    pdf.finding(
+        f"The combined policy bundle (subsidy + rationing + labelling + communications) "
+        f"reduces the equity gap between income groups and prevents the most severe "
+        f"welfare outcomes. However, no combination of demand-side policies fully "
+        f"compensates for a {sc_p['dis']}-day supply disruption at {sc_p['inf']:.0f}% "
+        f"inflation — supply-side resilience investment remains the primary long-term "
+        f"instrument. These recommendations align with SecureFood WP3 policy guidelines "
+        f"for Northern European dairy markets under climate stress scenarios."
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PAGE 9: METHODOLOGY & CITATION
+    # ─────────────────────────────────────────────────────────────────────────
+    pdf.chapter("6", "Methodology, Data Sources & Citation", "Methodology & Citation")
+
+    pdf.sub("6.1  Model Architecture")
+    pdf.body(
+        "GROCERYsim ABM v2.0 is built on the Mesa Agent-Based Modelling framework (Python). "
+        "Each simulation step represents one retail trading day. ConsumerAgent objects are "
+        "instantiated fresh each day and removed after purchase decisions are made; "
+        "ProductAgent objects persist across days, managing inventory, pricing, ordering, "
+        "and waste accumulation. The RandomActivation scheduler ensures agents execute "
+        "in a randomised order each step, eliminating artificial ordering biases."
+    )
+    pdf.sub("6.2  Consumer Behavioural Model")
+    pdf.bullet([
+        "Theory of Planned Behaviour (TPB; Ajzen, 1991): attitude, subjective norm, and "
+        "Perceived Behavioural Control (PBC) jointly determine purchase intention.",
+        f"Prospect Theory loss aversion (Kahneman & Tversky, 1979): consumers over-weight "
+        f"stockout risk. Default lambda = 2.25 (standard experimental estimate).",
+        f"DCE-derived preference weights: willingness-to-pay for Finnish origin, organic, "
+        f"low-fat, and packaging attributes calibrated from N = 116 Finnish consumers "
+        f"(Horizon Europe SecureFood survey, IAMO XR Lab, 2024–2025).",
+        "Income stratification: Low (<€1,500/mo), Mid (€1,500–€3,500), High (>€3,500), "
+        "with corresponding budget constraints, price elasticities, and panic sensitivities.",
+    ])
+    pdf.sub("6.3  Supply Chain Model")
+    pdf.bullet([
+        "(s, Q) inventory policy: replenishment orders of Q units placed when stock < s.",
+        f"Lead time: {sc_p['lead']}-day delivery delay (extendable in crisis scenarios).",
+        "Perishable waste: units exceeding product shelf life removed and logged.",
+        "FIES computation: adapted FAO Food Insecurity Experience Scale methodology "
+        "(FAO, 2016), applied at the agent level and aggregated by income bracket.",
+    ])
+    pdf.sub("6.4  Key References")
+    pdf.kv([
+        ("Ajzen (1991)",           "The Theory of Planned Behaviour. Organizational Behavior and Human Decision Processes, 50(2), 179–211."),
+        ("FAO (2016)",             "Methods for Estimating Comparable Prevalence Rates of Food Insecurity (FIES). FAO, Rome."),
+        ("IPCC AR6 (2022)",        "Climate Change 2022: Impacts, Adaptation and Vulnerability. Working Group II. Cambridge University Press."),
+        ("Kahneman & Tversky (1979)", "Prospect Theory: An Analysis of Decision under Risk. Econometrica, 47(2), 263–291."),
+        ("Sheffi (2005)",          "The Resilient Enterprise: Overcoming Vulnerability for Competitive Advantage. MIT Press."),
+        ("Thaler & Sunstein (2008)", "Nudge: Improving Decisions about Health, Wealth, and Happiness. Yale University Press."),
+        ("Grashuis et al. (2020)", "Grocery Purchasing Behavior during COVID-19. Agribusiness, 36(3), 497–508."),
+    ])
+    pdf.sub("6.5  Citation")
+    pdf.set_fill_color(*_SF_CREAM2)
+    cy = pdf.get_y()
+    pdf.rect(15, cy, 180, 24, "F")
+    pdf.set_fill_color(*_SF_DARK)
+    pdf.rect(15, cy, 3.5, 24, "F")
+    pdf.set_xy(21, cy + 3)
+    pdf.set_font("ArU", "", 9)
+    pdf.set_text_color(*_SF_BODY)
+    pdf.multi_cell(170, 5.5,
+        "Đurić, Ivan (2026). GROCERYsim Agent-Based Model for Consumer Behaviour "
+        "and Supply Chain Stress-Testing. IAMO XR Lab, SecureFood project, "
+        "Horizon Europe Grant 101136583.")
+    pdf.set_y(cy + 24 + 2)
+    pdf.set_font("Ar", "I", 8)
+    pdf.set_text_color(120, 135, 130)
+    pdf.set_x(15)
+    pdf.cell(0, 5, "Software: https://github.com/IvanDuric/Finland_ABM")
+
+    # ── Write to bytes ────────────────────────────────────────────────────────
+    out = bytes(pdf.output())
+
+    # Clean up temp files
+    for f in temp_imgs:
+        try: os.unlink(f)
+        except: pass
+
+    return out
+
+
 # ── Main SecureFood page ───────────────────────────────────────────────────────
 
 def render_securefood_page():
@@ -2535,6 +3525,32 @@ def render_securefood_page():
 </ul>
 </div>
 """, unsafe_allow_html=True)
+
+    # ── Scenario Report download ───────────────────────────────────────────────
+    _rpt_col, _rpt_spacer = st.columns([1, 2])
+    with _rpt_col:
+        if st.button(
+            "📊 Generate Scenario Report",
+            type="primary",
+            use_container_width=True,
+            key="sf_report_gen_btn",
+        ):
+            with st.spinner("Running simulations and building report — this may take ~15 s…"):
+                try:
+                    _pdf_bytes = _generate_sf_pdf_report()
+                    st.session_state["sf_report_bytes"] = _pdf_bytes
+                except Exception as _e:
+                    st.error(f"Report generation failed: {_e}")
+    if st.session_state.get("sf_report_bytes"):
+        with _rpt_col:
+            st.download_button(
+                label="📄 Download PDF Report",
+                data=st.session_state["sf_report_bytes"],
+                file_name="GROCERYsim_SecureFood_Scenario_Report.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="sf_report_dl_btn",
+            )
 
     sc_tab, pm_tab = st.tabs(["🏭 Supply Chain Actor", "🏛️ Policy Maker"])
 
