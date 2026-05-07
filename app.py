@@ -868,6 +868,7 @@ const TRANSLATIONS = {
     heroSub: 'Simulate consumer behavior and supply-chain dynamics in a retail environment. Stress-test the resilience of food supply chains under crisis scenarios — from panic buying to logistics disruption.',
     heroBtn: 'Explore case studies',
     heroDocsBtn: 'Read documentation',
+    heroAboutBtn: 'About',
     figCaption: 'Live store — cognitive shoppers, shelf inventory, periodic restock.',
     overviewLabel: 'WHAT IS GROCERYSIM',
     overviewTitle: 'A web application that lets stakeholders stress-test the resilience of food supply chains.',
@@ -891,6 +892,7 @@ const TRANSLATIONS = {
     heroSub: 'Simuloi kuluttajakäyttäytymistä ja elintarviketoimitusketjun dynamiikkaa kriisitilanteissa — paniikkiostoksista logistiikkahäiriöihin.',
     heroBtn: 'Tutustu tapaustutkimuksiin',
     heroDocsBtn: 'Lue dokumentaatio',
+    heroAboutBtn: 'Tietoa',
     figCaption: 'Reaaliaikainen kauppa — kognitiiviset ostajat, hyllyvarasto, jaksottainen täydennys.',
     overviewLabel: 'MIKÄ ON GROCERYSIM',
     overviewTitle: 'Verkkosovellus, jolla sidosryhmät voivat testata elintarviketoimitusketjujen kestävyyttä.',
@@ -914,6 +916,7 @@ const TRANSLATIONS = {
     heroSub: 'Προσομοιώστε τη συμπεριφορά καταναλωτών και τη δυναμική της εφοδιαστικής αλυσίδας τροφίμων σε σενάρια κρίσης — από πανικόβλητες αγορές έως διαταραχές εφοδιασμού.',
     heroBtn: 'Εξερευνήστε μελέτες περίπτωσης',
     heroDocsBtn: 'Διαβάστε την τεκμηρίωση',
+    heroAboutBtn: 'Σχετικά',
     figCaption: 'Ζωντανό κατάστημα — γνωστικοί αγοραστές, αποθέματα ραφιών, περιοδικός εφοδιασμός.',
     overviewLabel: 'ΤΙ ΕΙΝΑΙ ΤΟ GROCERYSIM',
     overviewTitle: 'Μια εφαρμογή που επιτρέπει στους φορείς να δοκιμάζουν την ανθεκτικότητα των αλυσίδων τροφίμων.',
@@ -937,6 +940,7 @@ const TRANSLATIONS = {
     heroSub: 'Simule o comportamento do consumidor e a dinâmica da cadeia de abastecimento alimentar em cenários de crise — do pânico nas compras às perturbações logísticas.',
     heroBtn: 'Explorar estudos de caso',
     heroDocsBtn: 'Ler documentação',
+    heroAboutBtn: 'Sobre',
     figCaption: 'Loja ao vivo — compradores cognitivos, inventário de prateleiras, reabastecimento periódico.',
     overviewLabel: 'O QUE É O GROCERYSIM',
     overviewTitle: 'Uma aplicação web que permite às partes interessadas testar a resiliência das cadeias de abastecimento alimentar.',
@@ -1007,87 +1011,163 @@ const Header = ({ lang, setLang }) => (
   </header>
 );
 
+// ── Hero logo link targets ────────────────────────────────────────────────────
+const HERO_LOGO_LINKS = [
+  'https://research-and-innovation.ec.europa.eu/funding/funding-opportunities/funding-programmes-and-open-calls/horizon-europe_en',
+  'https://secure-food.eu',
+  'https://www.iamo.de',
+  'https://www.iamo.de/forschung/forschungsprojekte/details/iamo-xr-lab',
+];
+
+// ── About modal ───────────────────────────────────────────────────────────────
+const AboutModal = ({ onClose }) => (
+  <div
+    onClick={onClose}
+    style={{position:'fixed',inset:0,zIndex:9999,display:'flex',alignItems:'center',
+            justifyContent:'center',background:'rgba(4,32,38,0.78)',backdropFilter:'blur(5px)'}}>
+    <div
+      onClick={e => e.stopPropagation()}
+      style={{background:'#FAF6EC',borderRadius:'10px',padding:'32px 36px',maxWidth:'500px',
+              width:'92%',boxShadow:'0 12px 48px rgba(0,0,0,0.45)',position:'relative',
+              fontFamily:'Figtree,sans-serif',color:'#042026'}}>
+      {/* close button */}
+      <button onClick={onClose}
+        style={{position:'absolute',top:'12px',right:'16px',background:'none',border:'none',
+                fontSize:'22px',lineHeight:1,cursor:'pointer',color:'#042026',opacity:0.5}}>
+        &#xd7;
+      </button>
+      {/* heading */}
+      <h2 style={{fontSize:'15px',fontWeight:800,letterSpacing:'-0.01em',margin:'0 0 8px',
+                  paddingBottom:'10px',borderBottom:'2px solid #DBA159'}}>
+        About GROCERYsim
+      </h2>
+      {/* body text */}
+      <p style={{fontSize:'13px',lineHeight:1.65,margin:'12px 0'}}>
+        This application is part of an academic study on food consumption patterns in Finland.
+        All data collected is anonymous and used strictly for research analysis.
+      </p>
+      <p style={{fontSize:'12px',fontWeight:700,margin:'14px 0 4px',
+                 textTransform:'uppercase',letterSpacing:'0.08em',color:'#DBA159'}}>
+        Author
+      </p>
+      <p style={{fontSize:'13px',lineHeight:1.75,margin:'0 0 14px'}}>
+        Dr. Ivan &#x110;uri&#x107;<br/>
+        IAMO XR LAB Coordinator<br/>
+        Leibniz Institute of Agricultural Development in Transition Economies (IAMO)<br/>
+        Theodor-Lieser Str.&#x202F;2, 06120, Halle (Saale), Germany<br/>
+        <a href="https://www.iamo.de" target="_blank" rel="noreferrer"
+           style={{color:'#DBA159',textDecoration:'none',fontWeight:600}}>
+          www.iamo.de
+        </a>
+      </p>
+      <p style={{fontSize:'12px',fontWeight:700,margin:'0 0 4px',
+                 textTransform:'uppercase',letterSpacing:'0.08em',color:'#DBA159'}}>
+        Citation
+      </p>
+      <p style={{fontSize:'12px',lineHeight:1.65,fontStyle:'italic',
+                 background:'#F0E9DA',borderRadius:'6px',padding:'10px 12px',margin:0}}>
+        &#x110;uri&#x107;, Ivan (2026). GROCERYsim Agent-Based Model for Consumer Behaviour
+        and Supply Chain Stress-Testing. IAMO XR Lab, SecureFood project,
+        Horizon Europe Grant 101136583.
+      </p>
+    </div>
+  </div>
+);
+
 // ── Hero ─────────────────────────────────────────────────────────────────────
-const Hero = ({ t }) => (
+const Hero = ({ t }) => {
+  const [showAbout, setShowAbout] = React.useState(false);
+  return (
   <section className="hero">
-    <div className="hero-left" style={{position: 'relative', zIndex: 5}}>
-      <div className="eyebrow">
-        <span className="eyebrow-line" />
-        <span>{t.eyebrow}</span>
-      </div>
-      <h1 className="hero-title" style={{color: '#F4EFE6'}}>
-        <span className="title-name">
-          <span style={{color: '#F4EFE6', fontWeight: 800}}>GROCERY</span><span style={{color: '#DBA159', fontStyle: 'italic', fontWeight: 300}}>sim</span>
-        </span>
-        <span className="title-tag">ABM</span>
-      </h1>
-      <p className="hero-lede" style={{color: '#F4EFE6'}}>{t.heroLede}</p>
-      <p className="hero-sub">{t.heroSub}</p>
-      <div className="hero-actions">
-        <button className="btn btn-primary" onClick={() => {
-          try { window.parent.postMessage({type:'launch_case_studies'}, '*'); } catch(e) {}
-        }}>
-          {t.heroBtn}
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M3 7h8m0 0L7.5 3.5M11 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        <a className="btn btn-ghost" href="#"
-           onClick={(e) => {
-             e.preventDefault();
-             const uri = (typeof PDF_URI !== 'undefined' && PDF_URI) ? PDF_URI : null;
-             if (uri) {
-               const a = document.createElement('a');
-               a.href = uri;
-               a.download = 'GROCERYsim_User_Manual.pdf';
-               document.body.appendChild(a);
-               a.click();
-               document.body.removeChild(a);
-             }
-           }}>{t.heroDocsBtn}</a>
-      </div>
-      <div className="hero-logos">
-        <div className="hero-logos-row">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className={'hero-logo-slot' + (LOGO_CONFIG.hero[i] ? ' has-logo' : '')}
-                 aria-label={'Partner logo ' + (i+1)}>
-              {LOGO_CONFIG.hero[i]
-                ? (/* HERO LOGO SIZE
-                      Slot 0 (EU.png)  — change the first  maxHeight / padding values below
-                      Slots 1-3        — change the second maxHeight / padding values below */
-                   <img src={LOGO_CONFIG.hero[i]} alt={'Partner ' + (i+1)}
-                        style={{maxWidth:'100%',
-                                maxHeight: i === 0 ? '52px' : '40px',
-                                objectFit:'contain', display:'block', margin:'auto',
-                                padding:  i === 0 ? '3px 6px' : '5px 8px'}} />)
-                : (<>
-                    <svg viewBox="0 0 120 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-                      <defs>
-                        <pattern id={'hlogo-stripe-' + i} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                          <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(146,221,219,0.18)" strokeWidth="2"/>
-                        </pattern>
-                      </defs>
-                      <rect width="120" height="48" fill={'url(#hlogo-stripe-' + i + ')'} />
-                    </svg>
-                    <span className="hero-logo-tag mono">{'LOGO ' + String(i+1).padStart(2,'0')}</span>
-                  </>)
-              }
-            </div>
-          ))}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+      <div className="hero-left" style={{position: 'relative', zIndex: 5}}>
+        <div className="eyebrow">
+          <span className="eyebrow-line" />
+          <span>{t.eyebrow}</span>
+        </div>
+        <h1 className="hero-title" style={{color: '#F4EFE6'}}>
+          <span className="title-name">
+            <span style={{color: '#F4EFE6', fontWeight: 800}}>GROCERY</span><span style={{color: '#DBA159', fontStyle: 'italic', fontWeight: 300}}>sim</span>
+          </span>
+          <span className="title-tag">ABM</span>
+        </h1>
+        <p className="hero-lede" style={{color: '#F4EFE6'}}>{t.heroLede}</p>
+        <p className="hero-sub">{t.heroSub}</p>
+        <div className="hero-actions">
+          <button className="btn btn-primary" onClick={() => {
+            try { window.parent.postMessage({type:'launch_case_studies'}, '*'); } catch(e) {}
+          }}>
+            {t.heroBtn}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M3 7h8m0 0L7.5 3.5M11 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <a className="btn btn-ghost" href="#"
+             onClick={(e) => {
+               e.preventDefault();
+               const uri = (typeof PDF_URI !== 'undefined' && PDF_URI) ? PDF_URI : null;
+               if (uri) {
+                 const a = document.createElement('a');
+                 a.href = uri;
+                 a.download = 'GROCERYsim_User_Manual.pdf';
+                 document.body.appendChild(a);
+                 a.click();
+                 document.body.removeChild(a);
+               }
+             }}>{t.heroDocsBtn}</a>
+          <a className="btn btn-ghost" href="#"
+             onClick={(e) => { e.preventDefault(); setShowAbout(true); }}>
+            {t.heroAboutBtn}
+          </a>
+        </div>
+        <div className="hero-logos">
+          <div className="hero-logos-row">
+            {[0, 1, 2, 3].map((i) => (
+              <a key={i}
+                 href={HERO_LOGO_LINKS[i]}
+                 target="_blank"
+                 rel="noreferrer"
+                 className={'hero-logo-slot' + (LOGO_CONFIG.hero[i] ? ' has-logo' : '')}
+                 aria-label={'Partner logo ' + (i+1)}
+                 style={{textDecoration:'none', cursor:'pointer'}}>
+                {LOGO_CONFIG.hero[i]
+                  ? (/* HERO LOGO SIZE
+                        Slot 0 (EU.png)  — change the first  maxHeight / padding values below
+                        Slots 1-3        — change the second maxHeight / padding values below */
+                     <img src={LOGO_CONFIG.hero[i]} alt={'Partner ' + (i+1)}
+                          style={{maxWidth:'100%',
+                                  maxHeight: i === 0 ? '52px' : '40px',
+                                  objectFit:'contain', display:'block', margin:'auto',
+                                  padding:  i === 0 ? '3px 6px' : '5px 8px'}} />)
+                  : (<>
+                      <svg viewBox="0 0 120 48" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                        <defs>
+                          <pattern id={'hlogo-stripe-' + i} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(146,221,219,0.18)" strokeWidth="2"/>
+                          </pattern>
+                        </defs>
+                        <rect width="120" height="48" fill={'url(#hlogo-stripe-' + i + ')'} />
+                      </svg>
+                      <span className="hero-logo-tag mono">{'LOGO ' + String(i+1).padStart(2,'0')}</span>
+                    </>)
+                }
+              </a>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
-    <div className="hero-right">
-      <div className="sim-frame">
-        <GroceryStore palette={PALETTE} />
+      <div className="hero-right">
+        <div className="sim-frame">
+          <GroceryStore palette={PALETTE} />
+        </div>
+        <div className="sim-caption">
+          <span className="mono">FIG&nbsp;01</span>
+          <span>{t.figCaption}</span>
+        </div>
       </div>
-      <div className="sim-caption">
-        <span className="mono">FIG&nbsp;01</span>
-        <span>{t.figCaption}</span>
-      </div>
-    </div>
-  </section>
-);
+    </section>
+  );
+};
 
 // ── Overview ─────────────────────────────────────────────────────────────────
 const Overview = ({ t }) => (
