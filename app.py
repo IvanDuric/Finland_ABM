@@ -5902,6 +5902,12 @@ def render_demo_tab(params: dict):
                     "lost_sales":      float(_df_r["LostSales"].sum()),
                     "waste":           float(_df_r["Waste"].sum()),
                     "fulfillment":     float(_df_r["FulfillmentRate"].mean()),
+                    "co2":             float(_df_r["CO2Total"].mean()) if "CO2Total" in _df_r.columns else 0.0,
+                    "import_dep":      float(_df_r["ImportDepPct"].mean()) if "ImportDepPct" in _df_r.columns else 0.0,
+                    "fies_low":        float(_df_r["FIESSevere_Low"].mean()) if "FIESSevere_Low" in _df_r.columns else 0.0,
+                    "panic_peak":      float(_df_r["PanicLevel"].max()) if "PanicLevel" in _df_r.columns else 0.0,
+                    "tags":            [],
+                    "notes":           "",
                     "df":             _df_r.copy(),
                 }
                 st.session_state.saved_scenarios.append(_entry)
@@ -10163,165 +10169,766 @@ def render_sensitivity_tab(params: dict):
         key="dl_sa",
     )
 
+    # ── Global Sensitivity Analysis (Morris + PRCC) ────────────────────────────
+    st.divider()
+    st.markdown("## 🔬 Global Sensitivity Analysis")
+    st.markdown(
+        "**Morris Method** (elementary effects, Saltelli et al. 2008) distinguishes *influential* parameters (high μ\\*) "
+        "from those with *non-linear / interaction* effects (high σ). "
+        "**PRCC** (Partial Rank Correlation Coefficient) measures the monotonic relationship "
+        "between each parameter and the output *after removing* the linear effects of all others — "
+        "a robust global sensitivity measure for non-linear models."
+    )
+
+    _gcol1, _gcol2, _gcol3 = st.columns(3)
+    with _gcol1:
+        gsa_metric = st.selectbox("Output metric (GSA)", list(OUTPUT_METRICS.keys()),
+                                   format_func=lambda k: OUTPUT_METRICS[k], key="gsa_metric")
+    with _gcol2:
+        gsa_traj = st.slider("Morris trajectories (r)", 4, 12, 6, key="gsa_traj",
+                              help="r × (k+1) total runs. More trajectories → more stable μ* estimates.")
+    with _gcol3:
+        gsa_days = st.slider("Days per GSA run", 14, 60, 30, key="gsa_days")
+
+    if st.button("🔬 Run Global Sensitivity Analysis", type="primary", key="gsa_run_btn"):
+        from scipy.stats import spearmanr
+        from sklearn.linear_model import LinearRegression as _LR
+
+        _gsa_params = {k: v for k, v in PARAM_DEFS.items()
+                       if v["key"] is not None or sa_include_policy}
+        _gpl = list(_gsa_params.items())   # [(name, def), ...]
+        _k   = len(_gpl)
+        _r   = gsa_traj
+        _p   = 4          # Morris grid levels
+        _D   = _p / (2 * (_p - 1))   # Δ = 2/3
+
+        def _gsa_run(x_vec):
+            _ov = {}
+            for _j, (_pn, _pd) in enumerate(_gpl):
+                _ov[_pn] = _pd["min"] + x_vec[_j] * (_pd["max"] - _pd["min"])
+            _pp = {**params, **_ov}
+            _mm = _make_model(_pp, is_crisis=False, seed=42)
+            for _ in range(gsa_days):
+                _mm.step()
+            _vals = [_rec.get(gsa_metric, 0) for _rec in _mm.daily_records]
+            return float(np.mean(_vals)) if _vals else 0.0
+
+        _rng_gsa = np.random.default_rng(seed=77)
+        _all_ee  = {_pn: [] for _pn, _ in _gpl}
+
+        _total_morris = _r * (_k + 1)
+        _gsa_prog = st.progress(0, text="Morris trajectories…")
+        _run_n    = [0]
+
+        for _traj in range(_r):
+            # random starting point on the Morris grid
+            _x = np.array([
+                _rng_gsa.choice(np.linspace(0.0, 1.0 - _D, max(2, int(round(1.0 / _D)))))
+                for _ in _gpl
+            ])
+            _perm = _rng_gsa.permutation(_k)
+            _y_prev = _gsa_run(_x)
+            _run_n[0] += 1
+            _gsa_prog.progress(_run_n[0] / _total_morris, f"Morris {_traj+1}/{_r}…")
+
+            for _j_idx in range(_k):
+                _i = _perm[_j_idx]
+                _xn = _x.copy()
+                _sign = 1 if _rng_gsa.random() > 0.5 else -1
+                _xn[_i] = float(np.clip(_x[_i] + _sign * _D, 0.0, 1.0))
+                _denom = (_xn[_i] - _x[_i]) * (_gpl[_i][1]["max"] - _gpl[_i][1]["min"])
+                if abs(_denom) < 1e-12:
+                    _denom = _sign * _D * (_gpl[_i][1]["max"] - _gpl[_i][1]["min"])
+                _y_new = _gsa_run(_xn)
+                _run_n[0] += 1
+                _gsa_prog.progress(_run_n[0] / _total_morris, f"Morris {_traj+1}/{_r}…")
+                _all_ee[_gpl[_i][0]].append((_y_new - _y_prev) / _denom)
+                _x = _xn
+                _y_prev = _y_new
+
+        _morris_stats = {}
+        for _pn, _ees in _all_ee.items():
+            _arr = np.array(_ees) if _ees else np.zeros(1)
+            _morris_stats[_pn] = {
+                "mu_star": float(np.mean(np.abs(_arr))),
+                "mu":      float(np.mean(_arr)),
+                "sigma":   float(np.std(_arr)),
+            }
+
+        # PRCC — Latin Hypercube samples
+        _n_prcc = max(40, _r * _k * 2)
+        _lhs = np.zeros((_n_prcc, _k))
+        for _j in range(_k):
+            _prm = _rng_gsa.permutation(_n_prcc)
+            _lhs[:, _j] = (_prm + _rng_gsa.random(_n_prcc)) / _n_prcc
+
+        _prcc_prog = st.progress(0, text="PRCC Latin Hypercube samples…")
+        _prcc_y = []
+        for _si in range(_n_prcc):
+            _prcc_prog.progress((_si + 1) / _n_prcc, f"PRCC sample {_si+1}/{_n_prcc}…")
+            _prcc_y.append(_gsa_run(_lhs[_si]))
+        _ya = np.array(_prcc_y)
+
+        _prcc_scores = {}
+        for _j, (_pn, _) in enumerate(_gpl):
+            _xj = _lhs[:, _j]
+            _oth = np.delete(_lhs, _j, axis=1)
+            if _oth.shape[1] > 0:
+                _rx = _LR().fit(_oth, _xj).predict(_oth)
+                _ry = _LR().fit(_oth, _ya).predict(_oth)
+                _res_x = _xj - _rx
+                _res_y = _ya - _ry
+            else:
+                _res_x, _res_y = _xj, _ya
+            _rval, _pval = spearmanr(_res_x, _res_y)
+            _prcc_scores[_pn] = {"prcc": float(_rval), "p_value": float(_pval)}
+
+        st.session_state["gsa_results"] = {
+            "morris": _morris_stats,
+            "prcc":   _prcc_scores,
+            "metric": gsa_metric,
+            "labels": {_pn: PARAM_DEFS[_pn]["label"] for _pn, _ in _gpl},
+        }
+        st.success(f"✅ GSA complete — {_total_morris + _n_prcc} total runs.")
+
+    if st.session_state.get("gsa_results"):
+        _gr     = st.session_state["gsa_results"]
+        _labels = _gr["labels"]
+        _met_lbl = OUTPUT_METRICS.get(_gr["metric"], _gr["metric"])
+
+        _t_morris, _t_prcc = st.tabs(["📊 Morris Elementary Effects", "📉 PRCC"])
+
+        with _t_morris:
+            st.markdown(
+                "**μ\\*** = mean |EE| — overall sensitivity. "
+                "**σ** = std(EE) — non-linearity / interaction effects. "
+                "Parameters in the **upper-right** region are both influential *and* non-linear."
+            )
+            _df_mo = pd.DataFrame([
+                {"Parameter":           _labels[_pn],
+                 "μ* (sensitivity)":    _v["mu_star"],
+                 "σ (non-linearity)":   _v["sigma"],
+                 "μ (direction)":       _v["mu"]}
+                for _pn, _v in _gr["morris"].items()
+            ]).sort_values("μ* (sensitivity)", ascending=False)
+
+            _fig_mob = px.bar(
+                _df_mo, x="μ* (sensitivity)", y="Parameter", orientation="h",
+                title=f"Morris μ* — {_met_lbl}",
+                color="μ* (sensitivity)",
+                color_continuous_scale=["#44A1A0", "#DBA159", "#DC143C"],
+            )
+            _fig_mob.update_layout(template="plotly_white", yaxis=dict(autorange="reversed"),
+                                   coloraxis_showscale=False)
+            st.plotly_chart(_fig_mob, use_container_width=True, config=_PLOTLY_CFG)
+
+            _fig_ms = px.scatter(
+                _df_mo, x="μ* (sensitivity)", y="σ (non-linearity)",
+                text="Parameter",
+                title="Morris μ* vs σ — Sensitivity vs Non-linearity",
+                color="μ* (sensitivity)",
+                color_continuous_scale=["#44A1A0", "#DC143C"],
+                size="μ* (sensitivity)", size_max=28,
+            )
+            _fig_ms.update_traces(textposition="top center", textfont_size=10)
+            _fig_ms.update_layout(template="plotly_white", coloraxis_showscale=False)
+            st.plotly_chart(_fig_ms, use_container_width=True, config=_PLOTLY_CFG)
+            st.dataframe(_df_mo.round(4), use_container_width=True, hide_index=True)
+
+        with _t_prcc:
+            st.markdown(
+                "**PRCC** values near ±1 indicate a strong monotonic influence. "
+                "Red bars = positive effect (higher param → higher output). "
+                "Blue bars = negative effect. ✅ = significant at p < 0.05."
+            )
+            _df_pc = pd.DataFrame([
+                {"Parameter": _labels[_pn],
+                 "PRCC":      _v["prcc"],
+                 "p-value":   _v["p_value"],
+                 "Significant": "✅" if _v["p_value"] < 0.05 else "—"}
+                for _pn, _v in _gr["prcc"].items()
+            ]).sort_values("PRCC", key=abs, ascending=False)
+
+            _pc_colors = ["#DC143C" if v > 0 else "#2980b9" for v in _df_pc["PRCC"]]
+            _fig_pc = go.Figure(go.Bar(
+                x=_df_pc["PRCC"], y=_df_pc["Parameter"],
+                orientation="h", marker_color=_pc_colors,
+            ))
+            _fig_pc.add_vline(x=0, line_color="#042026", line_width=1.5)
+            _fig_pc.update_layout(
+                title=f"PRCC — {_met_lbl}",
+                template="plotly_white",
+                xaxis=dict(range=[-1, 1], title="PRCC"),
+                yaxis=dict(autorange="reversed"),
+                margin=dict(l=160),
+            )
+            st.plotly_chart(_fig_pc, use_container_width=True, config=_PLOTLY_CFG)
+            st.dataframe(_df_pc.round(4), use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 Download GSA Results (CSV)",
+                _df_pc.to_csv(index=False).encode("utf-8"),
+                "gsa_results.csv", "text/csv", key="dl_gsa",
+            )
+
+
+# ===========================================================================
+# 11e. MODEL CALIBRATION TAB
+# ===========================================================================
+
+def render_calibration_tab(params: dict):
+    st.header("🎯 Model Calibration")
+    st.markdown(
+        "**Calibration** fits model parameters to empirical targets using "
+        "**Latin Hypercube Sampling** (LHS) + RMSE minimisation. "
+        "Upload a real sales time series or specify target KPI values, "
+        "then apply the best-fit parameters directly to the simulation sliders."
+    )
+
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Upload and process data in **🏠 Data & Population** first.")
+        return
+
+    # ── Calibration target ────────────────────────────────────────────────────
+    st.subheader("🎯 Calibration Target")
+    _cal_mode = st.radio(
+        "Target type",
+        ["📊 Target KPI Values", "📁 Upload Time Series CSV"],
+        horizontal=True, key="cal_mode",
+    )
+
+    _target_revenue    = None
+    _target_fulfilment = None
+    _target_waste      = None
+    _target_series     = None
+    _target_col        = "Revenue"
+
+    if "📊 Target KPI Values" in _cal_mode:
+        _tc1, _tc2, _tc3 = st.columns(3)
+        with _tc1:
+            _target_revenue = st.number_input(
+                "Avg Daily Revenue (€)", 100.0, 50000.0, 5000.0, 100.0, key="cal_rev_t")
+        with _tc2:
+            _target_fulfilment = st.number_input(
+                "Fulfilment Rate (%)", 50.0, 100.0, 92.0, 0.5, key="cal_ful_t")
+        with _tc3:
+            _target_waste = st.number_input(
+                "Waste Rate (%)", 0.5, 20.0, 2.5, 0.1, key="cal_waste_t")
+        _target_col = st.selectbox(
+            "Primary metric for RMSE", ["Revenue", "FulfillmentRate", "Waste"],
+            key="cal_primary_col",
+        )
+    else:
+        _uploaded_ts = st.file_uploader(
+            "CSV with columns Day + one metric column (e.g. daily revenue)",
+            type=["csv"], key="cal_ts_upload",
+        )
+        if _uploaded_ts:
+            try:
+                _target_series = pd.read_csv(_uploaded_ts)
+                st.success(f"✅ Loaded {len(_target_series)} rows")
+                st.dataframe(_target_series.head(8), use_container_width=True, hide_index=True)
+                _non_day = [c for c in _target_series.columns if c.lower() != "day"]
+                _target_col = st.selectbox(
+                    "Calibrate against column", _non_day, key="cal_ts_col")
+            except Exception as _e:
+                st.error(f"Could not read CSV: {_e}")
+
+    # ── Parameters to calibrate ───────────────────────────────────────────────
+    st.divider()
+    st.subheader("⚙️ Free Parameters")
+    _CAL_PARAMS = {
+        "base_consumers": {"label": "Consumers / day",  "min": 30,   "max": 250,  "default": True},
+        "reorder_pt":     {"label": "Reorder Point",    "min": 0.10, "max": 0.60, "default": True},
+        "target_stock":   {"label": "Restock Target",   "min": 0.60, "max": 0.99, "default": True},
+        "lead_time":      {"label": "Lead Time (days)", "min": 1,    "max": 10,   "default": True},
+        "panic_sens":     {"label": "Panic Sensitivity","min": 0.10, "max": 0.80, "default": False},
+        "inflation":      {"label": "Inflation %",      "min": 0,    "max": 50,   "default": False},
+    }
+    _active_cal = {}
+    _chk_cols   = st.columns(3)
+    for _ci, (_pn, _pd) in enumerate(_CAL_PARAMS.items()):
+        with _chk_cols[_ci % 3]:
+            if st.checkbox(
+                f"**{_pd['label']}** ({_pd['min']}–{_pd['max']})",
+                value=_pd["default"], key=f"cal_chk_{_pn}",
+            ):
+                _active_cal[_pn] = _pd
+
+    if not _active_cal:
+        st.warning("Select at least one parameter to calibrate.")
+        return
+
+    _cc1, _cc2 = st.columns(2)
+    with _cc1:
+        _cal_n = st.slider("LHS samples (N)", 20, 200, 60, 10, key="cal_n",
+                            help="More samples → better parameter space coverage but slower.")
+    with _cc2:
+        _cal_days = st.slider("Days per run", 14, 60, 30, key="cal_days")
+
+    st.info(
+        f"Will run **{_cal_n}** LHS samples × {_cal_days} days "
+        f"over **{len(_active_cal)}** free parameters "
+        f"({_cal_n * len(_active_cal)} total evaluations)."
+    )
+
+    if st.button("🎯 Run Calibration", type="primary", key="cal_run_btn"):
+        _cal_list = list(_active_cal.items())
+        _kc = len(_cal_list)
+        _rng_cal = np.random.default_rng(seed=42)
+
+        # Latin Hypercube Sampling
+        _lhs_cal = np.zeros((_cal_n, _kc))
+        for _j in range(_kc):
+            _prm = _rng_cal.permutation(_cal_n)
+            _lhs_cal[:, _j] = (_prm + _rng_cal.random(_cal_n)) / _cal_n
+
+        _cal_prog = st.progress(0, text="Running calibration…")
+        _cal_results = []
+
+        for _si in range(_cal_n):
+            _cal_prog.progress((_si + 1) / _cal_n, f"Sample {_si+1}/{_cal_n}…")
+            _ov = {}
+            _sp = {}
+            for _j, (_pn, _pd) in enumerate(_cal_list):
+                _val = _pd["min"] + _lhs_cal[_si, _j] * (_pd["max"] - _pd["min"])
+                _ov[_pn] = _val
+                _sp[_pn] = round(_val, 3)
+
+            try:
+                _pm = {**params, **_ov}
+                _mc = _make_model(_pm, is_crisis=False, seed=42)
+                for _ in range(_cal_days):
+                    _mc.step()
+                _df_c = pd.DataFrame(_mc.daily_records)
+                if _df_c.empty:
+                    continue
+
+                # Compute normalised RMSE
+                _rmse_parts = []
+                if "📊 Target KPI Values" in _cal_mode:
+                    if _target_revenue and "Revenue" in _df_c.columns:
+                        _rmse_parts.append(
+                            float(np.sqrt(np.mean((_df_c["Revenue"] - _target_revenue) ** 2)))
+                            / max(_target_revenue, 1)
+                        )
+                    if _target_fulfilment and "FulfillmentRate" in _df_c.columns:
+                        _rmse_parts.append(
+                            float(np.sqrt(np.mean((_df_c["FulfillmentRate"] * 100 - _target_fulfilment) ** 2)))
+                            / 100
+                        )
+                    if _target_waste and "Waste" in _df_c.columns:
+                        _tot = max(float(_df_c.get("Revenue", pd.Series([100])).mean()), 1)
+                        _wpct = float((_df_c["Waste"] / _tot * 100).mean())
+                        _rmse_parts.append(abs(_wpct - _target_waste) / 10)
+                    _rmse = float(np.mean(_rmse_parts)) if _rmse_parts else 999.0
+                elif _target_series is not None and _target_col in _target_series.columns and _target_col in _df_c.columns:
+                    _sv = _df_c[_target_col].values
+                    _tv = _target_series[_target_col].values
+                    _n  = min(len(_sv), len(_tv))
+                    _rmse = float(np.sqrt(np.mean((_sv[:_n] - _tv[:_n]) ** 2)))
+                else:
+                    continue
+
+                _cal_results.append({
+                    "rmse":       _rmse,
+                    "params":     _sp,
+                    "revenue":    float(_df_c["Revenue"].mean()) if "Revenue" in _df_c.columns else 0.0,
+                    "fulfilment": float(_df_c["FulfillmentRate"].mean()) if "FulfillmentRate" in _df_c.columns else 0.0,
+                    "waste":      float(_df_c["Waste"].mean()) if "Waste" in _df_c.columns else 0.0,
+                    "df":         _df_c,
+                })
+            except Exception:
+                continue
+
+        _cal_results.sort(key=lambda x: x["rmse"])
+        st.session_state["cal_results"] = _cal_results
+
+    # ── Display results ───────────────────────────────────────────────────────
+    if st.session_state.get("cal_results"):
+        _cr    = st.session_state["cal_results"]
+        _best  = _cr[0]
+
+        st.success(f"✅ Calibration complete — best normalised RMSE = **{_best['rmse']:.4f}**")
+
+        st.subheader("🏆 Best-Fit Parameters")
+        _bpc = st.columns(len(_best["params"]))
+        for _bi, (_pn, _pv) in enumerate(_best["params"].items()):
+            _bpc[_bi].metric(_active_cal[_pn]["label"], f"{_pv:.3f}")
+
+        if st.button("⚡ Apply Calibrated Parameters to Simulation",
+                     type="primary", key="cal_apply_btn"):
+            _KEY_MAP = {
+                "base_consumers": "base_con",
+                "reorder_pt":     "reorder",
+                "target_stock":   "target",
+                "lead_time":      "lead",
+                "panic_sens":     "panic",
+                "inflation":      "inf",
+            }
+            for _pn, _pv in _best["params"].items():
+                _ssk = _KEY_MAP.get(_pn, _pn)
+                if _ssk:
+                    st.session_state[_ssk] = _pv
+            st.success("✅ Applied! Go to 🎮 Interactive Demo and re-run the simulation.")
+
+        # Top-10 table
+        st.subheader("📊 Top 10 Calibration Runs")
+        _top10 = _cr[:10]
+        _t10_rows = []
+        for _ri, _rr in enumerate(_top10):
+            _row = {"Rank": _ri + 1, "RMSE": f"{_rr['rmse']:.4f}",
+                    "Revenue": f"{_rr['revenue']:.0f}",
+                    "Fulfilment": f"{_rr['fulfilment']:.3f}"}
+            for _pn, _pv in _rr["params"].items():
+                _row[_active_cal[_pn]["label"]] = f"{_pv:.3f}"
+            _t10_rows.append(_row)
+        st.dataframe(pd.DataFrame(_t10_rows), use_container_width=True, hide_index=True)
+
+        # RMSE histogram
+        _rmse_all = [_rr["rmse"] for _rr in _cr]
+        _fig_rh = go.Figure(go.Histogram(
+            x=_rmse_all, nbinsx=20,
+            marker_color="#DBA159", marker_line_color="#042026", marker_line_width=0.8,
+        ))
+        _fig_rh.add_vline(x=_best["rmse"], line_color="#DC143C", line_dash="dash",
+                          annotation_text=f"Best: {_best['rmse']:.4f}",
+                          annotation_position="top right")
+        _fig_rh.update_layout(
+            title="RMSE Distribution Across All LHS Samples",
+            xaxis_title="Normalised RMSE", yaxis_title="Count", template="plotly_white",
+        )
+        st.plotly_chart(_fig_rh, use_container_width=True, config=_PLOTLY_CFG)
+
+        # Parameter posterior scatter matrix
+        _top20p = _cr[:max(5, int(len(_cr) * 0.2))]
+        st.subheader(f"🔎 Parameter Posterior — Top {len(_top20p)} Runs (best 20%)")
+        _df_post = pd.DataFrame([
+            {**{_active_cal[k]["label"]: v for k, v in _rr["params"].items()},
+             "RMSE": _rr["rmse"]}
+            for _rr in _top20p
+        ])
+        _plabs = [_active_cal[_pn]["label"] for _pn in _active_cal]
+        if len(_plabs) >= 2:
+            _fig_pm = px.scatter_matrix(
+                _df_post, dimensions=_plabs, color="RMSE",
+                color_continuous_scale=["#27AE60", "#DBA159", "#DC143C"],
+                title="Parameter Posterior Scatter Matrix (top 20% by RMSE)",
+            )
+            _fig_pm.update_traces(diagonal_visible=False, marker_size=5)
+            _fig_pm.update_layout(template="plotly_white")
+            st.plotly_chart(_fig_pm, use_container_width=True, config=_PLOTLY_CFG)
+
+        # Best-fit trajectory
+        st.subheader("📈 Best-Fit Trajectory vs Target")
+        _fig_bt = go.Figure()
+        if "Revenue" in _best["df"].columns:
+            _fig_bt.add_trace(go.Scatter(
+                x=_best["df"]["Day"], y=_best["df"]["Revenue"],
+                name="Best-fit model", line=dict(color="#DBA159", width=2.5),
+            ))
+        if "📊 Target KPI Values" in _cal_mode and _target_revenue:
+            _fig_bt.add_hline(y=_target_revenue, line_color="#DC143C", line_dash="dash",
+                               annotation_text="Target Revenue",
+                               annotation_position="bottom right")
+        elif _target_series is not None and _target_col in _target_series.columns:
+            _fig_bt.add_trace(go.Scatter(
+                x=_target_series.get("Day", list(range(len(_target_series)))),
+                y=_target_series[_target_col],
+                name="Empirical target", line=dict(color="#DC143C", width=2, dash="dot"),
+            ))
+        _fig_bt.update_layout(
+            title="Best-Fit Simulation Revenue vs Target",
+            xaxis_title="Day", yaxis_title="Revenue (€)",
+            template="plotly_white", legend=dict(orientation="h", y=1.12),
+        )
+        st.plotly_chart(_fig_bt, use_container_width=True, config=_PLOTLY_CFG)
+
+        st.download_button(
+            "📥 Download All Calibration Results (CSV)",
+            pd.DataFrame([
+                {**{"RMSE": _rr["rmse"], "Revenue": _rr["revenue"]},
+                 **_rr["params"]}
+                for _rr in _cr
+            ]).to_csv(index=False).encode("utf-8"),
+            "calibration_results.csv", "text/csv", key="dl_cal",
+        )
+
 
 # ===========================================================================
 # 12. SCENARIO COMPARE TAB
 # ===========================================================================
 
 def render_scenario_compare_tab():
-    st.header("📊 Compare Scenarios")
+    st.header("📊 Scenario Library & Comparison")
 
-    saved = st.session_state.saved_scenarios
-    if len(saved) < 2:
-        st.info(
-            "Run the **🎮 Interactive Demo** at least twice with different parameters, "
-            "then click **💾 Save Scenario** each time. "
-            f"You have **{len(saved)}** scenario(s) saved — need at least 2 to compare."
+    _saved = st.session_state.saved_scenarios
+
+    # ── Import JSON library ───────────────────────────────────────────────────
+    _imp_col, _clr_col = st.columns([3, 1])
+    with _imp_col:
+        _json_upload = st.file_uploader(
+            "📂 Import scenario library (JSON)", type=["json"], key="sc_import",
+            label_visibility="collapsed",
         )
-        if saved:
-            st.markdown(f"**Saved so far:** {saved[0]['name']} ({saved[0]['timestamp']})")
-        return
-
-    # ── Scenario selector ────────────────────────────────────────────────────
-    names = [s["name"] for s in saved]
-    col_a, col_b, col_del = st.columns([2, 2, 1])
-    with col_a:
-        sel_a = st.selectbox("Scenario A", names, index=0, key="cmp_a")
-    with col_b:
-        default_b = 1 if len(names) > 1 else 0
-        sel_b = st.selectbox("Scenario B", names, index=default_b, key="cmp_b")
-    with col_del:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-        if st.button("🗑️ Clear All Saved", use_container_width=True, key="cmp_clear"):
+        if _json_upload:
+            try:
+                _imported = json.load(_json_upload)
+                _added = 0
+                for _sc in _imported:
+                    if "name" in _sc and _sc["name"] not in [s["name"] for s in _saved]:
+                        # Restore without the raw df (not serialisable)
+                        _sc.setdefault("df", pd.DataFrame())
+                        _sc.setdefault("tags", [])
+                        _sc.setdefault("notes", "")
+                        _saved.append(_sc)
+                        _added += 1
+                if _added:
+                    st.success(f"✅ Imported {_added} new scenario(s).")
+            except Exception as _ie:
+                st.error(f"Import failed: {_ie}")
+    with _clr_col:
+        if _saved and st.button("🗑️ Clear All", use_container_width=True, key="cmp_clear"):
             st.session_state.saved_scenarios = []
             st.rerun()
 
-    sc_a = next(s for s in saved if s["name"] == sel_a)
-    sc_b = next(s for s in saved if s["name"] == sel_b)
+    if not _saved:
+        st.info(
+            "Run **🎮 Interactive Demo** and click **💾 Save Scenario** at least once. "
+            "All saved scenarios appear here for comparison."
+        )
+        return
 
-    # ── Summary metrics table ────────────────────────────────────────────────
+    # ── Tags / notes editor ───────────────────────────────────────────────────
+    with st.expander(f"📝 Manage {len(_saved)} Saved Scenario(s)", expanded=False):
+        for _si, _sc in enumerate(_saved):
+            _ec1, _ec2, _ec3 = st.columns([2, 2, 1])
+            with _ec1:
+                _new_name = st.text_input(
+                    "Name", value=_sc["name"], key=f"sc_name_{_si}",
+                    label_visibility="collapsed")
+                _saved[_si]["name"] = _new_name
+            with _ec2:
+                _new_tags = st.text_input(
+                    "Tags (comma-separated)", value=", ".join(_sc.get("tags", [])),
+                    key=f"sc_tags_{_si}", label_visibility="collapsed",
+                    placeholder="e.g. baseline, policy, crisis…")
+                _saved[_si]["tags"] = [t.strip() for t in _new_tags.split(",") if t.strip()]
+            with _ec3:
+                if st.button("🗑️", key=f"sc_del_{_si}", help="Delete this scenario"):
+                    _saved.pop(_si)
+                    st.rerun()
+
+    # ── Ranking ───────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("### 📋 Key Metrics Summary")
+    st.markdown("### 🏆 Scenario Ranking")
+    _rank_col, _rank_dir_col = st.columns([3, 1])
+    with _rank_col:
+        _rank_metric = st.selectbox(
+            "Rank by", ["revenue_base", "revenue_crisis", "fulfillment",
+                        "lost_sales", "waste", "co2", "fies_low"],
+            format_func=lambda k: {
+                "revenue_base":   "Revenue — Baseline (€)",
+                "revenue_crisis": "Revenue — Crisis (€)",
+                "fulfillment":    "Fulfilment Rate",
+                "lost_sales":     "Lost Sales (€) ↓ lower = better",
+                "waste":          "Waste (units) ↓",
+                "co2":            "Avg CO₂ / day (kg) ↓",
+                "fies_low":       "FIES Severe Low-income ↓",
+            }.get(k, k),
+            key="rank_metric",
+        )
+    with _rank_dir_col:
+        _rank_asc = st.checkbox(
+            "Ascending (lower = better)", value=_rank_metric in ("lost_sales","waste","co2","fies_low"),
+            key="rank_asc",
+        )
 
-    def _pct_diff(a, b):
-        if b == 0:
-            return "—"
-        d = (a - b) / abs(b) * 100
-        arrow = "▲" if d > 0 else "▼"
-        color = "#27ae60" if d > 0 else "#c0392b"
-        return f"<span style='color:{color};font-weight:700'>{arrow} {abs(d):.1f}%</span>"
+    _rank_rows = []
+    for _ri, _sc in enumerate(
+        sorted(_saved, key=lambda s: s.get(_rank_metric, 0), reverse=not _rank_asc)
+    ):
+        _rank_rows.append({
+            "Rank":           _ri + 1,
+            "Scenario":       _sc["name"],
+            "Timestamp":      _sc.get("timestamp", ""),
+            "Tags":           ", ".join(_sc.get("tags", [])),
+            "Rev Baseline":   f"{_sc.get('revenue_base', 0):,.0f}",
+            "Rev Crisis":     f"{_sc.get('revenue_crisis', 0):,.0f}",
+            "Fulfilment":     f"{_sc.get('fulfillment', 0):.3f}",
+            "Lost Sales":     f"{_sc.get('lost_sales', 0):,.0f}",
+            "Waste":          f"{_sc.get('waste', 0):,.0f}",
+            "CO₂/day":        f"{_sc.get('co2', 0):.1f}",
+            "FIES Low":       f"{_sc.get('fies_low', 0):.3f}",
+        })
+    st.dataframe(pd.DataFrame(_rank_rows), use_container_width=True, hide_index=True)
 
-    metrics = [
-        ("Total Revenue — Baseline (€)", "revenue_base"),
-        ("Total Revenue — Crisis (€)",   "revenue_crisis"),
-        ("Total Lost Sales (€)",          "lost_sales"),
-        ("Total Waste (units)",           "waste"),
-        ("Avg Fulfillment Rate",          "fulfillment"),
+    # ── KPI Radar chart (all scenarios) ──────────────────────────────────────
+    st.divider()
+    st.markdown("### 🕸️ KPI Radar — All Scenarios")
+    st.caption(
+        "Each axis is normalised 0–1 across saved scenarios. "
+        "Revenue and Fulfilment point outward = good; Waste, CO₂, FIES and Lost Sales inverted."
+    )
+
+    _RADAR_AXES = [
+        ("revenue_base",   "Revenue\n(baseline)",  True),
+        ("fulfillment",    "Fulfilment",           True),
+        ("lost_sales",     "Lost Sales\n(lower=better)", False),
+        ("waste",          "Waste\n(lower=better)",      False),
+        ("co2",            "CO₂\n(lower=better)",        False),
+        ("fies_low",       "FIES Low\n(lower=better)",   False),
     ]
-    rows_html = ""
-    for label, key in metrics:
-        va = sc_a[key]; vb = sc_b[key]
-        fmt = f"{va:,.1f}" if isinstance(va, float) else str(va)
-        fmtb = f"{vb:,.1f}" if isinstance(vb, float) else str(vb)
-        diff = _pct_diff(va, vb)
-        rows_html += (
-            f"<tr><td style='padding:6px 12px;color:#042026'>{label}</td>"
-            f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:#042026'>{fmt}</td>"
-            f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:#042026'>{fmtb}</td>"
-            f"<td style='padding:6px 12px;text-align:center'>{diff}</td></tr>"
-        )
-    st.markdown(
-        f"""<table style='width:100%;border-collapse:collapse;background:#FAF6EC;
-                          border:1px solid #e8dcc8;border-radius:8px;overflow:hidden'>
-          <thead>
-            <tr style='background:#F0E9DA'>
-              <th style='padding:8px 12px;text-align:left;color:#042026'>Metric</th>
-              <th style='padding:8px 12px;text-align:right;color:#DBA159'>{sel_a}</th>
-              <th style='padding:8px 12px;text-align:right;color:#44A1A0'>{sel_b}</th>
-              <th style='padding:8px 12px;text-align:center;color:#042026'>A vs B</th>
-            </tr>
-          </thead>
-          <tbody>{rows_html}</tbody>
-        </table>""",
-        unsafe_allow_html=True,
+    _rdr_labels = [lbl for _, lbl, _ in _RADAR_AXES]
+
+    def _norm_col(vals, higher_is_better):
+        mn, mx = min(vals), max(vals)
+        if mx == mn:
+            return [0.5] * len(vals)
+        normed = [(v - mn) / (mx - mn) for v in vals]
+        return normed if higher_is_better else [1 - v for v in normed]
+
+    _radar_vals = {ax: [s.get(ax, 0) for s in _saved] for ax, _, _ in _RADAR_AXES}
+    _radar_norm = {ax: _norm_col(_radar_vals[ax], hib) for ax, _, hib in _RADAR_AXES}
+
+    _RADAR_COLORS = [
+        "#DBA159","#44A1A0","#DC143C","#8E44AD","#27AE60","#2980B9","#E67E22","#C0392B",
+    ]
+    _fig_radar = go.Figure()
+    for _si, _sc in enumerate(_saved):
+        _r_vals = [_radar_norm[ax][_si] for ax, _, _ in _RADAR_AXES]
+        _r_vals += [_r_vals[0]]          # close the polygon
+        _theta   = _rdr_labels + [_rdr_labels[0]]
+        _fig_radar.add_trace(go.Scatterpolar(
+            r=_r_vals, theta=_theta,
+            name=_sc["name"],
+            fill="toself", opacity=0.25,
+            line=dict(color=_RADAR_COLORS[_si % len(_RADAR_COLORS)], width=2),
+        ))
+    _fig_radar.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        showlegend=True, template="plotly_white",
+        legend=dict(orientation="h", y=-0.15),
+        margin=dict(t=40, b=80),
     )
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    st.plotly_chart(_fig_radar, use_container_width=True, config=_PLOTLY_CFG)
 
-    # ── Side-by-side charts ───────────────────────────────────────────────────
-    st.divider()
-    st.markdown("### 📈 Side-by-Side Revenue Comparison")
+    # ── Head-to-head: pick any two ────────────────────────────────────────────
+    if len(_saved) >= 2:
+        st.divider()
+        st.markdown("### 🆚 Head-to-Head Comparison")
+        _names = [s["name"] for s in _saved]
+        _h2h_a, _h2h_b = st.columns(2)
+        with _h2h_a:
+            _sel_a = st.selectbox("Scenario A", _names, index=0, key="cmp_a")
+        with _h2h_b:
+            _sel_b = st.selectbox("Scenario B", _names,
+                                   index=min(1, len(_names)-1), key="cmp_b")
+        _sc_a = next(s for s in _saved if s["name"] == _sel_a)
+        _sc_b = next(s for s in _saved if s["name"] == _sel_b)
 
-    def _scenario_line(df, col, color, name):
-        base = df[df["Scenario"] == "Baseline"]
-        crisis = df[df["Scenario"] == "Crisis"]
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=base["Day"], y=base[col],
-                                 line=dict(color="#44A1A0", width=2), name="Baseline"))
-        fig.add_trace(go.Scatter(x=crisis["Day"], y=crisis[col],
-                                 line=dict(color="#DC143C", width=2, dash="dash"), name="Crisis"))
-        fig.update_layout(
-            title=name, template="plotly_white",
-            xaxis_title="Day", yaxis_title="Revenue (€)",
-            legend=dict(orientation="h", y=1.12),
-            margin=dict(l=40, r=20, t=55, b=40),
+        _CMP_METRICS = [
+            ("Rev Baseline (€)",  "revenue_base"),
+            ("Rev Crisis (€)",    "revenue_crisis"),
+            ("Lost Sales (€)",    "lost_sales"),
+            ("Waste (units)",     "waste"),
+            ("Fulfilment",        "fulfillment"),
+            ("CO₂/day (kg)",      "co2"),
+            ("FIES Severe Low",   "fies_low"),
+        ]
+        def _pct_diff_html(a, b):
+            if b == 0:
+                return "—"
+            d = (a - b) / abs(b) * 100
+            arrow = "▲" if d > 0 else "▼"
+            color = "#27ae60" if d > 0 else "#c0392b"
+            return f"<span style='color:{color};font-weight:700'>{arrow}{abs(d):.1f}%</span>"
+
+        _rows_html = ""
+        for _lbl, _key in _CMP_METRICS:
+            _va = _sc_a.get(_key, 0); _vb = _sc_b.get(_key, 0)
+            _rows_html += (
+                f"<tr><td style='padding:5px 10px'>{_lbl}</td>"
+                f"<td style='padding:5px 10px;text-align:right;font-weight:600'>{_va:,.2f}</td>"
+                f"<td style='padding:5px 10px;text-align:right;font-weight:600'>{_vb:,.2f}</td>"
+                f"<td style='padding:5px 10px;text-align:center'>{_pct_diff_html(_va, _vb)}</td></tr>"
+            )
+        st.markdown(
+            f"""<table style='width:100%;border-collapse:collapse;background:#FAF6EC;
+                              border:1px solid #e8dcc8;border-radius:8px;overflow:hidden'>
+              <thead>
+                <tr style='background:#F0E9DA'>
+                  <th style='padding:7px 10px;text-align:left;color:#042026'>Metric</th>
+                  <th style='padding:7px 10px;text-align:right;color:#DBA159'>{_sel_a}</th>
+                  <th style='padding:7px 10px;text-align:right;color:#44A1A0'>{_sel_b}</th>
+                  <th style='padding:7px 10px;text-align:center;color:#042026'>A vs B</th>
+                </tr>
+              </thead>
+              <tbody>{_rows_html}</tbody>
+            </table>""",
+            unsafe_allow_html=True,
         )
-        return fig
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
-    cc1, cc2 = st.columns(2)
-    cc1.markdown(f"**{sel_a}**")
-    cc1.plotly_chart(_scenario_line(sc_a["df"], "Revenue", "#DBA159", "Revenue"),
-                     use_container_width=True, config=_PLOTLY_CFG)
-    cc2.markdown(f"**{sel_b}**")
-    cc2.plotly_chart(_scenario_line(sc_b["df"], "Revenue", "#44A1A0", "Revenue"),
-                     use_container_width=True, config=_PLOTLY_CFG)
+        # Revenue overlay (if df available)
+        _dfa = _sc_a.get("df"); _dfb = _sc_b.get("df")
+        if isinstance(_dfa, pd.DataFrame) and not _dfa.empty and \
+           isinstance(_dfb, pd.DataFrame) and not _dfb.empty and \
+           "Scenario" in _dfa.columns and "Revenue" in _dfa.columns:
+            _fig_ov = go.Figure()
+            for _sc_obj, _col_hex in [(_sc_a, "#DBA159"), (_sc_b, "#44A1A0")]:
+                _df_plot = _sc_obj["df"]
+                if isinstance(_df_plot, pd.DataFrame) and not _df_plot.empty:
+                    _base = _df_plot[_df_plot["Scenario"] == "Baseline"]
+                    _fig_ov.add_trace(go.Scatter(
+                        x=_base["Day"], y=_base["Revenue"],
+                        name=_sc_obj["name"],
+                        line=dict(color=_col_hex, width=2.5),
+                    ))
+            _fig_ov.update_layout(
+                title="Baseline Revenue Overlay",
+                template="plotly_white", xaxis_title="Day", yaxis_title="Revenue (€)",
+                legend=dict(orientation="h", y=1.12),
+                margin=dict(l=40, r=20, t=55, b=40),
+            )
+            st.plotly_chart(_fig_ov, use_container_width=True, config=_PLOTLY_CFG)
 
-    # Overlay chart
-    st.markdown("### 🔀 Overlay — Baseline Revenue")
-    fig_ov = go.Figure()
-    for sc, col in [(sc_a, "#DBA159"), (sc_b, "#44A1A0")]:
-        base = sc["df"][sc["df"]["Scenario"] == "Baseline"]
-        fig_ov.add_trace(go.Scatter(x=base["Day"], y=base["Revenue"],
-                                    line=dict(color=col, width=2.5), name=sc["name"]))
-    fig_ov.update_layout(template="plotly_white", xaxis_title="Day", yaxis_title="Revenue (€)",
-                         legend=dict(orientation="h", y=1.12),
-                         margin=dict(l=40, r=20, t=55, b=40))
-    st.plotly_chart(fig_ov, use_container_width=True, config=_PLOTLY_CFG)
+        # Parameter diff
+        with st.expander("⚙️ Parameter Differences"):
+            _pa, _pb = _sc_a.get("params", {}), _sc_b.get("params", {})
+            _all_k   = sorted(set(list(_pa.keys()) + list(_pb.keys())))
+            _param_rows = [
+                {"Parameter": _k, _sel_a: _pa.get(_k, "—"), _sel_b: _pb.get(_k, "—"),
+                 "Changed": "✅" if _pa.get(_k) != _pb.get(_k) else ""}
+                for _k in _all_k
+            ]
+            st.dataframe(pd.DataFrame(_param_rows), use_container_width=True, hide_index=True)
 
-    st.markdown("### 📉 Overlay — Lost Sales")
-    fig_ls = go.Figure()
-    for sc, col in [(sc_a, "#DBA159"), (sc_b, "#44A1A0")]:
-        d = sc["df"].groupby("Day")["LostSales"].sum().reset_index()
-        fig_ls.add_trace(go.Scatter(x=d["Day"], y=d["LostSales"],
-                                    line=dict(color=col, width=2.5), name=sc["name"]))
-    fig_ls.update_layout(template="plotly_white", xaxis_title="Day", yaxis_title="Lost Sales (€)",
-                         legend=dict(orientation="h", y=1.12),
-                         margin=dict(l=40, r=20, t=55, b=40))
-    st.plotly_chart(fig_ls, use_container_width=True, config=_PLOTLY_CFG)
-
-    # ── Parameters diff ───────────────────────────────────────────────────────
-    with st.expander("⚙️ Parameter Differences"):
-        pa, pb = sc_a["params"], sc_b["params"]
-        all_keys = sorted(set(list(pa.keys()) + list(pb.keys())))
-        param_rows = []
-        for k in all_keys:
-            va2, vb2 = pa.get(k, "—"), pb.get(k, "—")
-            param_rows.append({"Parameter": k, sel_a: va2, sel_b: vb2,
-                                "Changed": "✅" if va2 != vb2 else ""})
-        st.dataframe(pd.DataFrame(param_rows), use_container_width=True, hide_index=True)
-
-    # ── Export comparison ─────────────────────────────────────────────────────
+    # ── Export ────────────────────────────────────────────────────────────────
     st.divider()
-    buf = io.StringIO()
-    for sc in [sc_a, sc_b]:
-        buf.write(f"### {sc['name']}  ({sc['timestamp']})\n")
-        sc["df"].to_csv(buf, index=False)
-        buf.write("\n\n")
-    st.download_button(
-        "📥 Download Comparison CSV",
-        buf.getvalue().encode("utf-8"),
-        "scenario_comparison.csv", "text/csv",
-        key="dl_cmp",
-    )
+    _exp1, _exp2 = st.columns(2)
+    with _exp1:
+        _buf = io.StringIO()
+        for _sc in _saved:
+            _buf.write(f"### {_sc['name']}  ({_sc.get('timestamp','')})\n")
+            if isinstance(_sc.get("df"), pd.DataFrame) and not _sc["df"].empty:
+                _sc["df"].to_csv(_buf, index=False)
+            _buf.write("\n\n")
+        st.download_button(
+            "📥 Download All Scenarios (CSV)",
+            _buf.getvalue().encode("utf-8"),
+            "scenario_library.csv", "text/csv", key="dl_cmp",
+        )
+    with _exp2:
+        # JSON export (exclude non-serialisable df)
+        _json_export = json.dumps([
+            {k: v for k, v in _sc.items() if k != "df"}
+            for _sc in _saved
+        ], indent=2, default=str)
+        st.download_button(
+            "📤 Export Scenario Library (JSON)",
+            _json_export.encode("utf-8"),
+            "scenario_library.json", "application/json", key="dl_sc_json",
+        )
 
 
 # ===========================================================================
@@ -11973,6 +12580,8 @@ _NAV_CARDS = [
              "desc": "Day-level individual shopper decisions"},
             {"key": "validation",  "label": "✅ Model Validation",
              "desc": "POM stylised facts · reproducibility · elasticity check"},
+            {"key": "calibration", "label": "🎯 Model Calibration",
+             "desc": "LHS parameter estimation · RMSE minimisation · apply best-fit"},
         ],
     },
     {
@@ -12036,6 +12645,7 @@ def _build_section_renderers(params: dict) -> dict:
         "map":         render_regional_map_tab,
         "export":      render_export_tab,
         "validation":  lambda: render_validation_tab(params),
+        "calibration": lambda: render_calibration_tab(params),
         "docs":        lambda: render_documentation_tab(params),
     }
 
