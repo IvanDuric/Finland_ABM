@@ -3766,13 +3766,15 @@ defaults = {
     "sim_model_crisis": None,
     "sim_pref_drift":   None,
     # Scientific workflow state
-    "mc_stage":        0,
-    "data_base_raw":   None,
-    "data_base_opt":   None,
-    "data_crisis":     None,
-    "ai_recs":         None,
-    "active_baseline": "Baseline (Raw)",
-    "prod_stats_raw":  None,
+    "mc_stage":             0,
+    "data_base_raw":        None,
+    "data_base_opt":        None,
+    "data_crisis":          None,
+    "ai_recs":              None,
+    "active_baseline":      "Baseline (Raw)",
+    "prod_stats_raw":       None,
+    "mc_session_populated": False,   # True once _populate_session_from_mc has run
+    "mc_median_seed":       None,    # seed of the representative (median) run
     # Policy analysis results
     "policy_baseline":  None,   # DataFrame: daily records, no policy
     "policy_scenario":  None,   # DataFrame: daily records, with policy active
@@ -4723,6 +4725,12 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
     st.sidebar.header(_t("sidebar_mc"))
     mc_runs = st.sidebar.number_input(_t("mc_runs"), 3, 100, 10,
                                        help="More runs = tighter confidence intervals")
+    show_ci = st.sidebar.checkbox(
+        "Show confidence intervals",
+        value=True,
+        key="show_ci",
+        help="Toggle p10/IQR/p90 bands in MC charts. CI columns are always included in the downloaded CSV.",
+    )
 
     # -----------------------------------------------------------------------
     st.sidebar.header(_t("sidebar_policy"))
@@ -4791,6 +4799,7 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
         "panic":                   panic_sens,
         "hoard":                   hoarding,
         "mc_runs":                 int(mc_runs),
+        "show_ci":                 bool(show_ci),
         "policy_cfg":              policy_cfg,
         # Behavioural interventions
         "purchase_limit":          purchase_limit,
@@ -5988,6 +5997,80 @@ def _run_mc_batch(n_runs: int, days: int, params: dict,
 # 7. MONTE CARLO FULL ANALYSIS (embedded in Interactive Demo)
 # ===========================================================================
 
+def _populate_session_from_mc(df_base: pd.DataFrame, df_cri: pd.DataFrame,
+                               n_runs: int, params: dict, label_base: str,
+                               ai_recs=None):
+    """
+    Derive all downstream session state from completed MC results:
+      sim_results    ← day-by-day MC mean trajectory (both scenarios)
+      sim_stock, sim_waste, sim_scm_log, agent_log, sim_pref_drift, sim_model_crisis
+                     ← single re-run of the median realisation seed
+    """
+    # ── 1. MC mean → sim_results ─────────────────────────────────────────────
+    mean_b = df_base.groupby("Day").mean(numeric_only=True).reset_index()
+    mean_b["Scenario"] = label_base
+    mean_c = df_cri.groupby("Day").mean(numeric_only=True).reset_index()
+    mean_c["Scenario"] = "Crisis"
+    st.session_state.sim_results = pd.concat([mean_b, mean_c], ignore_index=True)
+
+    # ── 2. Identify median realisation (run closest to median crisis revenue) ─
+    run_totals   = df_cri.groupby("Run")["Revenue"].sum().sort_values()
+    median_run_id = run_totals.index[len(run_totals) // 2]
+    median_seed   = 1000 + int(median_run_id)   # matches _run_mc_batch seed formula
+    st.session_state.mc_median_seed = median_seed
+
+    # ── 3. Re-run median seed to collect agent-level detail ──────────────────
+    with st.spinner(
+        f"Collecting representative run (median realisation, seed {median_seed})…"
+    ):
+        m_base   = _make_model(params, is_crisis=False, seed=median_seed, ai_recs=ai_recs)
+        m_crisis = _make_model(params, is_crisis=True,  seed=median_seed, ai_recs=ai_recs)
+
+        stock_rows = []
+        agent_rows = []
+
+        for day in range(1, params["days"] + 1):
+            m_base.step()
+            m_crisis.step()
+            m_base.collect_product_snapshot()
+            m_crisis.collect_product_snapshot()
+            m_base.collect_preference_snapshot()
+            m_crisis.collect_preference_snapshot()
+
+            _, prod_b = _collect_model_day(m_base,   day, label_base)
+            _, prod_c = _collect_model_day(m_crisis, day, "Crisis")
+            stock_rows.extend(prod_b)
+            stock_rows.extend(prod_c)
+            agent_rows.extend(_collect_agent_snapshot(m_base,   day, label_base))
+            agent_rows.extend(_collect_agent_snapshot(m_crisis, day, "Crisis"))
+
+        # SCM logs
+        log_b = pd.DataFrame(m_base.truck.log)
+        log_c = pd.DataFrame(m_crisis.truck.log)
+        if not log_b.empty: log_b["Scenario"] = label_base
+        if not log_c.empty: log_c["Scenario"] = "Crisis"
+
+        # Preference drift snapshots
+        pref_b = pd.DataFrame(getattr(m_base,   "_pref_snapshots", []))
+        pref_c = pd.DataFrame(getattr(m_crisis, "_pref_snapshots", []))
+        if not pref_b.empty: pref_b["Scenario"] = label_base
+        if not pref_c.empty: pref_c["Scenario"] = "Crisis"
+
+        # Food waste item log
+        waste_b = pd.DataFrame(m_base.food_waste_log.records)
+        waste_c = pd.DataFrame(m_crisis.food_waste_log.records)
+        if not waste_b.empty: waste_b["Scenario"] = label_base
+        if not waste_c.empty: waste_c["Scenario"] = "Crisis"
+
+        st.session_state.sim_stock        = pd.DataFrame(stock_rows)
+        st.session_state.sim_scm_log      = pd.concat([log_b, log_c], ignore_index=True)
+        st.session_state.sim_model_crisis = m_crisis
+        st.session_state.agent_log        = pd.DataFrame(agent_rows) if agent_rows else None
+        st.session_state.sim_pref_drift   = pd.concat([pref_b, pref_c], ignore_index=True)
+        st.session_state.sim_waste        = pd.concat([waste_b, waste_c], ignore_index=True)
+        st.session_state.mc_session_populated = True
+
+
 def _render_demo_mc(params: dict):
     """4-stage Monte Carlo workflow — runs inside the Interactive Demo (Full Analysis mode)."""
     n_runs = params["mc_runs"]
@@ -6126,6 +6209,19 @@ def _render_demo_mc(params: dict):
                    if st.session_state.data_base_opt is not None
                    else st.session_state.data_base_raw)
         df_cri  = st.session_state.data_crisis
+
+        # Populate all downstream session state once (MC mean + median re-run)
+        if not st.session_state.mc_session_populated:
+            _populate_session_from_mc(
+                df_base, df_cri, n_runs, params, label_base,
+                ai_recs=st.session_state.ai_recs
+                        if st.session_state.data_base_opt is not None else None,
+            )
+            st.success(
+                f"✅ All analysis tabs now use Monte Carlo results "
+                f"(N={n_runs} runs, median seed {st.session_state.mc_median_seed}). "
+                "CI bands togglable from the sidebar."
+            )
 
         df_base = df_base.copy(); df_base["Scenario"] = label_base
         df_cri  = df_cri.copy();  df_cri["Scenario"]  = "Crisis"
@@ -6281,9 +6377,63 @@ def _render_demo_mc(params: dict):
                 st.error(f"PDF generation failed: {e}")
         if c_dl3.button("🔄 Reset Workflow", key="mc_reset_btn"):
             for k in ["mc_stage", "data_base_raw", "data_base_opt", "data_crisis",
-                      "ai_recs", "prod_stats_raw"]:
-                st.session_state[k] = 0 if k == "mc_stage" else None
+                      "ai_recs", "prod_stats_raw", "mc_session_populated", "mc_median_seed"]:
+                st.session_state[k] = 0 if k == "mc_stage" else (
+                    False if k == "mc_session_populated" else None
+                )
             st.rerun()
+
+        # ── Save scenario ────────────────────────────────────────────────────
+        if st.session_state.sim_results is not None:
+            st.divider()
+            st.markdown("### 💾 Save This Scenario for Comparison")
+            _sc_col1, _sc_col2, _sc_col3 = st.columns([3, 1, 1])
+            with _sc_col1:
+                _sc_name = st.text_input(
+                    "Scenario name",
+                    value=f"MC Scenario {len(st.session_state.saved_scenarios) + 1}",
+                    key="mc_save_scenario_name",
+                    label_visibility="collapsed",
+                    placeholder="Give this MC scenario a name…",
+                )
+            with _sc_col2:
+                if st.button("💾 Save Scenario", use_container_width=True,
+                             key="mc_save_scenario_btn"):
+                    _df_r  = st.session_state.sim_results
+                    _base  = _df_r[_df_r["Scenario"] == label_base]
+                    _cris  = _df_r[_df_r["Scenario"] == "Crisis"]
+                    _entry = {
+                        "name":      _sc_name or f"MC Scenario {len(st.session_state.saved_scenarios)+1}",
+                        "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
+                        "params":    {k: params.get(k) for k in
+                                      ["days", "base_con", "month", "reorder", "target",
+                                       "lead", "inf", "dis", "panic", "hoard", "cri_start",
+                                       "mc_runs"]},
+                        "mc_runs":          n_runs,
+                        "mc_median_seed":   st.session_state.mc_median_seed,
+                        "revenue_base":     float(_base["Revenue"].sum()),
+                        "revenue_crisis":   float(_cris["Revenue"].sum()),
+                        "lost_sales":       float(_df_r["LostSales"].sum()),
+                        "waste":            float(_df_r["Waste"].sum()),
+                        "fulfillment":      float(_df_r["FulfillmentRate"].mean()),
+                        "co2":              float(_df_r["CO2Total"].mean()) if "CO2Total" in _df_r.columns else 0.0,
+                        "import_dep":       float(_df_r["ImportDepPct"].mean()) if "ImportDepPct" in _df_r.columns else 0.0,
+                        "fies_low":         float(_df_r["FIESSevere_Low"].mean()) if "FIESSevere_Low" in _df_r.columns else 0.0,
+                        "panic_peak":       float(_df_r["PanicLevel"].max()) if "PanicLevel" in _df_r.columns else 0.0,
+                        "tags":  ["Monte Carlo"],
+                        "notes": f"MC mean of {n_runs} runs; median seed {st.session_state.mc_median_seed}",
+                        "df":    _df_r.copy(),
+                    }
+                    st.session_state.saved_scenarios.append(_entry)
+                    st.success(
+                        f"✅ Saved **{_entry['name']}** — go to 📊 Compare Scenarios to compare."
+                    )
+            with _sc_col3:
+                if st.session_state.saved_scenarios:
+                    if st.button("🗑️ Clear All", use_container_width=True,
+                                 key="mc_clear_scenarios_btn"):
+                        st.session_state.saved_scenarios = []
+                        st.rerun()
 
 
 # ===========================================================================
@@ -6582,9 +6732,12 @@ def _band_traces(fig: go.Figure, stats: pd.DataFrame, name: str,
 
 def _plot_ci_band(df: pd.DataFrame, title: str, color: str = "#44A1A0"):
     """Single-scenario revenue chart with p10/p25/p75/p90 percentile bands."""
+    show_ci = st.session_state.get("show_ci", True)
     stats = _percentile_band(df)
     fig = go.Figure()
-    _band_traces(fig, stats, "Revenue", color)
+    _band_traces(fig, stats, "Revenue", color, show_iqr=show_ci)
+    if not show_ci:
+        fig.data = tuple(t for t in fig.data if "median" in t.name)
     fig.update_layout(
         title=title,
         template="plotly_white",
@@ -6597,16 +6750,20 @@ def _plot_ci_band(df: pd.DataFrame, title: str, color: str = "#44A1A0"):
 
 
 def _plot_ci_dual(df_base: pd.DataFrame, df_cri: pd.DataFrame, label_base: str):
-    """Baseline vs Crisis revenue chart with dual percentile confidence bands."""
+    """Baseline vs Crisis revenue chart — CI bands toggled by sidebar checkbox."""
+    show_ci = st.session_state.get("show_ci", True)
     s_b = _percentile_band(df_base)
     s_c = _percentile_band(df_cri)
 
     fig = go.Figure()
-    _band_traces(fig, s_b, label_base, "#44A1A0")   # teal  = baseline
-    _band_traces(fig, s_c, "Crisis",   "#DC143C")   # red   = crisis
+    _band_traces(fig, s_b, label_base, "#44A1A0", show_iqr=show_ci)
+    _band_traces(fig, s_c, "Crisis",   "#DC143C", show_iqr=show_ci)
+    if not show_ci:
+        fig.data = tuple(t for t in fig.data if "median" in t.name)
 
+    ci_note = "  [p10 / IQR / p90 bands]" if show_ci else "  [median line]"
     fig.update_layout(
-        title="Daily Revenue — Baseline vs Crisis  [p10 / IQR / p90 bands]",
+        title=f"Daily Revenue — Baseline vs Crisis{ci_note}",
         xaxis_title="Day",
         yaxis_title="Revenue (€)",
         template="plotly_white",
@@ -6620,17 +6777,21 @@ def _plot_ci_dual_col(df_base: pd.DataFrame, df_cri: pd.DataFrame,
                       col: str, title: str, yaxis_title: str, label_base: str,
                       higher_is_better: bool = True,
                       color_base: str = "#44A1A0", color_cri: str = "#DC143C"):
-    """Generic dual-scenario p10/IQR/p90 CI chart for any numeric column."""
+    """Generic dual-scenario CI chart for any numeric column — bands toggled by sidebar."""
     if col not in df_base.columns or col not in df_cri.columns:
         return
+    show_ci = st.session_state.get("show_ci", True)
     s_b = _percentile_band(df_base, col)
     s_c = _percentile_band(df_cri,  col)
     fig = go.Figure()
-    _band_traces(fig, s_b, label_base, color_base)
-    _band_traces(fig, s_c, "Crisis",   color_cri)
+    _band_traces(fig, s_b, label_base, color_base, show_iqr=show_ci)
+    _band_traces(fig, s_c, "Crisis",   color_cri,  show_iqr=show_ci)
+    if not show_ci:
+        fig.data = tuple(t for t in fig.data if "median" in t.name)
     arrow = "↑ better" if higher_is_better else "↓ better"
+    ci_note = "  [p10/IQR/p90]" if show_ci else "  [median]"
     fig.update_layout(
-        title=f"{title}  [{arrow}]",
+        title=f"{title}{ci_note}  [{arrow}]",
         xaxis_title="Day",
         yaxis_title=yaxis_title,
         template="plotly_white",
