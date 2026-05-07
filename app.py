@@ -5094,15 +5094,29 @@ each participant via k-means clustering.
 
 def render_demo_tab(params: dict):
     st.header(_t("header_demo"))
-    st.markdown(
-        "Run a single paired simulation (Baseline vs Crisis) and watch the "
-        "results update in real time."
-    )
 
     if st.session_state.config_data is None:
         st.warning("⚠️ Load data in the **🏠 Data & Population** tab first.")
         return
 
+    mode = st.radio(
+        "Simulation Mode",
+        ["⚡ Quick Preview — single run, live animation",
+         "🔬 Full Analysis — Monte Carlo with confidence intervals"],
+        horizontal=True,
+        key="demo_mode",
+    )
+    st.divider()
+
+    if not mode.startswith("⚡"):
+        _render_demo_mc(params)
+        return
+
+    # --- Quick Preview (single run, live animation) ---
+    st.markdown(
+        "Run a single paired simulation (Baseline vs Crisis) and watch the "
+        "results update in real time."
+    )
     run_speed = st.slider(_t("animation_speed"), 0.0, 0.2, 0.02, 0.01)
 
     if st.button(_t("btn_run_demo"), type="primary"):
@@ -5971,7 +5985,309 @@ def _run_mc_batch(n_runs: int, days: int, params: dict,
 
 
 # ===========================================================================
-# 7. TAB: SCIENTIFIC ANALYSIS
+# 7. MONTE CARLO FULL ANALYSIS (embedded in Interactive Demo)
+# ===========================================================================
+
+def _render_demo_mc(params: dict):
+    """4-stage Monte Carlo workflow — runs inside the Interactive Demo (Full Analysis mode)."""
+    n_runs = params["mc_runs"]
+    days   = params["days"]
+
+    # ---- STAGE 0: Run baseline ----
+    if st.session_state.mc_stage == 0:
+        st.markdown(
+            '<div class="step-card"><h3>Step 1 — Establish Baseline</h3>'
+            "<p>Simulate business-as-usual (no crisis) across "
+            f"{n_runs} independent runs to characterise normal performance "
+            "and identify inventory inefficiencies.</p></div>",
+            unsafe_allow_html=True,
+        )
+        if st.button(_t("btn_run_baseline"), type="primary", key="mc_btn_baseline"):
+            df_raw, prod_stats = _run_mc_batch(n_runs, days, params, is_crisis=False,
+                                               progress_label="Simulating Baseline…")
+            total_periods = n_runs * days
+            new_recs = {}
+            for p_name, data in prod_stats.items():
+                avg_waste = data["AggWaste"] / total_periods
+                avg_lost  = data["AggLost"]  / total_periods
+                avg_sales = data["AggSales"] / total_periods
+                curr_cap  = data["StorageCap"]
+                rec_cap   = curr_cap
+                if avg_waste > 0.5:
+                    rec_cap = max(10, int((avg_sales + avg_lost) * data["ShelfLife"] * 0.55))
+                elif avg_lost > 0.5:
+                    rec_cap = min(300, max(int(curr_cap * 1.25),
+                                          int((avg_sales + avg_lost) * params["lead"] * 4)))
+                new_recs[p_name] = rec_cap
+            st.session_state.data_base_raw  = df_raw
+            st.session_state.ai_recs        = new_recs
+            st.session_state.prod_stats_raw = prod_stats
+            st.session_state.mc_stage       = 1
+            st.rerun()
+
+    # ---- STAGE 1: Review AI storage optimisation ----
+    elif st.session_state.mc_stage == 1:
+        st.markdown(
+            '<div class="step-card"><h3>Step 2 — Review AI Storage Optimisation</h3>'
+            "<p>Inspect baseline performance and choose whether to apply "
+            "AI-recommended storage capacity adjustments.</p></div>",
+            unsafe_allow_html=True,
+        )
+        df_raw = st.session_state.data_base_raw
+        _plot_ci_band(df_raw, "Daily Revenue — Baseline (Raw) [95 % CI]", color="gray")
+        st.divider()
+        st.markdown("#### 🤖 AI Storage Capacity Recommendations")
+        recs_df = pd.DataFrame([
+            {"Product": p,
+             "Current Capacity": st.session_state.prod_stats_raw[p]["StorageCap"],
+             "Recommended Capacity": c}
+            for p, c in st.session_state.ai_recs.items()
+        ])
+        st.dataframe(recs_df, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        if col1.button("✅ Accept AI Recommendations & Re-run Baseline", key="mc_btn_accept"):
+            df_opt, _ = _run_mc_batch(n_runs, days, params, is_crisis=False,
+                                      ai_recs=st.session_state.ai_recs,
+                                      progress_label="Simulating Optimised Baseline…")
+            st.session_state.data_base_opt   = df_opt
+            st.session_state.active_baseline = "Baseline (Optimised)"
+            st.session_state.mc_stage        = 2
+            st.rerun()
+        if col2.button("⏩ Skip — Use Raw Baseline", key="mc_btn_skip"):
+            st.session_state.data_base_opt   = None
+            st.session_state.active_baseline = "Baseline (Raw)"
+            st.session_state.mc_stage        = 2
+            st.rerun()
+
+    # ---- STAGE 2: Baseline comparison + launch crisis ----
+    elif st.session_state.mc_stage == 2:
+        st.markdown(
+            '<div class="step-card"><h3>Step 3 — Baseline Comparison</h3>'
+            "<p>Compare Raw vs Optimised baseline, then run the Crisis scenario.</p></div>",
+            unsafe_allow_html=True,
+        )
+        if st.session_state.data_base_opt is not None:
+            df_r = st.session_state.data_base_raw
+            df_o = st.session_state.data_base_opt
+            r_mean = df_r["Revenue"].mean()
+            o_mean = df_o["Revenue"].mean()
+            r_min  = df_r.groupby("Run")["Revenue"].min().mean()
+            o_min  = df_o.groupby("Run")["Revenue"].min().mean()
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Avg Daily Rev (Raw)", f"€{r_mean:,.1f}")
+            c2.metric("Avg Daily Rev (Opt)", f"€{o_mean:,.1f}",
+                      f"{(o_mean-r_mean)/max(r_mean,0.01)*100:.1f}%")
+            c3.metric("Avg Min Rev (Raw)",   f"€{r_min:,.1f}")
+            c4.metric("Avg Min Rev (Opt)",   f"€{o_min:,.1f}",
+                      f"{(o_min-r_min)/max(r_min,0.01)*100:.1f}%")
+
+            r_waste = df_r["Waste"].sum() / n_runs
+            o_waste = df_o["Waste"].sum() / n_runs
+            r_lost  = df_r["LostSales"].sum() / n_runs
+            o_lost  = df_o["LostSales"].sum() / n_runs
+            fig_cmp = go.Figure()
+            fig_cmp.add_trace(go.Bar(name="Waste", x=["Raw", "Optimised"],
+                                     y=[r_waste, o_waste], marker_color="salmon",
+                                     text=[f"{r_waste:.0f}", f"{o_waste:.0f}"],
+                                     textposition="auto"))
+            fig_cmp.add_trace(go.Bar(name="Lost Sales", x=["Raw", "Optimised"],
+                                     y=[r_lost, o_lost], marker_color="orange",
+                                     text=[f"{r_lost:.0f}", f"{o_lost:.0f}"],
+                                     textposition="auto"))
+            fig_cmp.update_layout(barmode="group", title="Baseline Efficiency Comparison",
+                                  template="plotly_white",
+                                  yaxis_title="Units (avg per run)")
+            st.plotly_chart(fig_cmp, use_container_width=True, config=_PLOTLY_CFG)
+        else:
+            st.info("Using Raw Baseline (optimisation skipped).")
+
+        st.divider()
+        st.markdown(f"✅ Ready to test **{st.session_state.active_baseline}** vs **Crisis**.")
+        if st.button(_t("btn_run_crisis"), type="primary", key="mc_btn_crisis"):
+            recs = st.session_state.ai_recs if st.session_state.data_base_opt is not None else None
+            df_cri, _ = _run_mc_batch(n_runs, days, params, is_crisis=True,
+                                      ai_recs=recs, progress_label="Simulating Crisis…")
+            st.session_state.data_crisis = df_cri
+            st.session_state.mc_stage    = 3
+            st.rerun()
+
+    # ---- STAGE 3: Full multi-metric impact analysis ----
+    elif st.session_state.mc_stage == 3:
+        st.markdown(
+            '<div class="step-card"><h3>Step 4 — Full Impact Analysis</h3>'
+            "<p>Confidence-interval bands (p10 / IQR / p90) across all key metrics — "
+            "economic, operational, welfare, and environmental.</p></div>",
+            unsafe_allow_html=True,
+        )
+
+        label_base = st.session_state.active_baseline
+        df_base = (st.session_state.data_base_opt
+                   if st.session_state.data_base_opt is not None
+                   else st.session_state.data_base_raw)
+        df_cri  = st.session_state.data_crisis
+
+        df_base = df_base.copy(); df_base["Scenario"] = label_base
+        df_cri  = df_cri.copy();  df_cri["Scenario"]  = "Crisis"
+        df_full = pd.concat([df_base, df_cri], ignore_index=True)
+
+        # ── Summary KPIs ────────────────────────────────────────────────────
+        rev_base   = df_base["Revenue"].sum() / n_runs
+        rev_cri    = df_cri["Revenue"].sum()  / n_runs
+        diff_pct   = (rev_cri - rev_base) / max(rev_base, 0.01) * 100
+        waste_drop = (df_cri["Waste"].sum() - df_base["Waste"].sum()) / n_runs
+        stress_b   = df_base["FoodStressedPct"].mean() if "FoodStressedPct" in df_base.columns else 0.0
+        stress_c   = df_cri["FoodStressedPct"].mean()  if "FoodStressedPct" in df_cri.columns  else 0.0
+        gini_b     = df_base["GiniAccess"].mean() if "GiniAccess" in df_base.columns else 0.0
+        gini_c     = df_cri["GiniAccess"].mean()  if "GiniAccess" in df_cri.columns  else 0.0
+
+        km1, km2, km3, km4 = st.columns(4)
+        km1.metric("Revenue Impact",       f"€{rev_cri:,.0f}", f"{diff_pct:.1f}%")
+        km2.metric("Extra Waste (crisis)",  f"{waste_drop:+.0f} units/run")
+        km3.metric("Food Stressed Δ",      f"{stress_c - stress_b:+.1%}")
+        km4.metric("Gini Access Δ",        f"{gini_c - gini_b:+.3f}")
+
+        # ── Per-metric CI tabs ───────────────────────────────────────────────
+        m_tabs = st.tabs([
+            "💰 Revenue", "♻️ Waste & Lost Sales",
+            "👥 Footfall & Panic", "🍽️ Welfare & Equity", "🌿 Environment",
+        ])
+
+        with m_tabs[0]:
+            _plot_ci_dual(df_base, df_cri, label_base)
+            with st.expander("📊 Statistical Analysis", expanded=True):
+                _render_analysis(df_full, "Revenue", params, prefix="€", decimals=0,
+                                 higher_is_better=True,
+                                 baseline_label=label_base, crisis_label="Crisis")
+            fig_vio = px.violin(df_full, x="Scenario", y="Revenue", color="Scenario",
+                                box=True, points="outliers",
+                                title="Daily Revenue Distribution",
+                                color_discrete_map={label_base: "#2E8B57", "Crisis": "#DC143C"})
+            fig_vio.update_layout(template="plotly_white")
+            st.plotly_chart(fig_vio, use_container_width=True, config=_PLOTLY_CFG)
+
+        with m_tabs[1]:
+            _plot_ci_dual_col(df_base, df_cri, "Waste",
+                              "Daily Waste [p10/IQR/p90]", "Units wasted",
+                              label_base, higher_is_better=False)
+            with st.expander("📊 Waste Analysis"):
+                _render_analysis(df_full, "Waste", params, suffix=" units", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+            _plot_ci_dual_col(df_base, df_cri, "LostSales",
+                              "Daily Lost Sales [p10/IQR/p90]", "Units lost",
+                              label_base, higher_is_better=False,
+                              color_base="#F39C12", color_cri="#E74C3C")
+            with st.expander("📊 Lost Sales Analysis"):
+                _render_analysis(df_full, "LostSales", params, suffix=" units", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+
+        with m_tabs[2]:
+            _plot_ci_dual_col(df_base, df_cri, "Consumers",
+                              "Daily Footfall [p10/IQR/p90]", "Shoppers/day",
+                              label_base, higher_is_better=True)
+            with st.expander("📊 Footfall Analysis"):
+                _render_analysis(df_full, "Consumers", params, suffix=" shoppers", decimals=0,
+                                 higher_is_better=True,
+                                 baseline_label=label_base, crisis_label="Crisis")
+            _plot_ci_dual_col(df_base, df_cri, "PanicLevel",
+                              "Daily Panic Level [p10/IQR/p90]", "Panic index (0–1)",
+                              label_base, higher_is_better=False,
+                              color_base="#95A5A6", color_cri="#E74C3C")
+            with st.expander("📊 Panic Level Analysis"):
+                _render_analysis(df_full, "PanicLevel", params, decimals=3,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+
+        with m_tabs[3]:
+            _plot_ci_dual_col(df_base, df_cri, "FoodStressedPct",
+                              "Food-Stressed Consumers % [p10/IQR/p90]",
+                              "% of shoppers food-stressed",
+                              label_base, higher_is_better=False)
+            with st.expander("📊 Food Stress Analysis"):
+                _render_analysis(df_full, "FoodStressedPct", params, suffix="%", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+            _plot_ci_dual_col(df_base, df_cri, "GiniAccess",
+                              "Gini Access Coefficient [p10/IQR/p90]",
+                              "Gini (0 = equal, 1 = max inequality)",
+                              label_base, higher_is_better=False,
+                              color_base="#9B59B6", color_cri="#8E44AD")
+            with st.expander("📊 Equity Analysis"):
+                _render_analysis(df_full, "GiniAccess", params, decimals=3,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+            _plot_ci_dual_col(df_base, df_cri, "FulfillmentRate",
+                              "Fulfillment Rate [p10/IQR/p90]", "Rate (0–1)",
+                              label_base, higher_is_better=True,
+                              color_base="#27AE60", color_cri="#E74C3C")
+            with st.expander("📊 Fulfillment Analysis"):
+                _render_analysis(df_full, "FulfillmentRate", params, decimals=3,
+                                 higher_is_better=True,
+                                 baseline_label=label_base, crisis_label="Crisis")
+
+        with m_tabs[4]:
+            _plot_ci_dual_col(df_base, df_cri, "CO2Total",
+                              "Daily CO₂ Equivalent [p10/IQR/p90]", "kg CO₂-eq/day",
+                              label_base, higher_is_better=False,
+                              color_base="#1ABC9C", color_cri="#E67E22")
+            with st.expander("📊 CO₂ Analysis"):
+                _render_analysis(df_full, "CO2Total", params, suffix=" kg CO₂-eq", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+            _plot_ci_dual_col(df_base, df_cri, "ImportDepPct",
+                              "Import Dependency % [p10/IQR/p90]",
+                              "Import share of sales (%)",
+                              label_base, higher_is_better=False,
+                              color_base="#16A085", color_cri="#D35400")
+            with st.expander("📊 Import Dependency Analysis"):
+                _render_analysis(df_full, "ImportDepPct", params, suffix="%", decimals=1,
+                                 higher_is_better=False,
+                                 baseline_label=label_base, crisis_label="Crisis")
+
+        # ── Correlation heatmap ──────────────────────────────────────────────
+        st.subheader("📊 Correlation Analysis — Systemic Coupling")
+        _corr_cols = [c for c in
+                      ["Revenue", "Waste", "LostSales", "FoodStressedPct",
+                       "GiniAccess", "CO2Total"]
+                      if c in df_base.columns]
+        c_base = df_base[_corr_cols].corr()
+        c_cri  = df_cri[_corr_cols].corr()
+        fig_heat, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig_heat.patch.set_facecolor("white")
+        sns.heatmap(c_base, annot=True, cmap="Greens", ax=ax1, vmin=-1, vmax=1,
+                    fmt=".2f", annot_kws={"color": "black"})
+        ax1.set_title(label_base, color="black"); ax1.set_facecolor("white")
+        sns.heatmap(c_cri,  annot=True, cmap="Reds",   ax=ax2, vmin=-1, vmax=1,
+                    fmt=".2f", annot_kws={"color": "black"})
+        ax2.set_title("Crisis", color="black"); ax2.set_facecolor("white")
+        fig_heat.tight_layout()
+        st.pyplot(fig_heat)
+        plt.close(fig_heat)
+
+        # ── Downloads ────────────────────────────────────────────────────────
+        st.divider()
+        csv_bytes = df_full.to_csv(index=False).encode("utf-8")
+        c_dl1, c_dl2, c_dl3 = st.columns(3)
+        c_dl1.download_button("📥 Download MC Data (CSV)", csv_bytes,
+                              "monte_carlo_results.csv", "text/csv")
+        if c_dl2.button("📄 Generate PDF Report", key="mc_pdf_btn"):
+            try:
+                pdf_bytes = _make_pdf_report(df_full, label_base, n_runs)
+                c_dl2.download_button("📥 Download PDF", pdf_bytes,
+                                      "GROCERYsim_Report.pdf", "application/pdf")
+            except Exception as e:
+                st.error(f"PDF generation failed: {e}")
+        if c_dl3.button("🔄 Reset Workflow", key="mc_reset_btn"):
+            for k in ["mc_stage", "data_base_raw", "data_base_opt", "data_crisis",
+                      "ai_recs", "prod_stats_raw"]:
+                st.session_state[k] = 0 if k == "mc_stage" else None
+            st.rerun()
+
+
+# ===========================================================================
+# 8. TAB: SCIENTIFIC ANALYSIS (legacy — kept for reference, not shown in nav)
 # ===========================================================================
 
 def render_science_tab(params: dict):
@@ -6293,6 +6609,30 @@ def _plot_ci_dual(df_base: pd.DataFrame, df_cri: pd.DataFrame, label_base: str):
         title="Daily Revenue — Baseline vs Crisis  [p10 / IQR / p90 bands]",
         xaxis_title="Day",
         yaxis_title="Revenue (€)",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(l=50, r=20, t=130, b=40),
+    )
+    st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
+
+
+def _plot_ci_dual_col(df_base: pd.DataFrame, df_cri: pd.DataFrame,
+                      col: str, title: str, yaxis_title: str, label_base: str,
+                      higher_is_better: bool = True,
+                      color_base: str = "#44A1A0", color_cri: str = "#DC143C"):
+    """Generic dual-scenario p10/IQR/p90 CI chart for any numeric column."""
+    if col not in df_base.columns or col not in df_cri.columns:
+        return
+    s_b = _percentile_band(df_base, col)
+    s_c = _percentile_band(df_cri,  col)
+    fig = go.Figure()
+    _band_traces(fig, s_b, label_base, color_base)
+    _band_traces(fig, s_c, "Crisis",   color_cri)
+    arrow = "↑ better" if higher_is_better else "↓ better"
+    fig.update_layout(
+        title=f"{title}  [{arrow}]",
+        xaxis_title="Day",
+        yaxis_title=yaxis_title,
         template="plotly_white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         margin=dict(l=50, r=20, t=130, b=40),
@@ -12554,9 +12894,7 @@ _NAV_CARDS = [
         "color":    "#44A1A0",
         "sections": [
             {"key": "demo",    "label": "🎮 Interactive Demo",
-             "desc": "Live day-by-day simulation with animated charts"},
-            {"key": "science", "label": "🔬 Scientific Analysis",
-             "desc": "Monte Carlo · percentile CI bands · AI recommendations"},
+             "desc": "Live animation · Monte Carlo CI bands · AI storage optimisation"},
         ],
     },
     {
@@ -12631,7 +12969,6 @@ def _build_section_renderers(params: dict) -> dict:
     return {
         "data":        render_data_tab,
         "demo":        lambda: render_demo_tab(params),
-        "science":     lambda: render_science_tab(params),
         "waste":       render_waste_tab,
         "product":     render_product_tab,
         "behaviour":   lambda: render_behaviour_tab(params),
