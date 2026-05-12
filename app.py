@@ -2867,14 +2867,17 @@ def _generate_sf_pdf_report() -> bytes:
     cat_colors = [_C["b"], _C["g"], _C["p"], _C["a"], _C["t"]]
     if cats:
         for i, cat in enumerate(cats):
-            dc_b = dp[(dp["Category"] == cat) & (dp["Scenario"] == "Baseline")].groupby("Day")["Stock"].mean()
-            dc_c = dp[(dp["Category"] == cat) & (dp["Scenario"] == "Crisis")].groupby("Day")["Stock"].mean()
+            dc_b = dp[(dp["Category"] == cat) & (dp["Scenario"] == "Baseline")].groupby("Day")["Shelf"].mean()
+            dc_c = dp[(dp["Category"] == cat) & (dp["Scenario"] == "Crisis")].groupby("Day")["Shelf"].mean()
             col = cat_colors[i % len(cat_colors)]
             ax.plot(dc_b.index, dc_b.values, color=col, lw=1.2, ls="--", alpha=0.55)
             ax.plot(dc_c.index, dc_c.values, color=col, lw=2.0, label=cat)
     else:
-        ax.plot(sc_b["Day"], sc_b["StockLevel"], color=_C["b"], lw=1.5, ls="--", label="Baseline stock")
-        ax.plot(sc_c["Day"], sc_c["StockLevel"], color=_C["r"], lw=2.0, label="Crisis stock")
+        if not dp.empty and "Shelf" in dp.columns:
+            tot_b = dp[dp["Scenario"] == "Baseline"].groupby("Day")["Shelf"].sum()
+            tot_c = dp[dp["Scenario"] == "Crisis"].groupby("Day")["Shelf"].sum()
+            ax.plot(tot_b.index, tot_b.values, color=_C["b"], lw=1.5, ls="--", label="Baseline shelf stock")
+            ax.plot(tot_c.index, tot_c.values, color=_C["r"], lw=2.0, label="Crisis shelf stock")
     _crisis_span(ax, sc_p["cri_start"], sc_cri_end, sc_p["days"])
     ax.set_xlabel("Simulation Day"); ax.set_ylabel("Units on Shelf")
     ax.set_title("Shelf Stock by Category — Baseline (dashed) vs Crisis (solid)")
