@@ -2470,14 +2470,27 @@ def _render_sf_pm_results(data: dict):
 
 # ── SecureFood PDF Report Generator ──────────────────────────────────────────
 
-_SF_FONT_DIR = "/System/Library/Fonts/Supplemental"
-_SF_FONTS = {
-    "reg":  f"{_SF_FONT_DIR}/Arial.ttf",
-    "bold": f"{_SF_FONT_DIR}/Arial Bold.ttf",
-    "it":   f"{_SF_FONT_DIR}/Arial Italic.ttf",
-    "bi":   f"{_SF_FONT_DIR}/Arial Bold Italic.ttf",
-    "uni":  "/Library/Fonts/Arial Unicode.ttf",
-}
+def _sf_resolve_fonts() -> dict:
+    """Resolve font paths: prefer bundled Liberation Sans, fall back to macOS Arial."""
+    _bundled = os.path.join(_STATIC_DIR, "fonts")
+    _candidates = {
+        "reg":  [f"{_bundled}/LiberationSans-Regular.ttf",    "/System/Library/Fonts/Supplemental/Arial.ttf",      "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
+        "bold": [f"{_bundled}/LiberationSans-Bold.ttf",       "/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"],
+        "it":   [f"{_bundled}/LiberationSans-Italic.ttf",     "/System/Library/Fonts/Supplemental/Arial Italic.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf"],
+        "bi":   [f"{_bundled}/LiberationSans-BoldItalic.ttf", "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf"],
+    }
+    resolved = {}
+    for key, paths in _candidates.items():
+        for p in paths:
+            if os.path.isfile(p):
+                resolved[key] = p
+                break
+        else:
+            resolved[key] = paths[0]  # let fpdf raise a clear error if missing
+    resolved["uni"] = resolved["reg"]  # use same font for unicode fallback
+    return resolved
+
+_SF_FONTS = _sf_resolve_fonts()
 _SF_DARK    = (  4,  32,  38)
 _SF_DARK2   = ( 12,  58,  70)
 _SF_AMBER   = (219, 161,  89)
