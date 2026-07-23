@@ -1,5 +1,6 @@
 # Streamlit secrets — never commit
 .streamlit/secrets.toml
+.streamlit/dce_data_clean.csv
 
 # Private data files — never commit
 *firebase*.json
