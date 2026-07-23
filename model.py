@@ -11,17 +11,17 @@ ProductAgent     – represents one SKU on the shelf + in storage.
                    discounting, expiry-based removal, and reorder signalling.
 SupplyTruck      – singleton logistics agent.  Queues and delivers orders,
                    enforces lead-time and supply disruption periods.
-ConsumerAgent    – daily visitor.  Makes utility-based purchase decisions using
-                   DCE-calibrated preference scores; switches between baseline
-                   and crisis baskets when the scenario is active.
+ConsumerAgent    – one shopping visit by a persistent household profile. Makes
+                   evidence-gated price-acceptance and substitution decisions;
+                   pantry stock persists between visits. Unidentified learning,
+                   panic, TPB, and Prospect Theory dynamics are opt-in extensions.
 
 Model
 -----
 SupermarketModel – orchestrates the simulation.  Accepts the in-memory config
                    dict produced by data_processor.run_pipeline_from_data(),
-                   handles daily consumer sampling (two modes: bootstrap-up when
-                   real pool is smaller than target, or sample-down when it is
-                   larger), and records per-day aggregate and per-product metrics.
+                   schedules repeat household visits, advances home consumption,
+                   and records per-day aggregate and per-product metrics.
 """
 
 import json
@@ -31,15 +31,20 @@ from collections import defaultdict
 
 import numpy as np
 from mesa import Agent, Model
-from mesa.time import RandomActivation
+from mesa.time import BaseScheduler
+
+from behavioral_mechanisms import (
+    effective_hoarding_multiplier,
+    normalized_tpb_weights,
+    tpb_intention,
+)
 
 
 # ---------------------------------------------------------------------------
-# Archetype behavioural modifiers
+# Optional archetype behavioural modifiers
 # ---------------------------------------------------------------------------
 
-# Learning rate: fraction of the gap closed per day toward a target preference value.
-# Small enough that meaningful drift takes weeks, not hours.
+# Exploratory learning rate; not estimated from the current dataset.
 LEARNING_RATE = 0.015
 
 ARCHETYPE_MODIFIERS = {
@@ -193,8 +198,17 @@ class ProductAgent(Agent):
 
         # --- Storage (scalar) ---
         default_storage            = int(product_data.get("initial_stock_storage", 20))
-        self.max_storage_capacity  = int(ai_capacity) if ai_capacity else 50
-        self.stock_storage         = int(ai_capacity) if ai_capacity else default_storage
+        self.max_storage_capacity  = int(
+            ai_capacity
+            if ai_capacity is not None
+            else product_data.get("max_storage_capacity", 50)
+        )
+        self.stock_storage = int(
+            ai_capacity if ai_capacity is not None else default_storage
+        )
+        self.stock_storage = min(
+            self.stock_storage, self.max_storage_capacity
+        )
 
         # Shelf life
         self.max_shelf_life = int(product_data.get("shelf_life_days", 14))
@@ -220,8 +234,7 @@ class ProductAgent(Agent):
         self.snap_storage = 0
         self.snap_pending = 0
 
-        # Set during step(); initialised here so consumers can safely read it
-        # even if RandomActivation runs a ConsumerAgent before this ProductAgent.
+        # Set during the product phase and read during the later consumer phase.
         self._has_near_expiry = False
 
     # ------------------------------------------------------------------
@@ -295,10 +308,17 @@ class ProductAgent(Agent):
         # 3. Snapshots
         self.snap_shelf   = self.stock_shelf
         self.snap_storage = self.stock_storage
-        self.snap_pending = self.model.truck.get_pending_stock(self.name)
+        self.snap_pending = self.model.truck.get_pending_stock(self.prod_id)
 
         # 4. Price update — crisis inflation first, then policy modifiers
-        if self.model.is_scenario_active:
+        if (
+            self.model.is_scenario_active
+            and self.prod_id in self.model.scenario_price_overrides
+        ):
+            inflated = round(
+                self.model.scenario_price_overrides[self.prod_id], 4
+            )
+        elif self.model.is_scenario_active:
             inflated = round(
                 self.base_price * (1.0 + self.model.inflation_percent / 100.0), 4
             )
@@ -326,6 +346,7 @@ class ProductAgent(Agent):
                 self.daily_co2_waste += b["qty"] * CO2_WASTE_FACTOR
                 self.model.food_waste_log.record(
                     day      = self.model.current_day,
+                    product_id = self.prod_id,
                     product  = self.name,
                     category = self.category,
                     quantity = b["qty"],
@@ -351,9 +372,13 @@ class FoodWasteLog:
     def __init__(self):
         self.records: list[dict] = []
 
-    def record(self, day: int, product: str, category: str, quantity: int, reason: str):
+    def record(
+        self, day: int, product: str, category: str, quantity: int, reason: str,
+        product_id: str | None = None,
+    ):
         self.records.append({
-            "Day": day, "Product": product, "Category": category,
+            "Day": day, "ProductID": product_id, "Product": product,
+            "Category": category,
             "Quantity": quantity, "Reason": reason,
         })
 
@@ -393,9 +418,9 @@ class SupplyTruck(Agent):
         self.delivery_queue: dict[int, dict[str, int]] = {}
         self.log: list[dict] = []
 
-    def get_pending_stock(self, product_name: str) -> int:
+    def get_pending_stock(self, product_id: str) -> int:
         return sum(
-            manifest.get(product_name, 0)
+            manifest.get(product_id, 0)
             for manifest in self.delivery_queue.values()
         )
 
@@ -416,8 +441,8 @@ class SupplyTruck(Agent):
         if trucks_allowed:
             arrived = sorted(d for d in self.delivery_queue if d <= today)
             for d_date in arrived:
-                for prod_name, qty in self.delivery_queue[d_date].items():
-                    product = self.model.get_product_by_name(prod_name)
+                for product_id, qty in self.delivery_queue[d_date].items():
+                    product = self.model.get_product_by_id(product_id)
                     if product:
                         # Policy domestic supply shock — randomly block a fraction
                         # of Finnish-origin deliveries proportional to severity
@@ -426,7 +451,8 @@ class SupplyTruck(Agent):
                             qty = max(0, int(qty * (1.0 - blocked_frac)))
                             if qty == 0:
                                 self.log.append({
-                                    "Day": today, "Product": prod_name,
+                                    "Day": today, "Product": product.name,
+                                    "ProductID": product.prod_id,
                                     "Action": "Blocked", "Quantity": 0,
                                     "Refused": 0, "Note": "Domestic shock",
                                 })
@@ -443,13 +469,15 @@ class SupplyTruck(Agent):
                             product.daily_co2_waste        += refused * CO2_WASTE_FACTOR
                             self.model.food_waste_log.record(
                                 day      = today,
-                                product  = prod_name,
+                                product_id = product.prod_id,
+                                product  = product.name,
                                 category = product.category,
                                 quantity = refused,
                                 reason   = "Refused Delivery",
                             )
                         self.log.append({
-                            "Day": today, "Product": prod_name,
+                            "Day": today, "Product": product.name,
+                            "ProductID": product.prod_id,
                             "Action": "Delivery", "Quantity": accepted,
                             "Refused": refused,
                             "Note": "Storage Full" if refused > 0 else "OK",
@@ -460,15 +488,13 @@ class SupplyTruck(Agent):
         arrival_day = today + self.model.lead_time_days
         todays_order: dict[str, int] = {}
 
-        for agent in self.model.schedule.agents:
-            if not isinstance(agent, ProductAgent):
-                continue
+        for agent in self.model.products:
 
             # Check total supply pipeline: storage already on hand + stock in transit.
             # Old logic blocked ALL new orders if even 1 unit was pending — this caused
             # under-ordering during demand surges (e.g. hoarding events) because the
             # small pending delivery would become inadequate by the time it arrived.
-            pending       = self.get_pending_stock(agent.name)
+            pending       = self.get_pending_stock(agent.prod_id)
             total_supply  = agent.stock_storage + pending
             trigger       = agent.max_storage_capacity * self.model.reorder_point
 
@@ -479,9 +505,10 @@ class SupplyTruck(Agent):
             target_qty = int(agent.max_storage_capacity * self.model.target_stock_level)
             order_qty  = max(0, target_qty - total_supply)
             if order_qty > 0:
-                todays_order[agent.name] = order_qty
+                todays_order[agent.prod_id] = order_qty
                 self.log.append({
                     "Day": today, "Product": agent.name,
+                    "ProductID": agent.prod_id,
                     "Action": "Order", "Quantity": order_qty,
                     "Explanation": (
                         f"TotalSupply {total_supply} (storage {agent.stock_storage} "
@@ -492,9 +519,9 @@ class SupplyTruck(Agent):
         if todays_order:
             if arrival_day not in self.delivery_queue:
                 self.delivery_queue[arrival_day] = {}
-            for name, qty in todays_order.items():
-                self.delivery_queue[arrival_day][name] = (
-                    self.delivery_queue[arrival_day].get(name, 0) + qty
+            for product_id, qty in todays_order.items():
+                self.delivery_queue[arrival_day][product_id] = (
+                    self.delivery_queue[arrival_day].get(product_id, 0) + qty
                 )
 
 
@@ -504,7 +531,7 @@ class SupplyTruck(Agent):
 
 class ConsumerAgent(Agent):
     """
-    Represents a single shopping visit.
+    Represents a single shopping visit by a persistent household profile.
 
     Created at the start of each simulation day and removed at day end.
 
@@ -518,18 +545,25 @@ class ConsumerAgent(Agent):
          near-expiry stock gets 50 % discount).
       4. If out of stock, record lost sale and attempt substitute.
 
-    Utility function (higher = more desirable)
-    ------------------------------------------
-      U = origin_bonus + organic_bonus + fat_match - price_disutility
-
-    where each component is scaled to keep U in roughly [−1, 2] at normal prices,
-    and the purchase threshold is calibrated from the agent's reference price so
-    that agents will reliably buy their preferred products at baseline prices.
+    Choice architecture
+    -------------------
+    Requested-SKU acceptance uses the separately calibrated incremental price-loss
+    margin. Substitute candidates must be in stock, affordable, and in the same
+    category. A replacement-event audit gates transfer of the retention price screen
+    and deterministic attribute ordering. Failed gates use a seeded uniform draw
+    among feasible candidates outside domains with validated choice evidence.
+    A phase-transition visit samples the cross-fitted substitution propensity once per
+    basket line and distinguishes maximum available budget from reservation spending.
     """
 
     def __init__(self, unique_id, model, profile: dict):
         super().__init__(unique_id, model)
         self.profile = profile
+        self.household_id = str(profile.get("_household_id", unique_id))
+        self.visit_number = int(profile.get("_visit_count", 0)) + 1
+        self.expected_visit_interval = float(
+            profile.get("_expected_visit_interval", 1.0)
+        )
 
         # Preference scores (0–1 each)
         self.price_sensitivity  = float(profile.get("price_sensitivity",  0.5))
@@ -540,8 +574,13 @@ class ConsumerAgent(Agent):
         self.substitution_rate  = float(profile.get("substitution_rate",   0.5))
         self.archetype          = profile.get("archetype", "habitual_buyer")
 
-        # Archetype-specific modifiers
-        mods = ARCHETYPE_MODIFIERS.get(self.archetype, (0.5, 1.0, 0.0))
+        # Cluster labels do not validate the modifier magnitudes below. Keep
+        # them neutral unless an exploratory run explicitly enables them.
+        mods = (
+            ARCHETYPE_MODIFIERS.get(self.archetype, (0.5, 1.0, 0.0))
+            if model.archetype_modifiers_enabled
+            else (0.5, 1.0, 0.0)
+        )
         # If behavioural learning has already updated sub_tolerance in the profile,
         # use that value; otherwise fall back to the archetype default.
         self.sub_tolerance        = float(profile.get("sub_tolerance", mods[0]))
@@ -551,8 +590,14 @@ class ConsumerAgent(Agent):
         # Baskets
         self.baseline_basket = profile.get("baseline_basket", [])
         self.crisis_basket   = profile.get("crisis_basket",   self.baseline_basket)
-        self.budget          = float(profile.get("budget",        50.0))
-        self.crisis_budget   = float(profile.get("crisis_budget", self.budget))
+        self.budget          = round(float(profile.get("budget", 50.0)), 2)
+        self.crisis_budget   = round(
+            float(profile.get("crisis_budget", self.budget)), 2
+        )
+        self.budget_utilization_propensity = min(
+            1.0,
+            max(0.0, float(profile.get("budget_utilization_propensity", 1.0))),
+        )
 
         # Income proxy — used for affordability / food-stress calculations.
         # Stored as the midpoint of the reported income bracket (€ / month).
@@ -561,19 +606,21 @@ class ConsumerAgent(Agent):
         # Panic state (updated by model)
         self.panic_level = 0.0
 
-        # Purchase utility threshold — calibrated so agents buy their preferred
-        # products at baseline prices (U ≥ threshold).
-        self.utility_threshold = 0.30 + self.price_sensitivity * 0.25 - self.price_tolerance_extra
-
         # ---- Policy / welfare tracking (reset each step) ----
         self.items_wanted     = 0      # items in active basket
+        self.items_base_wanted = 0     # observed basket quantity before stockpiling
+        self.items_allowed     = 0     # demand after any purchase-limit policy
         self.items_purchased  = 0      # items actually bought
+        self.items_substituted = 0     # purchased units supplied by another SKU
+        self.choice_lines_purchased = 0
+        self.choice_lines_substituted = 0
         self.budget_exhausted = False  # ran out of budget before finishing basket
+        self.amount_spent     = 0.0    # nominal expenditure during this visit
         self.total_fat_bought = 0.0    # sum(fat_content × qty) for nutrition scoring
 
         # ---- Behavioural learning state — persisted in profile dict ----
-        # Without this, the organic-streak and fat-history reset every day
-        # because agents are recreated, eliminating streak-based learning boosts.
+        # Visit objects are short-lived, so longitudinal learning belongs to the
+        # persistent household profile.
         self._organic_streak: int         = profile.setdefault("_organic_streak", 0)
         self._fat_history:    list[float] = profile.setdefault("_fat_history", [])
 
@@ -582,48 +629,62 @@ class ConsumerAgent(Agent):
         self.loss_aversion   = float(profile.get("loss_aversion", 2.25))
         self.kt_alpha        = 0.88
         # Per-product reference prices seeded from base (pre-crisis) prices.
-        # Because agents are recreated every day the dict must be pre-populated;
+        # Because visit objects are recreated, the dict must be pre-populated;
         # otherwise every consumer falls back to a single scalar reference_price
         # (mean of their whole basket) which breaks per-product Prospect Theory.
         # Using base_price (not current_price) ensures the reference is always the
         # pre-inflation price, so every crisis day feels correctly expensive.
-        self._ref_prices: dict = {
-            name: pa.base_price
-            for name, pa in model.product_map.items()
-        }
+        self._ref_prices: dict = profile.setdefault("_ref_prices", {})
+        for product_id, pa in model.product_map.items():
+            self._ref_prices.setdefault(product_id, pa.base_price)
+
+        # Phase-two calibration identifies retain/drop behaviour for observed
+        # grocery needs across categories. It remains separate from the controlled
+        # milk DCE, whose pooled price-and-attribute utility is used only to allocate
+        # a replacement after the phase-transition rule says replacement occurs.
+        self.price_acceptance_margin = float(
+            profile.get("revealed_preference_margin", 0.05)
+        )
 
         # ── Theory of Planned Behaviour (Ajzen 1991) ────────────────────────────
         # Weights from Armitage & Conner (2001) meta-analysis
         self.attitude         = max(0.3, 1.0 - self.price_sensitivity * 0.4)
         self.subjective_norm  = 0.0   # updated each step from store-crowding signal
         self.pbc              = 1.0   # perceived behavioural control
-        self._tpb_att_w       = 0.49
-        self._tpb_norm_w      = 0.26
-        self._tpb_pbc_w       = 0.39  # Armitage & Conner (2001) meta-analytic weights
+        # The published transferred values sum to 1.14. Treating them as raw
+        # additive weights and clipping at one distorted high-intention agents.
+        # A normalized convex combination preserves their relative importance.
+        (self._tpb_att_w, self._tpb_norm_w, self._tpb_pbc_w) = (
+            normalized_tpb_weights()
+        )
 
         # ── Temporal Discounting / Stockpiling (O'Donoghue & Rabin 1999) ───────
-        # β-δ quasi-hyperbolic discounting: present-biased agents stockpile more
-        # when panic rises (Hendel & Nevo 2006 pantry model)
+        # Heuristic inspired by quasi-hyperbolic discounting: present-biased
+        # agents stockpile more when panic rises. Beta is not estimated here.
         self.beta           = max(0.5, 0.90 - self.price_sensitivity * 0.15)
 
-        # Home inventory persists across days via the profile dict.
-        # ConsumerAgents are recreated every day, so any instance variable
-        # is lost between days — home inventory was always starting at zero,
-        # meaning every consumer always believed they needed a full stockpile.
-        # Fix: store _home_inv inside the profile dict; since profile is a
-        # reference into population_pool (not a copy), changes persist.
+        # Home inventory persists in the household profile while each
+        # ConsumerAgent represents only one store visit.
         self._home_inv: dict = profile.setdefault("_home_inv", {})
 
         # Allow model-level override of stockpile_days (from sidebar slider)
         if getattr(model, "stockpile_days_override", None) is not None:
             base_days = float(model.stockpile_days_override)
         else:
-            base_days = float(profile.get("stockpile_days", 3.0))
+            base_days = float(profile.get("stockpile_days", 1.0))
         self.stockpile_days  = base_days   # rises with panic during step()
 
         # ── FIES (FAO Food Insecurity Experience Scale, simplified 4-item) ─────
-        self.food_insecurity_score = 0   # 0=secure 1=mild 2–3=moderate 4=severe
+        self.access_stress_score = int(profile.get("_access_stress_score", 0))
+        # Deprecated alias retained for historical exports and UI code. This
+        # objective model diagnostic is not the survey-based FAO FIES.
+        self.food_insecurity_score = self.access_stress_score
         self.items_unmet           = 0   # items wanted but not obtained
+        self._bought_organic       = False
+        self._panic_signal_sent    = False
+        self.substitution_attempts = 0
+        self.substitution_candidates_considered = 0
+        self.substitution_price_rejections = 0
 
     # ------------------------------------------------------------------
     # Behavioural theory helpers
@@ -644,14 +705,118 @@ class ConsumerAgent(Agent):
     def _tpb_intention(self) -> float:
         """
         Behavioural intention from Theory of Planned Behaviour (Ajzen 1991).
-        Uses Armitage & Conner (2001) meta-analytic weights:
-          I = 0.49·A + 0.26·SN + 0.39·PBC
+        Uses the relative Armitage & Conner (2001) transferred weights after
+        normalization to sum to one:
+          I = 0.430·A + 0.228·SN + 0.342·PBC
         Returns a value in [0, 1] representing purchase motivation strength.
         """
-        raw = (self._tpb_att_w  * self.attitude
-             + self._tpb_norm_w * self.subjective_norm
-             + self._tpb_pbc_w  * self.pbc)
-        return min(1.0, max(0.0, raw))
+        return tpb_intention(
+            self.attitude,
+            self.subjective_norm,
+            self.pbc,
+            (self._tpb_att_w, self._tpb_norm_w, self._tpb_pbc_w),
+        )
+
+    def _price_acceptance_threshold(self, intention: float = 0.50) -> float:
+        """Return the maximum accepted incremental price loss.
+
+        TPB relief is an exploratory extension. In empirical-only mode intention
+        is exactly 0.50, so the held-out calibrated margin is unchanged.
+        """
+        return max(
+            0.0,
+            self.price_acceptance_margin
+            + (intention - 0.50) * 0.12
+            + self.price_tolerance_extra,
+        )
+
+    @staticmethod
+    def _effective_price(product: ProductAgent) -> float:
+        return product.current_price * (0.5 if product._has_near_expiry else 1.0)
+
+    def _price_loss(
+        self, product: ProductAgent, reference_price: float | None = None,
+    ) -> float:
+        """Incremental price loss relative to an explicit comparison price."""
+        effective_price = self._effective_price(product)
+        ref_price = float(
+            reference_price
+            if reference_price is not None
+            else self._ref_prices.get(product.prod_id, product.base_price)
+        )
+        ref_price = max(ref_price, 0.01)
+        if self.model.prospect_theory_enabled:
+            price_delta = (ref_price - effective_price) / ref_price
+            kt_value = self._kt_value(
+                price_delta, self.loss_aversion, self.kt_alpha
+            )
+            relative_multiplier = max(0.01, 1.0 - kt_value * 0.6)
+            return self.price_sensitivity * (relative_multiplier - 1.0)
+        return self.price_sensitivity * (effective_price / ref_price - 1.0)
+
+    def _accepts_price(
+        self,
+        product: ProductAgent,
+        intention: float = 0.50,
+        reference_price: float | None = None,
+    ) -> bool:
+        return self._price_loss(product, reference_price) <= (
+            self._price_acceptance_threshold(intention) + 1e-12
+        )
+
+    def _dce_milk_utility(self, product: ProductAgent) -> float:
+        """Pooled DCE utility for available milk candidates on the EUR scale."""
+        fat_centered = float(product.fat_content) - 1.5
+        coefficients = self.model.dce_choice_coefficients
+        return (
+            coefficients.get("price", 0.0) * self._effective_price(product)
+            + coefficients.get("origin", 0.0) * float(product.origin == "Suomi")
+            + coefficients.get("organic", 0.0) * float(product.is_bio)
+            + coefficients.get("fat_linear", 0.0) * fat_centered
+            + coefficients.get("fat_quadratic", 0.0) * fat_centered ** 2
+        )
+
+    def _nonprice_compatibility(self, product: ProductAgent) -> float:
+        """Transparent 0-1 descriptive fit used only to rank substitutes.
+
+        The three components come directly from participant choice shares or the
+        chosen-fat mean. Equal aggregation is an explicit allocation heuristic;
+        it is never compared with price or interpreted as cardinal utility/WTP.
+        """
+        if (
+            not self.model.dce_nonprice_validation_passed
+            or str(product.category).strip().casefold()
+            not in self.model.dce_applicable_categories
+        ):
+            return 0.5
+        finnish_fit = (
+            self.finnish_preference
+            if product.origin == "Suomi"
+            else 1.0 - self.finnish_preference
+        )
+        organic_fit = (
+            self.organic_preference
+            if product.is_bio
+            else 1.0 - self.organic_preference
+        )
+        fat_fit = math.exp(-abs(product.fat_content - self.preferred_fat) / 2.0)
+        origin_weight = organic_weight = fat_weight = 1.0
+        policy: PolicyConfig = self.model.policy_config
+        if (
+            self.model.policy_choice_effects_enabled
+            and policy.is_labelling_active(self.model.current_day)
+        ):
+            organic_weight += policy.labelling_organic_boost
+            fat_weight += policy.labelling_health_boost
+        return (
+            origin_weight * finnish_fit
+            + organic_weight * organic_fit
+            + fat_weight * fat_fit
+        ) / (origin_weight + organic_weight + fat_weight)
+
+    def _baseline_product_utility(self, product: ProductAgent) -> float:
+        """Deprecated compatibility alias retained for downstream consumers."""
+        return self._nonprice_compatibility(product)
 
     # ------------------------------------------------------------------
     # Utility computation
@@ -659,53 +824,11 @@ class ConsumerAgent(Agent):
 
     def _compute_utility(self, product: ProductAgent) -> float:
         """
-        Calculate utility for purchasing `product`.
-        Scale: positive = acceptable, negative = unacceptable.
-
-        If the labelling policy is active, organic_preference and
-        health (fat-match) weights receive a small boost per PolicyConfig.
+        Return the descriptive non-price compatibility score used only by legacy
+        or explicitly validated ranking paths. The pooled milk DCE has its own
+        price-and-attribute utility on the displayed-EUR scale.
         """
-        policy: PolicyConfig = self.model.policy_config
-        today = self.model.current_day
-
-        # ── Prospect Theory price evaluation (Kahneman & Tversky 1979) ─────────
-        effective_p = product.current_price
-        if product._has_near_expiry:
-            effective_p *= 0.5
-
-        # Reference price: last price seen for this product, or personal ref price
-        ref_p       = self._ref_prices.get(product.name, self.reference_price)
-        # Normalised deviation: positive = price fell (gain), negative = rose (loss)
-        price_delta = (ref_p - effective_p) / max(ref_p, 0.01)
-        # KT value: amplifies losses relative to equivalent gains
-        kt_val      = self._kt_value(price_delta, self.loss_aversion, self.kt_alpha)
-        # Map to disutility: at reference price (delta=0, kt=0) → sensitivity * 1.0
-        #   price fall of 20% → kt≈+0.22 → disutility *0.84 (clear relief)
-        #   price rise of 20% → kt≈−0.52 → disutility *1.47 (clearly amplified pain)
-        # Multiplier raised from 0.3 → 0.6 so inflation differences are clearly visible
-        price_disutility = self.price_sensitivity * max(0.01, 1.0 - kt_val * 0.6)
-
-        # Origin preference bonus (max 0.4)
-        is_finnish   = 1.0 if product.origin == "Suomi" else 0.0
-        origin_bonus = self.finnish_preference * is_finnish * 0.40
-
-        # Organic preference bonus (max 0.35) — boosted by labelling policy
-        organic_pref = self.organic_preference
-        if policy.is_labelling_active(today):
-            organic_pref = min(1.0, organic_pref + policy.labelling_organic_boost)
-        is_organic    = 1.0 if product.is_bio else 0.0
-        organic_bonus = organic_pref * is_organic * 0.35
-
-        # Fat content match — Gaussian similarity (max 0.25)
-        # Health-labelling slightly increases sensitivity to fat content
-        fat_weight = 0.25
-        if policy.is_labelling_active(today):
-            fat_weight = min(0.40, fat_weight + policy.labelling_health_boost * 0.25)
-        fat_diff  = abs(product.fat_content - self.preferred_fat)
-        fat_match = math.exp(-fat_diff / 2.0) * fat_weight
-
-        utility = origin_bonus + organic_bonus + fat_match - price_disutility
-        return utility
+        return self._nonprice_compatibility(product)
 
     # ------------------------------------------------------------------
     # Substitution search
@@ -715,32 +838,92 @@ class ConsumerAgent(Agent):
         self,
         category: str,
         wanted_qty: int,
-        exclude_name: str,
+        exclude_product_id: str,
+        wanted_product: ProductAgent | None = None,
+        remaining_budget: float | None = None,
+        intention: float = 0.50,
     ) -> ProductAgent | None:
         """
-        Return the highest-utility in-stock product in the same category,
-        or None if none is acceptable.
+        Return an affordable in-stock product in the same catalogue category.
+
+        The phase-two retain/drop price threshold is applied to replacement
+        candidates only when the replacement-event audit supports that transfer.
+        Likewise, non-price compatibility is a deterministic ordering only in
+        categories that clear the replacement-ranking validation gate. Otherwise
+        a seeded uniform draw makes the unidentified allocation rule explicit and
+        propagates it through Monte Carlo runs.
         """
+        self.substitution_attempts += 1
         # Respect archetype substitution tolerance
         if self.model._day_rng.random() > self.sub_tolerance:
             return None   # agent refuses to substitute
 
+        normalized_category = str(category).strip().casefold()
         candidates = [
-            a for a in self.model.schedule.agents
-            if isinstance(a, ProductAgent)
-            and a.category == category
-            and a.name != exclude_name
-            and a.stock_shelf >= wanted_qty
+            a for a in self.model.products
+            if str(a.category).strip().casefold() == normalized_category
+            and a.prod_id != exclude_product_id
+            and a.stock_shelf > 0
         ]
+        self.substitution_candidates_considered += len(candidates)
         if not candidates:
             return None
 
-        ranked = sorted(candidates, key=self._compute_utility, reverse=True)
-        best   = ranked[0]
+        reference_price = (
+            wanted_product.base_price
+            if wanted_product is not None
+            else max(0.01, self.reference_price)
+        )
+        eligible = []
+        for candidate in candidates:
+            effective_price = self._effective_price(candidate)
+            if remaining_budget is not None and effective_price > remaining_budget + 1e-9:
+                self.substitution_price_rejections += 1
+                continue
+            if (
+                self.model.substitution_price_gate_supported
+                and not self._accepts_price(
+                    candidate,
+                    intention=intention,
+                    reference_price=reference_price,
+                )
+            ):
+                self.substitution_price_rejections += 1
+                continue
+            eligible.append(candidate)
+        if not eligible:
+            return None
 
-        if self._compute_utility(best) < self.utility_threshold:
-            return None   # best substitute still unacceptable
-        return best
+        if (
+            self.model.dce_price_choice_supported
+            and normalized_category in self.model.dce_applicable_categories
+        ):
+            utilities = [self._dce_milk_utility(candidate) for candidate in eligible]
+            maximum = max(utilities)
+            weights = [math.exp(value - maximum) for value in utilities]
+            return self.model._day_rng.choices(eligible, weights=weights, k=1)[0]
+        if normalized_category in self.model.substitution_transition_categories:
+            empirical_weights = self.model.substitution_transition_weights.get(
+                normalized_category, {}
+            )
+            weights = [
+                max(0.0, float(empirical_weights.get(candidate.prod_id, 0.0)))
+                for candidate in eligible
+            ]
+            if sum(weights) > 0:
+                return self.model._day_rng.choices(
+                    eligible, weights=weights, k=1
+                )[0]
+        if normalized_category in self.model.substitution_ranking_categories:
+            return min(
+                eligible,
+                key=lambda candidate: (
+                    -self._nonprice_compatibility(candidate),
+                    self._effective_price(candidate),
+                    candidate.prod_id,
+                ),
+            )
+        return self.model._day_rng.choice(eligible)
 
     # ------------------------------------------------------------------
     # Purchase execution (FIFO with near-expiry discount)
@@ -752,10 +935,11 @@ class ConsumerAgent(Agent):
         wanted_qty: int,
         remaining_budget: float,
         is_substitute: bool = False,
-    ) -> float:
+        pantry_key: str | None = None,
+    ) -> tuple[float, int]:
         """
         Deduct stock from shelf batches (oldest first) and record revenue.
-        Returns the actual money spent.
+        Returns ``(money_spent, units_purchased)``.
         """
         # ── Nudge / Choice Architecture (Thaler & Sunstein 2008) ─────────────
         # Enforce per-product purchase limit if a rationing policy is active.
@@ -774,15 +958,25 @@ class ConsumerAgent(Agent):
             unit_price = product.current_price
             if days_left <= ProductAgent.NEAR_EXPIRY_DAYS:
                 unit_price *= 0.5
+            unit_price = round(unit_price, 2)
 
-            # Check budget
-            if cost_paid + unit_price > remaining_budget:
+            # Monetary constraints operate in cents. Without cent rounding,
+            # catalogue totals such as 12.3000003 falsely reject the final item
+            # from a €12.30 experimental budget.
+            budget_left = round(max(0.0, remaining_budget - cost_paid), 2)
+            affordable_qty = int(math.floor((budget_left + 1e-9) / unit_price))
+            if affordable_qty <= 0:
+                self.budget_exhausted = True
                 break
 
-            take = min(qty_left, batch["qty"])
+            desired_take = min(qty_left, batch["qty"])
+            take = min(desired_take, affordable_qty)
             batch["qty"] -= take
             qty_left     -= take
-            cost_paid    += take * unit_price
+            cost_paid     = round(cost_paid + take * unit_price, 2)
+
+            if take < desired_take:
+                self.budget_exhausted = True
 
             if days_left <= ProductAgent.NEAR_EXPIRY_DAYS:
                 product.daily_near_expiry_sold += take
@@ -797,6 +991,7 @@ class ConsumerAgent(Agent):
             product.daily_base_revenue += qty_purchased * product.base_price   # constant-price revenue
             if is_substitute:
                 product.daily_substitutions += qty_purchased
+                self.items_substituted += qty_purchased
 
             # CO2 attribution
             is_finnish = (product.origin == "Suomi")
@@ -814,18 +1009,24 @@ class ConsumerAgent(Agent):
             self.total_fat_bought += product.fat_content * qty_purchased
 
             # ── Update home inventory (stockpiling model) ────────────────────
-            self._home_inv[product.name] = (
-                self._home_inv.get(product.name, 0) + qty_purchased
+            inventory_key = pantry_key or product.prod_id
+            self._home_inv[inventory_key] = (
+                self._home_inv.get(inventory_key, 0.0) + qty_purchased
             )
-            # Update reference price slowly (EMA) so loss aversion persists.
-            # _ref_prices is pre-seeded with base_price in __init__, so old_ref is
-            # always the pre-crisis price for a fresh agent — this is the correct
-            # Prospect Theory anchor.  The EMA here is within-trip only (agents are
-            # ephemeral) but the seed ensures the right reference is always present.
-            old_ref = self._ref_prices.get(product.name, product.base_price)
-            self._ref_prices[product.name] = round(0.85 * old_ref + 0.15 * product.current_price, 4)
+            # Reference-price adaptation is part of the optional Prospect Theory
+            # extension. In empirical-only mode the observed catalogue price stays
+            # fixed as the transparent comparison point across the scenario.
+            if self.model.prospect_theory_enabled:
+                old_ref = self._ref_prices.get(
+                    product.prod_id, product.base_price
+                )
+                self._ref_prices[product.prod_id] = round(
+                    0.85 * old_ref + 0.15 * product.current_price, 4
+                )
+            if product.is_bio:
+                self._bought_organic = True
 
-        return cost_paid
+        return cost_paid, qty_purchased
 
     # ------------------------------------------------------------------
     # Behavioural learning
@@ -906,7 +1107,7 @@ class ConsumerAgent(Agent):
 
         # ---- Write updated preferences back to the shared profile dict ----
         # The profile dict is a reference into population_pool, so this persists
-        # the learned values across days (agents are recreated each day from pool).
+        # the learned values across visits.
         self.profile["price_sensitivity"]  = round(self.price_sensitivity,  4)
         self.profile["organic_preference"] = round(self.organic_preference, 4)
         self.profile["preferred_fat"]      = round(self.preferred_fat,      4)
@@ -920,142 +1121,281 @@ class ConsumerAgent(Agent):
 
     def step(self):
         # Reset per-day welfare counters
-        self.items_wanted     = 0
-        self.items_purchased  = 0
-        self.budget_exhausted = False
-        self.total_fat_bought = 0.0
+        self.items_wanted      = 0
+        self.items_base_wanted = 0
+        self.items_allowed     = 0
+        self.items_purchased   = 0
+        self.items_substituted = 0
+        self.choice_lines_purchased = 0
+        self.choice_lines_substituted = 0
+        self.budget_exhausted  = False
+        self.total_fat_bought  = 0.0
+        self._bought_organic   = False
+        self._panic_signal_sent = False
+        self.amount_spent      = 0.0
+        self.substitution_attempts = 0
+        self.substitution_candidates_considered = 0
+        self.substitution_price_rejections = 0
 
-        # Determine active basket and budget
+        # Phase-one basket defines household needs. The observed phase-two basket
+        # is reserved for calibration/validation; using it here would leak the
+        # crisis outcome into the simulation and then apply price response twice.
+        active_basket = self.baseline_basket
         if self.model.is_scenario_active:
-            active_basket  = self.crisis_basket
-            active_budget  = self.crisis_budget
+            # A continuous reservation-spending share becomes a lumpy package
+            # budget in the ABM. Adding half a typical unit price removes the
+            # systematic downward bias from indivisible products without allowing
+            # expenditure above the participant's stated maximum budget.
+            active_budget = round(
+                min(
+                    self.crisis_budget,
+                    self.crisis_budget * self.budget_utilization_propensity
+                    + 0.5 * self.reference_price,
+                ),
+                2,
+            )
         else:
-            active_basket  = self.baseline_basket
             active_budget  = self.budget
 
-        # ── Panic propagation (existing) ────────────────────────────────────────
-        if self.model.global_panic_level > 0.5:
-            self.panic_level = min(1.0, self.model.global_panic_level + self.model._day_rng.uniform(0, 0.2))
+        # TPB variables below are constructed model states, not measured TPB
+        # constructs in the current export. They alter choices only in explicit
+        # exploratory runs; the empirical default makes no threshold adjustment.
+        if self.model.tpb_enabled:
+            crowd_ratio = (
+                self.model.daily_consumer_count
+                / max(1, self.model.base_consumers)
+            )
+            self.subjective_norm = min(
+                1.0, crowd_ratio * 0.40 + self.panic_level * 0.60
+            )
+            income_factor = min(1.0, self.income_midpoint / 3000.0)
+            self.pbc = max(0.10, income_factor - self.panic_level * 0.35)
+            intention = self._tpb_intention()
+        else:
+            self.subjective_norm = 0.0
+            self.pbc = 1.0
+            intention = 0.50
 
-        # ── Theory of Planned Behaviour: update norm + PBC (Ajzen 1991) ─────────
-        # Subjective norm rises with store crowding and observed panic
-        crowd_ratio          = (self.model.daily_consumer_count
-                                 / max(1, self.model.base_consumers))
-        self.subjective_norm = min(1.0, crowd_ratio * 0.40 + self.panic_level * 0.60)
-        # Perceived behavioural control drops when income is low or panic is high
-        income_factor        = min(1.0, self.income_midpoint / 3000.0)
-        self.pbc             = max(0.10, income_factor - self.panic_level * 0.35)
-        # TPB intention modulates utility threshold: higher intention → more willing
-        intention            = self._tpb_intention()
-        self.utility_threshold = max(0.05,
-            (0.30 + self.price_sensitivity * 0.25 - self.price_tolerance_extra)
-            - (intention - 0.50) * 0.12
+        # ── Temporal discounting: precautionary cover rises with panic ───────
+        if self.model.panic_dynamics_enabled:
+            base_stockpile_days = (
+                float(self.model.stockpile_days_override)
+                if self.model.stockpile_days_override is not None
+                else float(self.profile.get("stockpile_days", 1.0))
+            )
+        else:
+            base_stockpile_days = 1.0
+        self.stockpile_days = max(
+            1.0,
+            base_stockpile_days
+            + (self.panic_level * 3.0 if self.model.panic_dynamics_enabled else 0.0),
         )
-
-        # ── Temporal discounting: stockpile target rises with panic ─────────────
-        # Multiplier reduced from 7.0 → 3.0 so max stockpile_days = 5 (not 10).
-        # panic*7 was unrealistic: full-panic agents wanted 10 days of every item,
-        # exhausting shelves in one visit and creating revenue spikes far above baseline.
-        self.stockpile_days = max(1.0,
-            self.profile.get("stockpile_days", 2.0) + self.panic_level * 3.0
-        )
-        # Deplete home inventory (daily consumption between store visits)
-        for pname in list(self._home_inv.keys()):
-            self._home_inv[pname] = max(0, self._home_inv[pname] - 1)
-
         spent = 0.0
-        self.items_wanted = sum(item.get("quantity", 1) for item in active_basket)
 
         for item in active_basket:
+            wanted_name = item["product_name"]
+            base_qty    = max(1, int(item.get("quantity", 1)))
+            wanted_qty  = base_qty
+            category    = item.get("category", "")
+            product     = self.model.get_product_by_id(item.get("product_id"))
+            if product is None:
+                product = self.model.get_product_by_name(wanted_name)
+            inventory_key = product.prod_id if product else item.get("product_id", wanted_name)
+            self.items_base_wanted += base_qty
+
+            # ── Pantry-adjusted replenishment demand ────────────────────────────
+            # The experimental basket is one shopping occasion, not one day of
+            # consumption. Replenish routine cover plus a precautionary buffer.
+            home_have = float(self._home_inv.get(inventory_key, 0.0))
+            daily_need = base_qty / max(1.0, self.expected_visit_interval)
+            precautionary_days = max(0.0, self.stockpile_days - 1.0) * self.beta
+            cover_days = self.expected_visit_interval + precautionary_days
+            pantry_target = daily_need * cover_days
+            pantry_gap = max(0.0, pantry_target - home_have)
+            # Unbiased stochastic rounding avoids turning a 0.05-unit buffer into
+            # one whole extra package for every SKU and every household.
+            wanted_qty = int(math.floor(pantry_gap))
+            if self.model._day_rng.random() < pantry_gap - wanted_qty:
+                wanted_qty += 1
+
+            # Continuous panic amplification: no arbitrary activation threshold.
+            # Both panic and the cross-fitted household propensity must be non-zero.
+            effective_hoarding = (
+                effective_hoarding_multiplier(
+                    self.model.hoarding_factor,
+                    self.profile.get("hoarding_propensity", 0.0),
+                    self.panic_level,
+                )
+                if self.model.panic_dynamics_enabled
+                else 1.0
+            )
+            hoarded_demand = wanted_qty * effective_hoarding
+            wanted_qty = int(math.floor(hoarded_demand))
+            if self.model._day_rng.random() < hoarded_demand - wanted_qty:
+                wanted_qty += 1
+
+            self.items_wanted += wanted_qty
+            allowed_qty = wanted_qty
+            if self.model.purchase_limit is not None:
+                allowed_qty = min(allowed_qty, self.model.purchase_limit)
+            self.items_allowed += allowed_qty
+
             if spent >= active_budget:
                 self.budget_exhausted = True
-                break
-
-            wanted_name = item["product_name"]
-            wanted_qty  = item["quantity"]
-            category    = item.get("category", "")
-
-            # ── Temporal discounting: stockpile demand ──────────────────────────
-            # Agent targets β-discounted home stock = stockpile_days * daily_need
-            home_have = self._home_inv.get(wanted_name, 0)
-            # proxy: basket quantity ≈ daily consumption for this item
-            daily_need       = max(1, item.get("quantity", 1))
-            stockpile_target = int(math.ceil(daily_need * self.stockpile_days * self.beta))
-            stockpile_gap    = max(0, stockpile_target - home_have)
-            if stockpile_gap > wanted_qty:
-                wanted_qty = stockpile_gap   # stockpile drive overrides base basket
-
-            # Panic hoarding: scale current demand by hoarding_factor (the sidebar slider).
-            # Previously hoarding was multiplied on top of stockpile demand, producing
-            # e.g. 48 units of milk per consumer (18 stockpile × 1.4 × 1.9 slider),
-            # emptying shelves in one visit and creating nominal-revenue spikes above
-            # baseline.  Fix: apply hoarding_factor as a proportional scalar AFTER the
-            # stockpile calculation, without the archetype multiplier (which is already
-            # expressed through utility_threshold / price_tolerance_extra differences).
-            # hoarding_factor = 1.0 → no change; 2.0 → double demand; 3.0 → triple.
-            if self.panic_level > 0.4:
-                wanted_qty = math.ceil(wanted_qty * self.model.hoarding_factor)
-
-            product = self.model.get_product_by_name(wanted_name)
+                continue
 
             # --- Product not in catalogue (shouldn't happen after validation) ---
             if not product:
-                substitute = self._find_best_substitute(category, 1, "")
+                substitute = self._find_best_substitute(
+                    category,
+                    allowed_qty,
+                    "",
+                    wanted_product=None,
+                    remaining_budget=active_budget - spent,
+                    intention=intention,
+                )
                 if substitute:
-                    cost = self._execute_purchase(substitute, 1, active_budget - spent, is_substitute=True)
+                    cost, bought = self._execute_purchase(
+                        substitute, allowed_qty, active_budget - spent,
+                        is_substitute=True,
+                        pantry_key=inventory_key,
+                    )
                     spent += cost
+                    if bought > 0:
+                        self.choice_lines_purchased += 1
+                        self.choice_lines_substituted += 1
                 continue
+
+            # Phase-transition substitution is an observed response in its own
+            # right, not merely a reaction to stockout. The cross-fitted
+            # participant propensity supplies the single probability gate inside
+            # ``_find_best_substitute``. Candidate allocation remains subject to
+            # the separately reported replacement-choice evidence limitations.
+            if self.model.is_scenario_active and self._accepts_price(
+                product, intention=intention
+            ):
+                proactive_substitute = self._find_best_substitute(
+                    category,
+                    allowed_qty,
+                    product.prod_id,
+                    wanted_product=product,
+                    remaining_budget=active_budget - spent,
+                    intention=intention,
+                )
+                if proactive_substitute is not None:
+                    cost, bought = self._execute_purchase(
+                        proactive_substitute,
+                        allowed_qty,
+                        active_budget - spent,
+                        is_substitute=True,
+                        pantry_key=inventory_key,
+                    )
+                    spent += cost
+                    if bought > 0:
+                        self.choice_lines_purchased += 1
+                        self.choice_lines_substituted += 1
+                    unmet = max(0, allowed_qty - bought)
+                    if unmet > 0:
+                        product.daily_lost_sales += unmet
+                        reason = "Price" if self.budget_exhausted else "Stockout"
+                        self.model.track_loss(
+                            reason, unmet * product.current_price
+                        )
+                    continue
 
             # --- Utility check ---
-            utility = self._compute_utility(product)
-            if utility < self.utility_threshold:
-                product.daily_lost_sales += wanted_qty
-                self.model.track_loss("Price", wanted_qty * product.current_price)
-                # Try substitute
-                sub = self._find_best_substitute(category, wanted_qty, wanted_name)
+            if not self._accepts_price(product, intention=intention):
+                # During a phase-transition visit the calibrated substitution
+                # decision was already sampled once above. Re-sampling here would
+                # turn one participant probability into 1-(1-p)^2 for rejected
+                # products. Baseline stock/price failures still receive one gate.
+                sub = None
+                if not self.model.is_scenario_active:
+                    sub = self._find_best_substitute(
+                        category,
+                        allowed_qty,
+                        product.prod_id,
+                        wanted_product=product,
+                        remaining_budget=active_budget - spent,
+                        intention=intention,
+                    )
+                bought = 0
                 if sub:
-                    cost = self._execute_purchase(sub, wanted_qty, active_budget - spent, is_substitute=True)
+                    cost, bought = self._execute_purchase(
+                        sub, allowed_qty, active_budget - spent,
+                        is_substitute=True,
+                        pantry_key=inventory_key,
+                    )
                     spent += cost
+                if bought > 0:
+                    self.choice_lines_purchased += 1
+                    self.choice_lines_substituted += 1
+                unmet = max(0, allowed_qty - bought)
+                product.daily_lost_sales += unmet
+                self.model.track_loss("Price", unmet * product.current_price)
                 continue
 
-            # --- Stock check ---
-            if product.stock_shelf >= wanted_qty:
-                cost = self._execute_purchase(product, wanted_qty, active_budget - spent)
+            # --- Buy available stock, then seek a substitute for any remainder ---
+            direct_target = min(allowed_qty, product.stock_shelf)
+            direct_bought = 0
+            if direct_target > 0:
+                cost, direct_bought = self._execute_purchase(
+                    product, direct_target, active_budget - spent
+                )
                 spent += cost
-                # Near-empty shelf triggers panic signal
-                if product.stock_shelf < 3:
+                if product.stock_shelf < 3 and not self._panic_signal_sent:
                     self.model.add_panic_signal()
-            else:
-                product.daily_lost_sales += wanted_qty
-                self.model.track_loss("Stockout", wanted_qty * product.current_price)
-                sub = self._find_best_substitute(category, wanted_qty, wanted_name)
+                    self._panic_signal_sent = True
+
+            remaining = max(0, allowed_qty - direct_bought)
+            sub_bought = 0
+            if remaining > 0 and spent < active_budget:
+                sub = self._find_best_substitute(
+                    category,
+                    remaining,
+                    product.prod_id,
+                    wanted_product=product,
+                    remaining_budget=active_budget - spent,
+                    intention=intention,
+                )
                 if sub:
-                    cost = self._execute_purchase(sub, wanted_qty, active_budget - spent, is_substitute=True)
+                    cost, sub_bought = self._execute_purchase(
+                        sub, remaining, active_budget - spent,
+                        is_substitute=True,
+                        pantry_key=inventory_key,
+                    )
                     spent += cost
 
+            unmet = max(0, remaining - sub_bought)
+            if direct_bought + sub_bought > 0:
+                self.choice_lines_purchased += 1
+            if sub_bought > 0:
+                self.choice_lines_substituted += 1
+            if unmet > 0:
+                product.daily_lost_sales += unmet
+                reason = "Price" if self.budget_exhausted else "Stockout"
+                self.model.track_loss(reason, unmet * product.current_price)
+
+        self.amount_spent = round(spent, 4)
+        self.profile["_last_shop_day"] = self.model.current_day
+        self.profile["_visit_count"] = self.visit_number
+
         # ── FIES (FAO Food Insecurity Experience Scale, 4-item simplified) ──────
-        fulfillment        = self.items_purchased / max(1, self.items_wanted)
-        self.items_unmet   = max(0, self.items_wanted - self.items_purchased)
-        fies = 0
-        if self.panic_level > 0.5:                           # Q1 worried about food
-            fies += 1
-        if fulfillment < 0.70:                               # Q2 couldn't eat variety
-            fies += 1
-        if self.budget_exhausted and self.items_unmet > 0:   # Q3 ran out of food
-            fies += 1
-        if fulfillment < 0.30:                               # Q4 severe deprivation
-            fies += 1
-        self.food_insecurity_score = fies
+        self.items_unmet = max(0, self.items_wanted - self.items_purchased)
+        self.shopping_shortfall_rate = (
+            self.items_unmet / self.items_wanted if self.items_wanted > 0 else 0.0
+        )
+        self.access_stress_score = int(
+            self.profile.get("_access_stress_score", 0)
+        )
+        self.food_insecurity_score = self.access_stress_score
 
         # ---- Behavioural learning ----
-        bought_organic   = any(
-            isinstance(a, ProductAgent) and a.is_bio and a.daily_sales > 0
-            for a in self.model.schedule.agents
-        )
         mean_fat_today = (
             self.total_fat_bought / max(1, self.items_purchased)
         ) if self.items_purchased > 0 else 0.0
-        self._update_preferences(bought_organic, mean_fat_today)
+        if self.model.preference_learning_enabled:
+            self._update_preferences(self._bought_organic, mean_fat_today)
 
 
 # ---------------------------------------------------------------------------
@@ -1067,17 +1407,13 @@ class SupermarketModel(Model):
     Main ABM.  Accepts either a pre-built config dict (from data_processor)
     or a path to a mesa_config.json file.
 
-    Consumer sampling logic
-    -----------------------
-    Each day a target_count of consumers is calculated (base × seasonality × weekday
-    × random ±10 %).
-
-    • If pool_size >= target_count : sample without replacement for maximum variety.
-    • If pool_size <  target_count : use all real profiles + fill remaining from
-      synthetic pool (random.choices with replacement).
-
-    This means the model automatically handles both the "20 real / 100 agents"
-    and the "200 real / 50 agents" scenarios described in the project brief.
+    Household scheduling logic
+    --------------------------
+    Population profiles are persistent households. Each receives a stable identity,
+    pantry, expected revisit interval, and next-visit day. Evidence-only runs use the
+    declared constant daily traffic. Unvalidated seasonality, weekday multipliers,
+    and seeded traffic noise require explicit opt-in. The model selects the most-due
+    unique households instead of drawing anonymous visits.
     """
 
     # Seasonality multipliers (month index 1–12)
@@ -1133,16 +1469,16 @@ class SupermarketModel(Model):
         • initial_stock_shelf    =  max_shelf_capacity × 0.75  (store is stocked at start)
         • initial_stock_storage  =  max_storage_capacity × 0.60
 
-        Returns a dict  product_name → {max_shelf_capacity, max_storage_capacity,
-                                         initial_stock_shelf, initial_stock_storage}
+        Returns a dict  product_id → {max_shelf_capacity, max_storage_capacity,
+                                      initial_stock_shelf, initial_stock_storage}
         """
         # ── 1. Average basket quantity per product across population ─────────
         basket_totals: dict[str, float] = {}
         for profile in population:
             for item in profile.get("baseline_basket", []):
-                name = item.get("product_name", "")
+                product_key = str(item.get("product_id") or item.get("product_name", ""))
                 qty  = float(item.get("quantity", 1))
-                basket_totals[name] = basket_totals.get(name, 0.0) + qty
+                basket_totals[product_key] = basket_totals.get(product_key, 0.0) + qty
 
         n_pop = max(1, len(population))
         avg_qty: dict[str, float] = {n: v / n_pop for n, v in basket_totals.items()}
@@ -1150,7 +1486,7 @@ class SupermarketModel(Model):
         # ── 2. Per-product calibration ───────────────────────────────────────
         result: dict[str, dict] = {}
         for prod in products:
-            name       = prod.get("name", "")
+            product_id = str(prod.get("id") or prod.get("name", ""))
             shelf_life = int(prod.get("shelf_life_days", 7))
 
             # How many days of stock to keep on the shelf
@@ -1162,13 +1498,14 @@ class SupermarketModel(Model):
                 shelf_cover = 4.0    # dry / canned goods
 
             # Expected daily demand for this product
-            daily_demand = max(1.0, base_consumers * avg_qty.get(name, 0.5))
+            demand_key = product_id if product_id in avg_qty else prod.get("name", "")
+            daily_demand = max(1.0, base_consumers * avg_qty.get(demand_key, 0.5))
 
             max_shelf   = max(10, int(math.ceil(daily_demand * shelf_cover)))
             storage_days = lead_time + 4   # lead-time + safety buffer
             max_storage = max(max_shelf * 2, int(math.ceil(daily_demand * storage_days)))
 
-            result[name] = {
+            result[product_id] = {
                 "max_shelf_capacity":   max_shelf,
                 "max_storage_capacity": max_storage,
                 "initial_stock_shelf":  int(max_shelf   * 0.75),
@@ -1208,15 +1545,28 @@ class SupermarketModel(Model):
         media_intensity: float = 0.0,    # Media channel strength (0–1)
         communication_type: str = "neutral",  # "neutral" | "panic" | "calming"
         stockpile_days_override: float = None,  # Optional: override per-agent stockpile horizon
+        panic_exposure_floor: float = 0.10,
+        panic_growth_rate: float = 0.50,
+        panic_decay_active: float = 0.05,
+        panic_decay_recovery: float = 0.10,
+        inflation_panic_rate: float = 0.40,
+        # Unidentified dynamic mechanisms are opt-in.  The default model keeps
+        # only behaviour supported by the GROCERYsim observations/calibration.
+        enable_panic_dynamics: bool = False,
+        enable_tpb: bool = False,
+        enable_prospect_theory: bool = False,
+        enable_preference_learning: bool = False,
+        enable_archetype_modifiers: bool = False,
+        enable_policy_choice_effects: bool = False,
+        enable_traffic_variation: bool = False,
+        scenario_price_overrides: dict[str, float] | None = None,
     ):
         super().__init__()
-        # Seed Mesa's own internal RNG (used by RandomActivation.step() to
-        # shuffle agent execution order).  Without this, each model instance
-        # gets a different random state from the OS, so two models running with
-        # the same fixed_seed still diverge because agents visit shelves in a
-        # different order and deplete stock differently.
+        # Mesa's scheduler is used as an agent registry only.  Daily execution
+        # is explicitly phased in ``step`` so product counter resets, logistics,
+        # shopping, and aggregation cannot interleave randomly.
         self.random.seed(fixed_seed)
-        self.schedule = RandomActivation(self)
+        self.schedule = BaseScheduler(self)
 
         # Seeded RNG for all explicit random calls within the model
         self.fixed_seed  = fixed_seed
@@ -1224,14 +1574,31 @@ class SupermarketModel(Model):
 
         # General parameters
         self.base_consumers    = base_consumers
-        self.current_month     = start_month
+        self.traffic_variation_enabled = bool(enable_traffic_variation)
+        self.scenario_price_overrides = {
+            str(product_id): float(price)
+            for product_id, price in (scenario_price_overrides or {}).items()
+            if float(price) > 0
+        }
+        if not 1 <= int(start_month) <= 12:
+            raise ValueError("start_month must be between 1 and 12.")
+        self.start_month       = int(start_month)
+        self.current_month     = self.start_month
         self.current_weekday   = 0
         self.current_day       = 0
 
         # Logistics parameters
-        self.reorder_point      = reorder_pt
-        self.target_stock_level = target_stock
-        self.lead_time_days     = lead_time
+        self.reorder_point      = float(reorder_pt)
+        self.target_stock_level = float(target_stock)
+        self.lead_time_days     = int(lead_time)
+        if not 0.0 < self.reorder_point < 1.0:
+            raise ValueError("reorder_pt must be a capacity fraction between 0 and 1.")
+        if not 0.0 < self.target_stock_level <= 1.0:
+            raise ValueError("target_stock must be a capacity fraction in (0, 1].")
+        if self.target_stock_level <= self.reorder_point:
+            raise ValueError("target_stock must be greater than reorder_pt.")
+        if self.lead_time_days < 1:
+            raise ValueError("lead_time must be at least one day.")
 
         # Crisis / scenario parameters
         self.is_crisis_mode         = is_crisis_mode
@@ -1251,6 +1618,26 @@ class SupermarketModel(Model):
         self.media_intensity            = float(media_intensity)
         self.communication_type         = communication_type
         self.stockpile_days_override    = stockpile_days_override  # None = use per-agent profile
+        self.panic_exposure_floor       = float(panic_exposure_floor)
+        self.panic_growth_rate          = float(panic_growth_rate)
+        self.panic_decay_active         = float(panic_decay_active)
+        self.panic_decay_recovery       = float(panic_decay_recovery)
+        self.inflation_panic_rate       = float(inflation_panic_rate)
+        self.panic_dynamics_enabled     = bool(enable_panic_dynamics)
+        self.tpb_enabled                = bool(enable_tpb)
+        self.prospect_theory_enabled    = bool(enable_prospect_theory)
+        self.preference_learning_enabled = bool(enable_preference_learning)
+        self.archetype_modifiers_enabled = bool(enable_archetype_modifiers)
+        self.policy_choice_effects_enabled = bool(enable_policy_choice_effects)
+        for name, value in [
+            ("panic_exposure_floor", self.panic_exposure_floor),
+            ("panic_growth_rate", self.panic_growth_rate),
+            ("panic_decay_active", self.panic_decay_active),
+            ("panic_decay_recovery", self.panic_decay_recovery),
+            ("inflation_panic_rate", self.inflation_panic_rate),
+        ]:
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1.")
 
         # Runtime state
         self.is_scenario_active     = False
@@ -1261,6 +1648,10 @@ class SupermarketModel(Model):
         self.panic_signals          = 0
         self.total_churned_agents   = 0
         self.daily_consumer_count   = 0
+        self.requested_consumer_count = 0
+        self.daily_household_consumption_demand = 0.0
+        self.daily_household_consumption = 0.0
+        self.daily_household_consumption_unmet = 0.0
 
         # Food waste accumulator
         self.food_waste_log = FoodWasteLog()
@@ -1268,8 +1659,10 @@ class SupermarketModel(Model):
         # Policy configuration (always present; default = all policies off)
         self.policy_config = PolicyConfig(policy_cfg)
 
-        # Lookup dict: product_name → ProductAgent
+        # Stable SKU lookup plus a compatibility lookup for unique display names.
         self.product_map: dict[str, ProductAgent] = {}
+        self.product_name_map: dict[str, ProductAgent] = {}
+        self.products: list[ProductAgent] = []
 
         # Per-day output records (used by app.py for charts)
         self.daily_records: list[dict] = []
@@ -1283,6 +1676,75 @@ class SupermarketModel(Model):
                 config = json.load(f)
         if config is None:
             raise ValueError("Provide either config_data or config_file.")
+
+        dce_validation = config.get("stats", {}).get("dce_choice_validation", {})
+        self.dce_nonprice_validation_passed = bool(
+            dce_validation.get("status") == "ok"
+            and dce_validation.get("beats_majority_benchmark", False)
+        )
+        self.dce_applicable_categories = {
+            str(category).strip().casefold()
+            for category in dce_validation.get("applicable_categories", ["Milk"])
+        }
+        self.dce_price_choice_supported = bool(
+            dce_validation.get("status") == "ok"
+            and dce_validation.get("price_coefficient_estimable", False)
+            and dce_validation.get("utility_scale_compatible_with_price", False)
+            and dce_validation.get(
+                "beats_null_benchmark",
+                dce_validation.get("beats_majority_benchmark", False),
+            )
+            and dce_validation.get("model_converged", True)
+        )
+        self.dce_choice_coefficients = {
+            "price": float(dce_validation.get("price_coefficient", 0.0) or 0.0),
+            "origin": float(dce_validation.get("origin_coefficient", 0.0) or 0.0),
+            "organic": float(dce_validation.get("organic_coefficient", 0.0) or 0.0),
+            "fat_linear": float(dce_validation.get("fat_linear_coefficient", 0.0) or 0.0),
+            "fat_quadratic": float(dce_validation.get("fat_quadratic_coefficient", 0.0) or 0.0),
+        }
+        substitution_validation = config.get("stats", {}).get(
+            "substitution_choice_validation", {}
+        )
+        self.substitution_price_gate_supported = bool(
+            substitution_validation.get("candidate_price_gate_supported", False)
+        )
+        self.substitution_ranking_categories = {
+            str(category).strip().casefold()
+            for category in substitution_validation.get(
+                "supported_ranking_categories", []
+            )
+        }
+        self.substitution_transition_categories = {
+            str(category).strip().casefold()
+            for category in substitution_validation.get(
+                "supported_transition_categories", []
+            )
+        }
+        self.substitution_transition_weights = {
+            str(category).strip().casefold(): {
+                str(product_id): float(weight)
+                for product_id, weight in weights.items()
+            }
+            for category, weights in substitution_validation.get(
+                "empirical_transition_weights", {}
+            ).items()
+        }
+        self.substitution_choice_evidence_events = int(
+            substitution_validation.get("n_unambiguous_events", 0)
+        )
+        self.substitution_ranking_method = (
+            "dce_mnl_milk_plus_validated_phase_transition_categories"
+            if self.dce_price_choice_supported
+            else "validated_phase_transition_target_shares"
+            if self.substitution_transition_categories
+            else "validated_participant_compatibility"
+            if self.substitution_ranking_categories
+            else substitution_validation.get(
+                "operational_fallback",
+                "seeded_uniform_affordable_same_category",
+            )
+        )
 
         # ── Auto-calibrate store stock levels to match consumer count ────────
         # Without this, max_shelf_capacity=20 is the same for 20 consumers/day
@@ -1304,7 +1766,18 @@ class SupermarketModel(Model):
         import copy as _copy
         for i, p_data in enumerate(config.get("products", [])):
             p_data_cal = _copy.copy(p_data)   # shallow copy to avoid mutating original
-            cal = _calib.get(p_data["name"], {})
+            product_id = str(p_data.get("id", "")).strip()
+            if not product_id:
+                raise ValueError(f"Product {p_data.get('name', i)!r} has no stable id.")
+            if product_id in self.product_map:
+                raise ValueError(f"Duplicate product id {product_id!r} in catalogue.")
+            if p_data["name"] in self.product_name_map:
+                raise ValueError(
+                    f"Duplicate product name {p_data['name']!r}. Canonicalize the "
+                    "catalogue before constructing the model."
+                )
+
+            cal = _calib.get(product_id, {})
             # Only override if no explicit ai_recs for this product
             ai_cap = ai_recs.get(p_data["name"]) if ai_recs else None
             if not ai_cap:
@@ -1314,29 +1787,58 @@ class SupermarketModel(Model):
                         p_data_cal[field] = cal[field]
             agent  = ProductAgent(f"prod_{i}", self, p_data_cal, ai_capacity=ai_cap)
             self.schedule.add(agent)
-            self.product_map[p_data["name"]] = agent
+            self.products.append(agent)
+            self.product_map[product_id] = agent
+            self.product_name_map[p_data["name"]] = agent
 
         # Add truck
         self.truck = SupplyTruck("truck_1", self)
         self.schedule.add(self.truck)
 
-        # Population pool — deep-copied so that behavioural learning (which
-        # writes updated preferences back into each profile dict) cannot bleed
-        # across model instances sharing the same config_data object.
-        # Without this copy, a Baseline and Crisis model running in the same
-        # process would contaminate each other's agent profiles from Day 1,
-        # causing divergence even when all crisis parameters are zero.
+        # Population pool. New scientific configs retain only observed participant
+        # profiles and declare a target simulation size. Each model seed resamples
+        # complete profiles with replacement, propagating empirical-sample
+        # uncertainty without fabricating combinations of attributes. Legacy/test
+        # configs without population_target_size retain their supplied population.
         import copy
-        self.population_pool: list[dict] = copy.deepcopy(config.get("population", []))
-        if not self.population_pool:
+        empirical_profiles = config.get("population", [])
+        if not empirical_profiles:
             raise ValueError("Population pool is empty — run data_processor first.")
+        target_size = int(config.get("population_target_size", len(empirical_profiles)))
+        if target_size < 1:
+            raise ValueError("population_target_size must be positive.")
+        if config.get("population_target_size") is not None:
+            self.population_pool = []
+            for draw_index in range(target_size):
+                template = empirical_profiles[self._day_rng.randrange(len(empirical_profiles))]
+                profile = copy.deepcopy(template)
+                empirical_id = str(profile.get(
+                    "empirical_source_id", profile.get("source_id", "participant")
+                ))
+                profile["empirical_source_id"] = empirical_id
+                profile["source_id"] = f"{empirical_id}::seed_{fixed_seed}_draw_{draw_index}"
+                profile["is_real"] = False
+                profile["is_participant_resample"] = True
+                profile["resample_draw_index"] = draw_index
+                self.population_pool.append(profile)
+            self.population_sampling_method = "complete_profile_resampling_with_replacement"
+        else:
+            self.population_pool = copy.deepcopy(empirical_profiles)
+            self.population_sampling_method = "supplied_population"
+        self.empirical_sampling_units = len(empirical_profiles)
+        self._initialize_household_states()
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def get_product_by_name(self, name: str) -> ProductAgent | None:
-        return self.product_map.get(name)
+        return self.product_name_map.get(name)
+
+    def get_product_by_id(self, product_id: str | None) -> ProductAgent | None:
+        if product_id is None:
+            return None
+        return self.product_map.get(str(product_id))
 
     def add_panic_signal(self):
         self.panic_signals += 1
@@ -1346,18 +1848,133 @@ class SupermarketModel(Model):
             self.loss_reasons[reason]       += amount   # cumulative (never reset)
             self.daily_loss_reasons[reason] += amount   # reset each day
 
+    def _initialize_household_states(self):
+        """Create a steady-state pantry and visit calendar for every profile."""
+        pool_size = len(self.population_pool)
+        mean_weekday_factor = (
+            sum(self.WEEKDAY_WEIGHTS.values()) / len(self.WEEKDAY_WEIGHTS)
+            if self.traffic_variation_enabled else 1.0
+        )
+        month_factor = (
+            self.SEASONALITY.get(self.start_month, 1.0)
+            if self.traffic_variation_enabled else 1.0
+        )
+        expected_daily_visits = (
+            self.base_consumers * month_factor * mean_weekday_factor
+        )
+        expected_daily_visits = max(1.0, min(expected_daily_visits, pool_size))
+        visits_per_day = max(1, int(round(expected_daily_visits)))
+        expected_interval = max(1.0, pool_size / expected_daily_visits)
+        self.expected_household_visit_interval = expected_interval
+
+        for idx, profile in enumerate(self.population_pool):
+            source_id = str(profile.get("source_id", "household"))
+            profile["_household_id"] = f"{source_id}:{idx}"
+            profile["_expected_visit_interval"] = expected_interval
+            first_visit = 1 + (idx // visits_per_day)
+            profile["_next_shop_day"] = float(first_visit)
+            profile["_last_shop_day"] = None
+            profile["_visit_count"] = 0
+            profile["_home_inv"] = {}
+            profile["_daily_consumption_demand"] = 0.0
+            profile["_daily_consumption_unmet"] = 0.0
+            profile["_consumption_shortfall_rate"] = 0.0
+            profile["_cumulative_consumption_demand"] = 0.0
+            profile["_cumulative_consumption_unmet"] = 0.0
+            profile["_consecutive_shortfall_days"] = 0
+            profile["_access_stress_score"] = 0
+
+            # Start in a staggered steady state: households shopping later hold
+            # enough of the observed basket to cover expected consumption until
+            # their first modelled visit.
+            for item in profile.get("baseline_basket", []):
+                inventory_key = str(
+                    item.get("product_id") or item.get("product_name", "")
+                )
+                if not inventory_key:
+                    continue
+                daily_need = max(0.0, float(item.get("quantity", 1))) / expected_interval
+                profile["_home_inv"][inventory_key] = (
+                    profile["_home_inv"].get(inventory_key, 0.0)
+                    + daily_need * first_visit
+                )
+
+    def _advance_household_consumption(self) -> tuple[float, float, float]:
+        """Consume every pantry and update population-wide access outcomes.
+
+        Access stress is an objective model diagnostic, not a psychometric food-
+        insecurity scale: 0=no shortfall, 1=(0,25%), 2=[25,50%),
+        3=[50,90%), and 4=[90,100%] of today's required units unmet.
+        """
+        demanded = consumed = unmet = 0.0
+        for profile in self.population_pool:
+            interval = max(1.0, float(profile.get("_expected_visit_interval", 1.0)))
+            pantry = profile.setdefault("_home_inv", {})
+            household_demand = household_consumed = 0.0
+            for item in profile.get("baseline_basket", []):
+                inventory_key = str(
+                    item.get("product_id") or item.get("product_name", "")
+                )
+                if not inventory_key:
+                    continue
+                daily_need = max(0.0, float(item.get("quantity", 1))) / interval
+                available = max(0.0, float(pantry.get(inventory_key, 0.0)))
+                used = min(available, daily_need)
+                pantry[inventory_key] = max(0.0, available - used)
+                demanded += daily_need
+                consumed += used
+                unmet += daily_need - used
+                household_demand += daily_need
+                household_consumed += used
+
+            household_unmet = max(0.0, household_demand - household_consumed)
+            shortfall_rate = (
+                household_unmet / household_demand if household_demand > 0 else 0.0
+            )
+            if shortfall_rate <= 1e-12:
+                access_score = 0
+            elif shortfall_rate < 0.25:
+                access_score = 1
+            elif shortfall_rate < 0.50:
+                access_score = 2
+            elif shortfall_rate < 0.90:
+                access_score = 3
+            else:
+                access_score = 4
+
+            profile["_daily_consumption_demand"] = household_demand
+            profile["_daily_consumption_unmet"] = household_unmet
+            profile["_consumption_shortfall_rate"] = shortfall_rate
+            profile["_cumulative_consumption_demand"] += household_demand
+            profile["_cumulative_consumption_unmet"] += household_unmet
+            profile["_consecutive_shortfall_days"] = (
+                int(profile.get("_consecutive_shortfall_days", 0)) + 1
+                if household_unmet > 1e-12 else 0
+            )
+            profile["_access_stress_score"] = access_score
+        self.daily_household_consumption_demand = demanded
+        self.daily_household_consumption = consumed
+        self.daily_household_consumption_unmet = unmet
+        return demanded, consumed, unmet
+
+    def _schedule_next_visit(self, profile: dict):
+        interval = max(1.0, float(profile.get("_expected_visit_interval", 1.0)))
+        profile["_next_shop_day"] = self.current_day + interval
+
     def _get_daily_profiles(self, target_count: int) -> list[dict]:
         """
-        Sample `target_count` consumer profiles from the pool.
+        Return the most-due unique households for today's visits.
 
-        If pool size >= target_count : sample WITHOUT replacement (maximum variety).
-        If pool size <  target_count : resample WITH replacement (bootstrap mode).
+        Ties are shuffled with the seeded model RNG. A household can visit at most
+        once per day; requested footfall above the represented population is capped
+        and exposed separately in the daily output.
         """
-        pool_size = len(self.population_pool)
-        if pool_size >= target_count:
-            return self._day_rng.sample(self.population_pool, target_count)
-        else:
-            return self._day_rng.choices(self.population_pool, k=target_count)
+        ranked = [
+            (float(p.get("_next_shop_day", 1)), self._day_rng.random(), p)
+            for p in self.population_pool
+        ]
+        ranked.sort(key=lambda row: (row[0], row[1]))
+        return [row[2] for row in ranked[:min(target_count, len(ranked))]]
 
     # ------------------------------------------------------------------
     # Step (one simulation day)
@@ -1369,7 +1986,9 @@ class SupermarketModel(Model):
         # Advance calendar — 7-day week (0 Mon … 6 Sun)
         self.current_weekday = (self.current_day - 1) % 7
         # Advance month roughly every 30 days
-        month_idx = ((self.current_day - 1) // 30) % 12
+        month_idx = (
+            (self.start_month - 1) + ((self.current_day - 1) // 30)
+        ) % 12
         self.current_month = (month_idx + 1)   # 1–12
 
         # ── Crisis phase management ──────────────────────────────────────────────
@@ -1377,7 +1996,11 @@ class SupermarketModel(Model):
         # Phase 2 — "active":   scenario_start_day … scenario_end_day (or end of sim)
         # Phase 3 — "recovery": scenario_end_day … end of sim  (prices normalised,
         #                        supply restored; panic decays naturally)
-        has_shock = (self.inflation_percent > 0 or self.supply_disruption_days > 0)
+        has_shock = (
+            self.inflation_percent > 0
+            or self.supply_disruption_days > 0
+            or bool(self.scenario_price_overrides)
+        )
         if self.is_crisis_mode and self.current_day >= self.scenario_start_day and has_shock:
             # Deactivate if crisis_duration has elapsed (0 = indefinite → never deactivate)
             if self.scenario_end_day > 0 and self.current_day >= self.scenario_end_day:
@@ -1398,12 +2021,31 @@ class SupermarketModel(Model):
         # Reset daily panic signals and daily loss counters
         self.panic_signals      = 0
         self.daily_loss_reasons = {"Stockout": 0.0, "Price": 0.0}
+        if not self.panic_dynamics_enabled:
+            self.global_panic_level = 0.0
+
+        # Household pantries evolve every calendar day, including days on which
+        # a household does not visit the store.
+        self._advance_household_consumption()
 
         # ---- Calculate today's visitor count ----
-        month_factor  = self.SEASONALITY.get(self.current_month, 1.0)
-        day_factor    = self.WEEKDAY_WEIGHTS.get(self.current_weekday, 1.0)
-        noise         = self._day_rng.uniform(0.90, 1.10)
-        target_count  = max(1, int(self.base_consumers * month_factor * day_factor * noise))
+        month_factor = (
+            self.SEASONALITY.get(self.current_month, 1.0)
+            if self.traffic_variation_enabled else 1.0
+        )
+        day_factor = (
+            self.WEEKDAY_WEIGHTS.get(self.current_weekday, 1.0)
+            if self.traffic_variation_enabled else 1.0
+        )
+        noise = (
+            self._day_rng.uniform(0.90, 1.10)
+            if self.traffic_variation_enabled else 1.0
+        )
+        requested_target = max(1, int(
+            self.base_consumers * month_factor * day_factor * noise
+        ))
+        target_count = min(requested_target, len(self.population_pool))
+        self.requested_consumer_count = requested_target
         self.daily_consumer_count = target_count
 
         # ---- Sample profiles and create consumer agents ----
@@ -1412,27 +2054,46 @@ class SupermarketModel(Model):
 
         for k, profile in enumerate(todays_profiles):
             c_agent = ConsumerAgent(
-                f"cust_d{self.current_day}_{k}", self, profile
+                f"visit_{profile['_household_id']}_d{self.current_day}", self, profile
             )
             # Inject current global panic level
             c_agent.panic_level = self.global_panic_level
             self.schedule.add(c_agent)
             daily_agents.append(c_agent)
 
-        # ---- Run all agents (ProductAgents + Truck + Consumers) ----
-        self.schedule.step()
+        # ---- Explicit daily phases -----------------------------------------
+        # 1) Products reset counters, replenish shelves, update prices and age.
+        # 2) The truck delivers arrived orders and places new ones.
+        # 3) Only shopper order is randomised, representing shelf competition.
+        for product in self.products:
+            product.step()
+        self.truck.step()
+        self.random.shuffle(daily_agents)
+        for consumer in daily_agents:
+            consumer.step()
+            self._schedule_next_visit(consumer.profile)
 
         # ---- Update global panic level ----
-        if target_count > 0:
+        if self.panic_dynamics_enabled and target_count > 0:
             panic_ratio = self.panic_signals / target_count
-            threshold   = (1.0 - self.panic_sensitivity) * 0.15
-            if panic_ratio > threshold:
-                self.global_panic_level = min(1.0, self.global_panic_level + 0.15)
-            else:
-                # Recovery phase: faster decay — consumers can SEE prices are normal again.
-                # Active/pre: slow decay (0.05/day); Recovery: faster (0.10/day).
-                decay = 0.10 if self._crisis_phase == "recovery" else 0.05
-                self.global_panic_level = max(0.0, self.global_panic_level - decay)
+            # Up to 10% scarcity exposure is treated as normal retail friction.
+            # Above that, panic grows continuously with both exposure and the
+            # configured sensitivity. sensitivity=0 must imply zero contagion.
+            scarcity_excess = max(0.0, panic_ratio - self.panic_exposure_floor)
+            panic_growth = (
+                self.panic_sensitivity * scarcity_excess * self.panic_growth_rate
+            )
+            # Recovery phase decays faster because normal prices/supply are visible.
+            decay = (
+                self.panic_decay_recovery
+                if self._crisis_phase == "recovery"
+                else self.panic_decay_active
+            )
+            self.global_panic_level = min(
+                1.0, max(0.0, self.global_panic_level + panic_growth - decay)
+            )
+        else:
+            panic_ratio = 0.0
 
         # ── Direct inflation → panic pathway ─────────────────────────────────────
         # Without this, low-disruption scenarios never trigger enough stockout signals,
@@ -1440,13 +2101,21 @@ class SupermarketModel(Model):
         # Multiplier=0.40 means: at 25% inflation, panic_sens needs to be ≥ ~0.5
         # for the signal (0.05+) to overcome daily panic decay (0.05/day).
         # At panic_sens=0 → signal=0 (no effect). At panic_sens=1, 25% inflation → +0.10/day.
-        if self.is_scenario_active and self.inflation_percent > 0:
-            price_shock_signal = (self.inflation_percent / 100.0) * self.panic_sensitivity * 0.40
+        if (
+            self.panic_dynamics_enabled
+            and self.is_scenario_active
+            and self.inflation_percent > 0
+        ):
+            price_shock_signal = (
+                (self.inflation_percent / 100.0)
+                * self.panic_sensitivity
+                * self.inflation_panic_rate
+            )
             self.global_panic_level = min(1.0, self.global_panic_level + price_shock_signal)
 
         # ── Media / Communication Channel (McCombs & Shaw 1972 agenda-setting) ─
         media_panic_effect = 0.0
-        if self.media_intensity > 0:
+        if self.panic_dynamics_enabled and self.media_intensity > 0:
             if self.communication_type == "panic":
                 boost = self.media_intensity * 0.12
                 self.global_panic_level = min(1.0, self.global_panic_level + boost)
@@ -1466,7 +2135,27 @@ class SupermarketModel(Model):
         )
         total_fat    = sum(c.total_fat_bought   for c in daily_agents)
         total_items  = sum(c.items_purchased    for c in daily_agents)
+        total_base_demand = sum(c.items_base_wanted for c in daily_agents)
+        total_requested_demand = sum(c.items_wanted for c in daily_agents)
+        total_allowed_demand = sum(c.items_allowed for c in daily_agents)
+        substitution_attempts = sum(
+            c.substitution_attempts for c in daily_agents
+        )
+        substitution_candidates = sum(
+            c.substitution_candidates_considered for c in daily_agents
+        )
+        substitution_price_rejections = sum(
+            c.substitution_price_rejections for c in daily_agents
+        )
         mean_fat     = (total_fat / total_items) if total_items > 0 else 0.0
+        repeat_visitor_share = (
+            sum(1 for c in daily_agents if c.visit_number > 1) / n_consumers
+            if n_consumers > 0 else 0.0
+        )
+        pantry_units = sum(
+            sum(max(0.0, float(qty)) for qty in p.get("_home_inv", {}).values())
+            for p in self.population_pool
+        )
 
         # ---- Income bracket welfare breakdown ----
         # Brackets: Low <€1500/mo, Mid €1500–3000, High >€3000
@@ -1512,15 +2201,26 @@ class SupermarketModel(Model):
                         if n_consumers > 0 else 0.0)
 
         # ── FIES per income bracket ──────────────────────────────────────────
-        FIES_THRESHOLDS = {"Low": (0, 1500), "Mid": (1500, 3000), "High": (3000, 1e9)}
-        fies_bracket: dict = {}
-        for bname, (lo, hi) in FIES_THRESHOLDS.items():
-            grp   = [c for c in daily_agents if lo <= c.income_midpoint < hi]
-            n_g   = len(grp)
-            fies_bracket[bname] = {
-                "mean":   round(sum(c.food_insecurity_score for c in grp) / max(1, n_g), 4),
-                "severe": round(sum(1 for c in grp if c.food_insecurity_score >= 3)
-                                / max(1, n_g), 4),
+        access_bracket: dict = {}
+        for bname, (lo, hi) in BRACKET_THRESHOLDS.items():
+            grp = [
+                p for p in self.population_pool
+                if lo <= float(p.get("income_midpoint", 2500.0)) < hi
+            ]
+            n_g = len(grp)
+            demand_g = sum(float(p.get("_daily_consumption_demand", 0.0)) for p in grp)
+            unmet_g = sum(float(p.get("_daily_consumption_unmet", 0.0)) for p in grp)
+            access_bracket[bname] = {
+                "n": n_g,
+                "mean": round(
+                    sum(int(p.get("_access_stress_score", 0)) for p in grp)
+                    / max(1, n_g), 4
+                ),
+                "high": round(
+                    sum(1 for p in grp if int(p.get("_access_stress_score", 0)) >= 3)
+                    / max(1, n_g), 4
+                ),
+                "shortfall": round(unmet_g / demand_g, 4) if demand_g > 0 else 0.0,
             }
 
         # ── Stockpile demand pressure ────────────────────────────────────────
@@ -1543,7 +2243,8 @@ class SupermarketModel(Model):
                 "MeanFulfillment":      sum(a.items_purchased / max(1, a.items_wanted)
                                            for a in _agents) / _n,
                 "MeanPanicLevel":       sum(a.panic_level for a in _agents) / _n,
-                "MeanFIES":             sum(a.food_insecurity_score for a in _agents) / _n,
+                "MeanAccessStress":     sum(a.access_stress_score for a in _agents) / _n,
+                "MeanFIES":             sum(a.access_stress_score for a in _agents) / _n,
                 "MeanItemsUnmet":       sum(a.items_unmet for a in _agents) / _n,
             }
 
@@ -1557,7 +2258,7 @@ class SupermarketModel(Model):
             self.schedule.remove(c)
 
         # ---- Record daily aggregates (products still in schedule) ----
-        products = [a for a in self.schedule.agents if isinstance(a, ProductAgent)]
+        products = self.products
 
         d_rev        = sum(a.daily_base_revenue for a in products)   # constant-price (base_price × units)
         d_rev_nominal= sum(a.daily_revenue      for a in products)   # nominal (current_price × units)
@@ -1572,6 +2273,15 @@ class SupermarketModel(Model):
         d_co2_waste = sum(a.daily_co2_waste  for a in products)
         d_domestic  = sum(a.daily_domestic_sales for a in products)
         d_import    = sum(a.daily_import_sales   for a in products)
+        d_organic   = sum(
+            a.daily_sales for a in products if a.is_bio
+        )
+        category_sales: dict[str, float] = {}
+        for product in products:
+            category = str(product.category).strip() or "Unknown"
+            category_sales[category] = (
+                category_sales.get(category, 0.0) + product.daily_sales
+            )
         import_dep  = (d_import / (d_domestic + d_import)) if (d_domestic + d_import) > 0 else 0.0
 
         # Consumer welfare metrics
@@ -1581,6 +2291,23 @@ class SupermarketModel(Model):
             sum(c.items_purchased for c in daily_agents) /
             max(1, sum(c.items_wanted for c in daily_agents))
         ) if daily_agents else 0.0  # daily_agents already removed but objects still live
+        consumption_fulfillment_rate = (
+            self.daily_household_consumption
+            / self.daily_household_consumption_demand
+            if self.daily_household_consumption_demand > 0 else 1.0
+        )
+        households_with_shortfall = sum(
+            1 for p in self.population_pool
+            if float(p.get("_daily_consumption_unmet", 0.0)) > 1e-12
+        )
+        cumulative_demand = sum(
+            float(p.get("_cumulative_consumption_demand", 0.0))
+            for p in self.population_pool
+        )
+        cumulative_unmet = sum(
+            float(p.get("_cumulative_consumption_unmet", 0.0))
+            for p in self.population_pool
+        )
 
         self.daily_records.append({
             "Day":        self.current_day,
@@ -1591,7 +2318,53 @@ class SupermarketModel(Model):
             "LostSales":  d_lost,
             "Sales":      d_sales,
             "Consumers":  target_count,
+            "RequestedConsumers": requested_target,
+            "EmpiricalSamplingUnits": self.empirical_sampling_units,
+            "SimulatedHouseholdDraws": len(self.population_pool),
+            "PopulationSamplingMethod": self.population_sampling_method,
+            "BehaviorEvidenceMode": (
+                "exploratory_extensions"
+                if any((
+                    self.panic_dynamics_enabled,
+                    self.tpb_enabled,
+                    self.prospect_theory_enabled,
+                    self.preference_learning_enabled,
+                    self.archetype_modifiers_enabled,
+                    self.policy_choice_effects_enabled,
+                ))
+                else "empirical_only"
+            ),
+            "PanicDynamicsEnabled": int(self.panic_dynamics_enabled),
+            "TPBEnabled": int(self.tpb_enabled),
+            "ProspectTheoryEnabled": int(self.prospect_theory_enabled),
+            "PreferenceLearningEnabled": int(self.preference_learning_enabled),
+            "ArchetypeModifiersEnabled": int(self.archetype_modifiers_enabled),
+            "PolicyChoiceEffectsEnabled": int(self.policy_choice_effects_enabled),
+            "DCEAttributeRankingEnabled": int(
+                bool(self.substitution_ranking_categories)
+            ),
+            "DCEAttributeRankingCategories": ",".join(
+                sorted(self.substitution_ranking_categories)
+            ),
+            "ChoicePriceScaleIdentified": 0,
+            "SubstitutionPriceGateEnabled": int(
+                self.substitution_price_gate_supported
+            ),
+            "SubstitutionRankingMethod": self.substitution_ranking_method,
+            "SubstitutionChoiceEvidenceEvents": (
+                self.substitution_choice_evidence_events
+            ),
+            "SubstitutionAttempts": substitution_attempts,
+            "SubstitutionCandidatesConsidered": substitution_candidates,
+            "SubstitutionPriceRejections": substitution_price_rejections,
+            "VisitorCapacityCapped": int(requested_target > target_count),
+            "TrafficVariationEnabled": int(self.traffic_variation_enabled),
+            "RepeatVisitorShare": round(repeat_visitor_share, 4),
+            "ExpectedVisitIntervalDays": round(
+                self.expected_household_visit_interval, 4
+            ),
             "PanicLevel": self.global_panic_level,
+            "ScarcityExposureRate": round(panic_ratio, 4),
             "CrisisPhase":    self._crisis_phase,        # "pre" | "active" | "recovery"
             "ScenarioEndDay": self.scenario_end_day,     # 0 if indefinite
             # Daily loss breakdown (stockout vs price-driven — reset each day)
@@ -1606,10 +2379,32 @@ class SupermarketModel(Model):
             "ImportDepPct": round(import_dep * 100, 2),
             "DomesticSales": d_domestic,
             "ImportSales":   d_import,
+            "OrganicSalesUnits": d_organic,
+            "CategorySalesUnits": category_sales,
             # Consumer welfare — aggregate
             "BudgetExhaustionRate": round(budget_exhaustion_rate, 4),
             "FoodStressedPct":      round(food_stressed_pct,      4),
             "FulfillmentRate":      round(fulfillment_rate,        4),
+            "BaseDemandUnits":      total_base_demand,
+            "RequestedDemandUnits": total_requested_demand,
+            "PolicyAllowedUnits":   total_allowed_demand,
+            "UnmetDemandUnits":     sum(c.items_unmet for c in daily_agents),
+            "HouseholdConsumptionDemand": round(
+                self.daily_household_consumption_demand, 4
+            ),
+            "HouseholdConsumption": round(self.daily_household_consumption, 4),
+            "HouseholdConsumptionUnmet": round(
+                self.daily_household_consumption_unmet, 4
+            ),
+            "ConsumptionFulfillmentRate": round(consumption_fulfillment_rate, 4),
+            "HouseholdsWithConsumptionShortfall": households_with_shortfall,
+            "HouseholdConsumptionShortfallShare": round(
+                households_with_shortfall / max(1, len(self.population_pool)), 4
+            ),
+            "CumulativeConsumptionShortfallRate": round(
+                cumulative_unmet / cumulative_demand, 4
+            ) if cumulative_demand > 0 else 0.0,
+            "HouseholdPantryUnits": round(pantry_units, 4),
             "MeanFatPurchased":     round(mean_fat,                4),
             # Consumer welfare — by income bracket
             "BudgetExh_Low":    bracket_stats["Low"]["budget_exh"],
@@ -1632,12 +2427,25 @@ class SupermarketModel(Model):
             "AvgSubjectiveNorm":  round(avg_tpb_norm, 4),
             "AvgTPBIntention":    round(avg_tpb_int,  4),
             # ── FIES Food Security ─────────────────────────────────────────
-            "FIES_Low":           fies_bracket["Low"]["mean"],
-            "FIES_Mid":           fies_bracket["Mid"]["mean"],
-            "FIES_High":          fies_bracket["High"]["mean"],
-            "FIESSevere_Low":     fies_bracket["Low"]["severe"],
-            "FIESSevere_Mid":     fies_bracket["Mid"]["severe"],
-            "FIESSevere_High":    fies_bracket["High"]["severe"],
+            "AccessStress_Low":       access_bracket["Low"]["mean"],
+            "AccessStress_Mid":       access_bracket["Mid"]["mean"],
+            "AccessStress_High":      access_bracket["High"]["mean"],
+            "AccessStressHigh_Low":   access_bracket["Low"]["high"],
+            "AccessStressHigh_Mid":   access_bracket["Mid"]["high"],
+            "AccessStressHigh_High":  access_bracket["High"]["high"],
+            "ConsumptionShortfall_Low":  access_bracket["Low"]["shortfall"],
+            "ConsumptionShortfall_Mid":  access_bracket["Mid"]["shortfall"],
+            "ConsumptionShortfall_High": access_bracket["High"]["shortfall"],
+            "AccessStressN_Low":      access_bracket["Low"]["n"],
+            "AccessStressN_Mid":      access_bracket["Mid"]["n"],
+            "AccessStressN_High":     access_bracket["High"]["n"],
+            # Deprecated aliases retained for saved analyses and UI compatibility.
+            "FIES_Low":           access_bracket["Low"]["mean"],
+            "FIES_Mid":           access_bracket["Mid"]["mean"],
+            "FIES_High":          access_bracket["High"]["mean"],
+            "FIESSevere_Low":     access_bracket["Low"]["high"],
+            "FIESSevere_Mid":     access_bracket["Mid"]["high"],
+            "FIESSevere_High":    access_bracket["High"]["high"],
             # ── Stockpile demand pressure ──────────────────────────────────
             "StockpilePressure":  stockpile_pressure,
             # ── Media / Communication ──────────────────────────────────────
@@ -1666,6 +2474,7 @@ class SupermarketModel(Model):
             if isinstance(a, ProductAgent):
                 self._product_snapshots.append({
                     "Day":            self.current_day,
+                    "ProductID":      a.prod_id,
                     "Product":        a.name,
                     "Category":       a.category,
                     "Shelf":          a.snap_shelf,
@@ -1711,6 +2520,9 @@ class SupermarketModel(Model):
             if n == 0:
                 continue
             beh = arch_beh.get(arch, {})
+            mean_access_stress = (
+                sum(int(p.get("_access_stress_score", 0)) for p in profiles) / n
+            )
             self._pref_snapshots.append({
                 "Day":                   self.current_day,
                 "Archetype":             arch,
@@ -1725,6 +2537,8 @@ class SupermarketModel(Model):
                 "BudgetExhaustionRate":  beh.get("BudgetExhaustionRate", 0.0),
                 "MeanFulfillment":       beh.get("MeanFulfillment",      0.0),
                 "MeanPanicLevel":        beh.get("MeanPanicLevel",       0.0),
-                "MeanFIES":              beh.get("MeanFIES",             0.0),
+                "MeanAccessStress":      mean_access_stress,
+                # Deprecated alias retained for existing charts/exports.
+                "MeanFIES":              mean_access_stress,
                 "MeanItemsUnmet":        beh.get("MeanItemsUnmet",       0.0),
             })

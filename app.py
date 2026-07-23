@@ -22,8 +22,11 @@ Deployment (online access)
 """
 
 import base64
+import csv
+import copy
 import io
 import json
+import math
 import os
 import tempfile
 import time
@@ -33,6 +36,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import seaborn as sns
 import streamlit as st
 import streamlit.components.v1 as components
@@ -40,6 +44,35 @@ from fpdf import FPDF
 
 from data_processor import run_pipeline_from_data, ARCHETYPE_LABELS
 from model import SupermarketModel, ProductAgent
+from parameter_registry import (
+    build_parameter_registry,
+    parameter_registry_summary,
+    validate_parameter_registry,
+)
+from sensitivity_analysis import (
+    bootstrap_prcc,
+    convergence_diagnostics,
+    latin_hypercube,
+    nonlinear_permutation_importance,
+    scale_design,
+    variance_decomposition,
+)
+from calibration_analysis import (
+    calibration_design,
+    identifiability_diagnostics,
+    standardized_rmse,
+    waste_rate_percent,
+)
+from validation_protocol import (
+    daily_validation_observables,
+    evidence_tier_counts,
+    evaluate_baseline_reproduction,
+    evaluate_phase2_reproduction,
+    evaluate_targets,
+    validate_target_definitions,
+    validation_summary,
+    validation_target_template,
+)
 
 plt.switch_backend("Agg")
 
@@ -265,7 +298,7 @@ _TOUR_STEPS = [
         "body": (
             "Start here every session. Load your DCE participant cohort from Firebase "
             "or upload CSV/JSON files. The data tab shows cohort demographics, "
-            "behavioural archetype clustering (K-Means, k=4), and the product catalogue. "
+            "questionnaire reliability, archetype stability, participant resampling, and the product catalogue. "
             "All other sections depend on data being loaded first."
         ),
     },
@@ -286,8 +319,9 @@ _TOUR_STEPS = [
             "• Food Waste — waste log, drivers, and CO₂ footprint\n"
             "• Per-Product — stock, sales, price per SKU over time\n"
             "• Behavioural Theory — Prospect Theory loss aversion, TPB intention scores, "
-            "FIES food-insecurity scale, and stockpile pressure\n"
-            "• Sensitivity Analysis — parameter sweep tornado charts\n"
+            "food-access stress scale, and stockpile pressure\n"
+            "• Sensitivity Analysis — replicated Latin Hypercube global screening, "
+            "bootstrap PRCC, nonlinear validation, and convergence diagnostics\n"
             "• Compare Scenarios — side-by-side charts from saved simulation runs\n"
             "• Agent Replay — slider to step through any day; scatter plot of every "
             "shopper's panic vs PBC, archetype breakdown, income vulnerability heatmap"
@@ -877,7 +911,7 @@ const TRANSLATIONS = {
     stat1: 'Agent-runs / day', stat2: 'Crisis scenarios', stat3: 'EU markets modeled',
     featuresLabel: 'KEY FEATURES',
     featuresTitle: 'Three pillars. One model.',
-    f1t: 'Cognitive Agents', f1d: 'Consumers with individual traits — panic, hoarding, price sensitivity. Each shopper makes decisions under uncertainty, producing realistic behavioural diversity.', f1tag: 'BEHAVIOUR',
+    f1t: 'Evidence-Gated Agents', f1d: 'Consumers preserve observed participant profiles and calibrated price/substitution response. Panic, hoarding, and theory-transferred dynamics are optional exploratory assumptions.', f1tag: 'BEHAVIOUR',
     f2t: 'Logistics Simulation', f2d: 'Realistic inventory management with lead times, capacity limits, and delivery cycles. Stockouts cascade through the network just as they do in the real world.', f2tag: 'SUPPLY CHAIN',
     f3t: 'Scientific Optimization', f3d: 'AI-driven recommendations balance waste against stockouts. Run thousands of policy permutations and surface the strategies that hold under shock.', f3tag: 'OPTIMIZATION',
     partnersLabel: 'CONSORTIUM',
@@ -2170,10 +2204,10 @@ def _render_sf_sc_results(data: dict):
     )
     st.plotly_chart(fig4, use_container_width=True)
     if panic_threshold_day_val is not None:
-        panic_txt = (f"The 0.30 hoarding threshold was crossed on **Day {panic_threshold_day_val}**, "
+        panic_txt = (f"The reference panic level 0.30 was crossed on **Day {panic_threshold_day_val}**, "
                      f"driving excess purchases that amplified supply depletion beyond the supply-side shock alone.")
     else:
-        panic_txt = "Panic remained below the 0.30 hoarding threshold throughout the simulation."
+        panic_txt = "Panic remained below the reference level 0.30 throughout the simulation."
     _sf_analysis_box(
         f"Consumer panic peaked at **{peak_panic:.2f}/1.0** (Day {panic_peak_day}). {panic_txt} "
         f"Stockpile pressure (quasi-hyperbolic discounting, [O'Donoghue & Rabin 1999](https://www.jstor.org/stable/116981?seq=1)) peaked at "
@@ -2306,8 +2340,8 @@ def _render_sf_pm_results(data: dict):
         f"([Darmon & Drewnowski, 2008](https://pubmed.ncbi.nlm.nih.gov/18469226/)). {policy_hint}"
     )
 
-    # ── Chart 2: FIES Food Security ───────────────────────────────────────────
-    st.markdown("#### 2 · Food Security Index (FIES) by Income Group")
+    # ── Chart 2: Food-Access Stress ───────────────────────────────────────────
+    st.markdown("#### 2 · Exploratory Food-Access Stress by Income Group")
     fig2 = go.Figure()
     for col_key, color, label in [
         ("FIESSevere_Low",  "#922b21", "Low income"),
@@ -2325,18 +2359,18 @@ def _render_sf_pm_results(data: dict):
     fig2 = _sf_crisis_band(fig2, cri_start, cri_end, days)
     fig2.update_layout(
         template="plotly_white", height=400,
-        xaxis_title="Simulation Day", yaxis_title="Severely Food-Insecure (%)",
-        title="FIES Severe Food Insecurity by Income Bracket — Crisis vs Baseline (dotted)",
+        xaxis_title="Simulation Day", yaxis_title="Households with high access stress (%)",
+        title="High Food-Access Stress by Income Bracket — Crisis vs Baseline (dotted)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig2, use_container_width=True)
     _sf_analysis_box(
-        f"Severe food insecurity (FIES, [FAO 2016](https://openknowledge.fao.org/server/api/core/bitstreams/07bc7c6e-72e5-488d-b2f7-3c1499d098fb/content)) among low-income households peaked at "
+        f"High modeled food-access stress among low-income households peaked at "
         f"**{fies_lo_peak:.1f}%** during the crisis, vs a baseline of **{fies_lo_base:.1f}%** "
-        f"(+**{fies_delta:.1f} pp**). FIES captures both objective access failure (budget exhaustion, "
-        f"stockouts) and subjective stress indicators. Targeted subsidies for low-income consumers have "
-        f"the highest FIES-reduction impact per euro spent ([Sen, 1981](https://www.jstor.org/stable/1882681?seq=1); [FAO, 2016](https://openknowledge.fao.org/server/api/core/bitstreams/07bc7c6e-72e5-488d-b2f7-3c1499d098fb/content)). "
+        f"(+**{fies_delta:.1f} pp**). This exploratory diagnostic measures realised "
+        f"pantry-consumption shortfall across all represented households. Targeted subsidies for low-income consumers have "
+        f"the largest modeled reduction in access stress per euro spent. It is not comparable to survey-based FIES prevalence. "
         f"Dotted lines = counterfactual baseline for each income group."
     )
 
@@ -2440,7 +2474,7 @@ def _render_sf_pm_results(data: dict):
             f"Active policy instruments: **{', '.join(policy_labels)}**. "
             f"To quantify the isolated effect of each instrument, run the simulator twice — "
             f"once with policies active and once with all policies off — and compare the welfare metrics. "
-            f"Most cost-effective interventions for food-insecure households during supply disruptions: "
+            f"Candidate interventions for households with high modelled access stress during supply disruptions: "
             f"targeted price subsidies and per-visit purchase caps (Dréze & Sen, 1989; Thaler & Sunstein, 2008)."
         )
 
@@ -2452,7 +2486,7 @@ def _render_sf_pm_results(data: dict):
         [
             f"Peak food stress rate: <b>{peak_stress:.1f}%</b> vs baseline <b>{base_stress:.1f}%</b> (+{peak_stress-base_stress:.1f} pp during crisis)",
             f"Equity gap: low-income fulfilment <b>{fulfill_lo_c:.1f}%</b> vs high-income <b>{fulfill_hi_c:.1f}%</b> — {fulfill_gap:.1f} pp divergence",
-            f"FIES severe food insecurity (low income): <b>+{fies_delta:.1f} pp</b> above baseline at peak",
+            f"high food-access stress (low income): <b>+{fies_delta:.1f} pp</b> above baseline at peak",
             f"Budget exhaustion (low income): peaked at <b>{peak_budgexh_lo:.1f}%</b> of households",
             f"Access inequality (Gini): <b>{mean_gini_c:.3f}</b> vs baseline <b>{mean_gini_b:.3f}</b> — {gini_status}",
             f"Food sovereignty: domestic sales share {'rose' if dom_change >= 0 else 'fell'} by <b>{abs(dom_change):.1f} pp</b> to <b>{dom_share_c:.1f}%</b>",
@@ -2462,7 +2496,7 @@ def _render_sf_pm_results(data: dict):
             f"{'Maintain the purchase cap — it reduces hoarding and access inequality. ' if has_limit else 'Introduce a per-visit purchase cap (2–3 units) — most effective single instrument for access equity. '}"
             f"{'Domestic subsidy is active — monitor fiscal cost against import dependency reduction. ' if pc.get('subsidy_active') else 'A 10–15% domestic product subsidy would support Finnish producers and reduce import dependency. '}"
             f"Coordinate calming public communication via the national food authority to dampen panic. "
-            f"If food stress exceeds {peak_stress:.0f}%, activate targeted emergency food vouchers for FIES-severe households. "
+            f"If food stress exceeds {peak_stress:.0f}%, activate targeted emergency food vouchers for high-access-stress households. "
             f"These measures align with SecureFood WP3 policy recommendations for Northern European dairy markets."
         ),
     )
@@ -2728,20 +2762,22 @@ def _generate_sf_pdf_report() -> bytes:
         "labelling_health_boost": 0.08, "labelling_organic_boost": 0.06,
     }
     sc_p = {
-        "days": 90, "month": 1, "base_con": 200, "reorder": 100,
-        "target": 300, "lead": 3, "cri_start": 30, "cri_duration": 30,
+        "days": 90, "month": 1, "base_con": 200, "reorder": 0.30,
+        "target": 0.90, "lead": 3, "cri_start": 30, "cri_duration": 30,
         "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
         "mc_runs": 1, "policy_cfg": _no_pol,
         "purchase_limit": None, "media_intensity": 0.0,
         "communication_type": "neutral", "stockpile_days": None,
+        "exploratory_behaviour": True,
     }
     pm_p = {
-        "days": 120, "month": 1, "base_con": 200, "reorder": 100,
-        "target": 300, "lead": 3, "cri_start": 30, "cri_duration": 45,
+        "days": 120, "month": 1, "base_con": 200, "reorder": 0.30,
+        "target": 0.90, "lead": 3, "cri_start": 30, "cri_duration": 45,
         "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
         "mc_runs": 1, "policy_cfg": _pol_pol,
         "purchase_limit": 3, "media_intensity": 0.6,
         "communication_type": "calming", "stockpile_days": None,
+        "exploratory_behaviour": True,
     }
 
     # ── Run simulations ───────────────────────────────────────────────────────
@@ -2924,8 +2960,8 @@ def _generate_sf_pdf_report() -> bytes:
     ax.plot(pm_c["Day"], pm_c["FIESSevere_High"] * 100, color=_C["hi"], lw=2, label="High income (crisis)")
     ax.plot(pm_b["Day"], pm_b["FIESSevere_Low"]  * 100, color=_C["lo"], lw=1, ls="--", alpha=0.5, label="Low (baseline)")
     _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
-    ax.set_xlabel("Simulation Day"); ax.set_ylabel("FIES Severe (%)")
-    ax.set_title("FIES Severe Food Insecurity by Income Bracket — Crisis vs Baseline")
+    ax.set_xlabel("Simulation Day"); ax.set_ylabel("Access Stress High (%)")
+    ax.set_title("High Food-Access Stress by Income Bracket — Crisis vs Baseline")
     ax.legend(fontsize=7.5, ncol=2)
     fig.tight_layout()
     p_fies = _sf_mpl_chart(fig); temp_imgs.append(p_fies)
@@ -3094,8 +3130,8 @@ def _generate_sf_pdf_report() -> bytes:
         "perspective), with a crisis beginning on Day 30 and featuring a "
         f"{sc_p['inf']:.0f}% retail price inflation, a {sc_p['dis']}-day supply delivery delay, "
         f"and a {sc_p['cri_duration']}-day disruption window. Consumer panic sensitivity is set "
-        f"at {sc_p['panic']:.2f} and hoarding factor at {sc_p['hoard']:.1f}, calibrated from "
-        "Finnish DCE survey data (N = 116, IAMO XR Lab, 2024–2025)."
+        f"at {sc_p['panic']:.2f} and the maximum hoarding multiplier at {sc_p['hoard']:.1f}. "
+        "These are scenario assumptions: the current export has no direct panic-belief measure."
     )
 
     pdf.sub("Key Findings — Supply Chain Perspective")
@@ -3123,7 +3159,7 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.metric_row([
         ("Peak Food Stress",     f"{peak_stress:.1f}%",   f"baseline {base_stress:.1f}%",         False),
         ("Low-Income Basket Ful.", f"{ful_lo:.1f}%",      f"high-income: {ful_hi:.1f}%",          False),
-        ("FIES Severe (Low Inc.)", f"{fies_peak:.1f}%",   f"baseline {fies_base:.1f}%",           False),
+        ("Access Stress High (Low Inc.)", f"{fies_peak:.1f}%",   f"baseline {fies_base:.1f}%",           False),
         ("Gini Access Index",    f"{mean_gini_c:.3f}",    f"baseline {mean_gini_b:.3f}",          False),
     ])
     pdf.body(
@@ -3132,7 +3168,7 @@ def _generate_sf_pdf_report() -> bytes:
         f"households achieved only {ful_lo:.1f}% basket fulfilment on average during the crisis "
         f"window, compared to {ful_hi:.1f}% for high-income households — a gap of "
         f"{ful_hi - ful_lo:.1f} percentage points representing significant structural inequity. "
-        f"The FIES severe food insecurity rate among low-income consumers peaked at "
+        f"The high food-access stress rate among low-income consumers peaked at "
         f"{fies_peak:.1f}% (baseline: {fies_base:.1f}%), a rise of {fies_peak - fies_base:.1f} pp. "
         f"The Gini access index rose from {mean_gini_b:.3f} to {mean_gini_c:.3f}, confirming "
         "a material deterioration in distributional equity. With policy interventions active "
@@ -3158,8 +3194,8 @@ def _generate_sf_pdf_report() -> bytes:
         ("Crisis Duration",      f"{sc_p['cri_duration']} days (ends Day {sc_cri_end})"),
         ("Price Inflation",      f"{sc_p['inf']:.0f}% (IPCC AR6 central estimate, 2°C warming scenario)"),
         ("Supply Disruption",    f"{sc_p['dis']}-day delivery delay (significant but recoverable shock)"),
-        ("Panic Sensitivity",    f"{sc_p['panic']:.2f} (calibrated from Finnish DCE data, N=116)"),
-        ("Hoarding Factor",      f"{sc_p['hoard']:.1f}× (Finnish panel baseline; COVID-19 reference: 2.0–2.5)"),
+        ("Panic Sensitivity",    f"{sc_p['panic']:.2f} (scenario assumption; not estimated from the DCE)"),
+        ("Hoarding Factor",      f"{sc_p['hoard']:.1f}× maximum, scaled by cross-fitted household propensity"),
         ("Lead Time",            f"{sc_p['lead']} days (standard Finnish grocery logistics)"),
         ("Reorder Point",        f"{sc_p['reorder']} units"),
         ("Target Stock",         f"{sc_p['target']} units"),
@@ -3250,7 +3286,7 @@ def _generate_sf_pdf_report() -> bytes:
         f"Under the Theory of Planned Behaviour framework, this panic level corresponds "
         f"to a significant negative shift in Perceived Behavioural Control — consumers "
         f"lose confidence in their ability to meet food needs through normal channels, "
-        f"triggering the hoarding cascade. At panic sensitivity {sc_p['panic']:.2f} and "
+        f"continuously amplifying propensity-weighted demand. At panic sensitivity {sc_p['panic']:.2f} and "
         f"hoarding factor {sc_p['hoard']:.1f}×, the demand amplification is considerable "
         f"but below the severe panic threshold (>0.7) observed in major disruption events."
     )
@@ -3289,20 +3325,16 @@ def _generate_sf_pdf_report() -> bytes:
         f"effect but does not eliminate the equity gap, suggesting targeted income-based "
         f"vouchers would be needed as a complementary instrument."
     )
-    pdf.sub("4.2  FIES Severe Food Insecurity by Income Bracket")
+    pdf.sub("4.2  High Food-Access Stress by Income Bracket")
     pdf.chart(p_fies,
-        caption="Fig. 6 — FIES severe food insecurity rate by income bracket. "
-                "Dotted line = low-income baseline. FAO (2016) methodology.")
+        caption="Fig. 6 — high food-access stress rate by income bracket. "
+                "Dotted line = low-income baseline. Exploratory model diagnostic.")
     pdf.finding(
-        f"Severe food insecurity (FAO FIES methodology) among low-income households peaked "
+        f"High modeled access stress among low-income households peaked "
         f"at {fies_peak:.1f}% during the crisis, rising from a baseline of {fies_base:.1f}% "
-        f"(+{fies_peak - fies_base:.1f} pp). FIES captures both objective access failure "
-        f"(budget exhaustion, stockouts) and subjective stress indicators, making it the "
-        f"most comprehensive welfare measure available. The sustained elevation of FIES "
-        f"above baseline even during the post-crisis recovery period suggests that "
-        f"short-term food insecurity shocks have persistent psychological effects that "
-        f"outlast the physical supply disruption — consistent with longitudinal FIES "
-        f"studies (FAO, 2022; Ballard et al., 2013)."
+        f"(+{fies_peak - fies_base:.1f} pp). The unvalidated diagnostic combines budget "
+        f"exhaustion, basket shortfall, and panic. It supports comparisons among model "
+        f"scenarios but is not a food-insecurity prevalence estimate."
     )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3376,13 +3408,13 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.bullet([
         f"IMMEDIATE (Days 1–7): Activate calming government communications. Issue retailer "
         f"guidance on voluntary purchase limits. Alert Finnish food authority to monitor "
-        f"FIES-severe households (current estimated rate: {fies_peak:.1f}% at peak).",
+        f"high-access-stress households (current estimated rate: {fies_peak:.1f}% at peak).",
         f"SHORT-TERM (Days 7–30): Implement 3-unit purchase cap at retail level. "
         f"Activate domestic dairy subsidy (minimum 10–15%) funded from agricultural "
         f"resilience reserve. Expedite import approvals to reduce the {pm_p['dis']}-day "
         f"supply delay below 5 days where possible.",
         f"MEDIUM-TERM (Days 30–{pm_p['days']}): Issue targeted emergency food vouchers "
-        f"for FIES-severe low-income households (estimated {fies_peak:.1f}% of population). "
+        f"for high-access-stress low-income households (estimated {fies_peak:.1f}% of population). "
         f"Evaluate purchase cap removal once panic returns below threshold (0.3). "
         f"Commission post-crisis FIES survey to identify persistent food insecurity.",
         f"STRUCTURAL: Invest in domestic dairy supply chain resilience to reduce baseline "
@@ -3408,36 +3440,39 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.sub("6.1  Model Architecture")
     pdf.body(
         "GROCERYsim ABM v2.0 is built on the Mesa Agent-Based Modelling framework (Python). "
-        "Each simulation step represents one retail trading day. ConsumerAgent objects are "
-        "instantiated fresh each day and removed after purchase decisions are made; "
-        "ProductAgent objects persist across days, managing inventory, pricing, ordering, "
-        "and waste accumulation. The RandomActivation scheduler ensures agents execute "
-        "in a randomised order each step, eliminating artificial ordering biases."
+        "Each simulation step represents one retail trading day. Persistent household "
+        "profiles retain pantry, visit, belief, and preference state; short-lived "
+        "ConsumerAgent objects represent their individual store visits. ProductAgent "
+        "objects persist across days. Execution uses explicit product, logistics, and "
+        "shopping phases; only within-day shopper order is shuffled."
     )
     pdf.sub("6.2  Consumer Behavioural Model")
     pdf.bullet([
-        "Theory of Planned Behaviour (TPB; Ajzen, 1991): attitude, subjective norm, and "
-        "Perceived Behavioural Control (PBC) jointly determine purchase intention.",
-        f"Prospect Theory loss aversion (Kahneman & Tversky, 1979): consumers over-weight "
-        f"stockout risk. Default lambda = 2.25 (standard experimental estimate).",
-        f"DCE-derived preference weights: willingness-to-pay for Finnish origin, organic, "
-        f"low-fat, and packaging attributes calibrated from N = 116 Finnish consumers "
-        f"(Horizon Europe SecureFood survey, IAMO XR Lab, 2024–2025).",
-        "Income stratification: Low (<€1,500/mo), Mid (€1,500–€3,500), High (>€3,500), "
-        "with corresponding budget constraints, price elasticities, and panic sensitivities.",
+        "This illustrative walkthrough explicitly enables exploratory behavioural "
+        "extensions. They are not estimated from the GROCERYsim sample.",
+        "Optional Theory of Planned Behaviour (TPB; Ajzen, 1991): constructed attitude, "
+        "subjective norm, and PBC states modulate purchase intention.",
+        "Optional Prospect Theory price response (Kahneman & Tversky, 1979): "
+        "lambda = 2.25 and alpha = 0.88 are literature transfers, not sample estimates.",
+        "DCE price, origin, organic, fat, and opt-out effects are estimated from the "
+        "cleaned experiment (108 linked participants) and audited on a participant "
+        "holdout. The pooled price coefficient supports milk-candidate choice, not "
+        "household-specific willingness-to-pay claims.",
+        "Income stratification: Low (<€1,500/mo), Mid (€1,500–€3,000), High (≥€3,000), "
+        "used for descriptive outcome disaggregation.",
     ])
     pdf.sub("6.3  Supply Chain Model")
     pdf.bullet([
         "(s, Q) inventory policy: replenishment orders of Q units placed when stock < s.",
         f"Lead time: {sc_p['lead']}-day delivery delay (extendable in crisis scenarios).",
         "Perishable waste: units exceeding product shelf life removed and logged.",
-        "FIES computation: adapted FAO Food Insecurity Experience Scale methodology "
-        "(FAO, 2016), applied at the agent level and aggregated by income bracket.",
+        "Exploratory food-access stress diagnostic, aggregated by income bracket; "
+        "not comparable to survey-based FIES prevalence.",
     ])
     pdf.sub("6.4  Key References")
     pdf.kv([
         ("Ajzen (1991)",           "The Theory of Planned Behaviour. Organizational Behavior and Human Decision Processes, 50(2), 179–211."),
-        ("FAO (2016)",             "Methods for Estimating Comparable Prevalence Rates of Food Insecurity (FIES). FAO, Rome."),
+        ("FAO (2016)",             "Methods for estimating comparable rates of food insecurity globally. FAO, Rome."),
         ("IPCC AR6 (2022)",        "Climate Change 2022: Impacts, Adaptation and Vulnerability. Working Group II. Cambridge University Press."),
         ("Kahneman & Tversky (1979)", "Prospect Theory: An Analysis of Decision under Risk. Econometrica, 47(2), 263–291."),
         ("Sheffi (2005)",          "The Resilient Enterprise: Overcoming Vulnerability for Competitive Advantage. MIT Press."),
@@ -3623,10 +3658,10 @@ def render_securefood_page():
             cb1, cb2 = st.columns(2)
             sc_panic = cb1.slider("Panic Sensitivity", 0.0, 1.0, 0.50, 0.05,
                 key="sf_sc_panic",
-                help="Consumer propensity to panic-buy when scarcity is perceived. Calibrated from Finnish DCE data (N=116). Higher values = faster inventory depletion and stronger bullwhip effect.")
+                help="Scenario assumption for response to perceived scarcity. The current GROCERYsim export has no direct panic-belief item, so this parameter is not empirically estimated.")
             sc_hoard = cb2.slider("Hoarding Factor", 1.0, 3.0, 1.5, 0.1,
                 key="sf_sc_hoard",
-                help="Purchase quantity multiplier during panic. 1.5 = consumers buy 50% more than usual. Empirically validated range for Finnish panel data (Hendel & Nevo, 2006).")
+                help="Maximum purchase multiplier during panic, scaled by each household's cross-fitted phase-transition propensity. Treat the maximum as a scenario assumption.")
 
         col_run, _ = st.columns([2, 6])
         if col_run.button("▶ Run Supply Chain Simulation", type="primary",
@@ -3693,10 +3728,10 @@ def render_securefood_page():
             st.markdown("**🧠 Consumer Behaviour**")
             pm_panic = st.slider("Panic Sensitivity", 0.0, 1.0, 0.50, 0.05,
                 key="sf_pm_panic",
-                help="Baseline panic propensity. Calibrated from Finnish DCE data (N=116, mean 0.55). Increase to model lower trust in food system resilience or high pre-existing food anxiety.")
+                help="Scenario assumption for scarcity contagion. It is not estimated from the current DCE or 21 food-choice-motive ratings.")
             pm_hoard = st.slider("Hoarding Factor", 1.0, 3.0, 1.5, 0.1,
                 key="sf_pm_hoard",
-                help="Average purchase multiplier during panic. 1.5 = Finnish panel baseline. 2.0–2.5 models severe panic buying such as observed during COVID-19 supply events (Grashuis et al., 2020).")
+                help="Maximum panic multiplier, scaled by cross-fitted household propensity. Use it for sensitivity analysis rather than as an estimated Finnish baseline.")
             pm_month = st.selectbox("Start Month", list(range(1, 13)), index=0,
                 key="sf_pm_month",
                 help="December scenarios produce higher baseline demand, making supply shortfalls more severe and equity effects more pronounced.")
@@ -3715,7 +3750,7 @@ def render_securefood_page():
             pm_sub_on = st.checkbox("Domestic Product Subsidy", False, key="sf_pm_sub_on",
                 help="Price subsidy on Finnish-origin dairy. Supports domestic producers, reduces import dependency, and partly mitigates price inflation for lower-income consumers.")
             pm_sub_rate = st.slider("Subsidy Rate (%)", 5, 40, 15, 5, key="sf_pm_sub_rate",
-                help="15% is the median effective rate in EU food sovereignty programmes. Higher rates increase fiscal cost — balance against FIES-reduction benefit.") / 100.0 \
+                help="15% is the median effective rate in EU food sovereignty programmes. Higher rates increase fiscal cost — balance against modelled access-stress reduction.") / 100.0 \
                 if pm_sub_on else 0.0
 
             pm_lab_on = st.checkbox("Nutritional Labelling Policy", False, key="sf_pm_lab_on",
@@ -4230,10 +4265,10 @@ import pathlib as _pl
 
 _DATA_DIR      = _pl.Path(__file__).parent / "data"
 _PRODUCTS_PATH = str(_DATA_DIR / "master_products.json")
+_LOCAL_DCE_PATH = _pl.Path(__file__).parent / ".streamlit" / "dce_data_clean.csv"
 
 def _load_bundled_data():
-    """Return (firebase_dict, products_dict) from Secrets + data/ folder.
-    Returns (None, None) if either source is unavailable."""
+    """Return Firebase, catalogue, and optional cleaned DCE alternative rows."""
     # ── Firebase: Streamlit Secrets first, then bundled enriched file ────────
     try:
         firebase_dict = json.loads(st.secrets["firebase"]["data"])
@@ -4254,14 +4289,24 @@ def _load_bundled_data():
     except Exception:
         products_dict = None
 
-    return firebase_dict, products_dict
+    try:
+        dce_text = str(st.secrets["dce"]["data"])
+    except Exception:
+        try:
+            dce_text = _LOCAL_DCE_PATH.read_text(encoding="utf-8-sig")
+        except Exception:
+            dce_text = ""
+    dce_rows = list(csv.DictReader(io.StringIO(dce_text))) if dce_text else None
+
+    return firebase_dict, products_dict, dce_rows
 
 if st.session_state.config_data is None:
     try:
-        _firebase_dict, _products_dict = _load_bundled_data()
+        _firebase_dict, _products_dict, _dce_rows = _load_bundled_data()
         if _firebase_dict is not None and _products_dict is not None:
             st.session_state.config_data = run_pipeline_from_data(
-                _firebase_dict, _products_dict, pool_size=2000, n_archetypes=4
+                _firebase_dict, _products_dict, pool_size=2000, n_archetypes=4,
+                dce_rows=_dce_rows,
             )
     except Exception:
         pass   # silently skip — user can still upload manually in Data & Population tab
@@ -4292,6 +4337,12 @@ def _collect_model_day(model, day: int, scenario_label: str,
     d_waste  = sum(a.daily_waste      for a in agents)
     d_lost   = sum(a.daily_lost_sales for a in agents)
     d_sales  = sum(a.daily_sales      for a in agents)
+    d_consumers = int(model.daily_consumer_count)
+    # Model counterparts only; empirical data must use the same denominators.
+    validation_observables = daily_validation_observables(
+        d_sales, d_rev_nominal, d_consumers, d_waste,
+        [a.daily_lost_sales > 0 for a in agents],
+    )
 
     # Pull the latest daily_record written by model.step() for policy/env metrics
     last_rec = model.daily_records[-1] if model.daily_records else {}
@@ -4307,7 +4358,31 @@ def _collect_model_day(model, day: int, scenario_label: str,
         "Waste":      d_waste,
         "LostSales":  d_lost,
         "Sales":      d_sales,
-        "Consumers":  model.daily_consumer_count,
+        "Consumers":  d_consumers,
+        "EmpiricalSamplingUnits": last_rec.get("EmpiricalSamplingUnits", len(model.population_pool)),
+        "SimulatedHouseholdDraws": last_rec.get("SimulatedHouseholdDraws", len(model.population_pool)),
+        "PopulationSamplingMethod": last_rec.get("PopulationSamplingMethod", "supplied_population"),
+        "BehaviorEvidenceMode": last_rec.get("BehaviorEvidenceMode", "empirical_only"),
+        "PanicDynamicsEnabled": last_rec.get("PanicDynamicsEnabled", 0),
+        "TPBEnabled": last_rec.get("TPBEnabled", 0),
+        "ProspectTheoryEnabled": last_rec.get("ProspectTheoryEnabled", 0),
+        "PreferenceLearningEnabled": last_rec.get("PreferenceLearningEnabled", 0),
+        "ArchetypeModifiersEnabled": last_rec.get("ArchetypeModifiersEnabled", 0),
+        "PolicyChoiceEffectsEnabled": last_rec.get("PolicyChoiceEffectsEnabled", 0),
+        "DCEAttributeRankingEnabled": last_rec.get("DCEAttributeRankingEnabled", 0),
+        "DCEAttributeRankingCategories": last_rec.get("DCEAttributeRankingCategories", ""),
+        "ChoicePriceScaleIdentified": last_rec.get("ChoicePriceScaleIdentified", 0),
+        "SubstitutionPriceGateEnabled": last_rec.get("SubstitutionPriceGateEnabled", 0),
+        "SubstitutionRankingMethod": last_rec.get(
+            "SubstitutionRankingMethod", "seeded_uniform_affordable_same_category"
+        ),
+        "SubstitutionChoiceEvidenceEvents": last_rec.get(
+            "SubstitutionChoiceEvidenceEvents", 0
+        ),
+        "SubstitutionAttempts": last_rec.get("SubstitutionAttempts", 0),
+        "SubstitutionCandidatesConsidered": last_rec.get("SubstitutionCandidatesConsidered", 0),
+        "SubstitutionPriceRejections": last_rec.get("SubstitutionPriceRejections", 0),
+        **validation_observables,
         "PanicLevel": model.global_panic_level,
         # Environmental
         "CO2Sales":          last_rec.get("CO2Sales",          0.0),
@@ -4316,10 +4391,27 @@ def _collect_model_day(model, day: int, scenario_label: str,
         "ImportDepPct":      last_rec.get("ImportDepPct",      0.0),
         "DomesticSales":     last_rec.get("DomesticSales",     0),
         "ImportSales":       last_rec.get("ImportSales",       0),
+        "OrganicSalesUnits": last_rec.get("OrganicSalesUnits", 0),
+        "CategorySalesUnits": last_rec.get("CategorySalesUnits", {}),
         # Consumer welfare — aggregate
         "BudgetExhaustionRate": last_rec.get("BudgetExhaustionRate", 0.0),
         "FoodStressedPct":      last_rec.get("FoodStressedPct",      0.0),
         "FulfillmentRate":      last_rec.get("FulfillmentRate",      1.0),
+        "ConsumptionFulfillmentRate": last_rec.get("ConsumptionFulfillmentRate", 1.0),
+        "HouseholdsWithConsumptionShortfall": last_rec.get("HouseholdsWithConsumptionShortfall", 0),
+        "HouseholdConsumptionShortfallShare": last_rec.get("HouseholdConsumptionShortfallShare", 0.0),
+        "CumulativeConsumptionShortfallRate": last_rec.get("CumulativeConsumptionShortfallRate", 0.0),
+        "BaseDemandUnits": last_rec.get("BaseDemandUnits", 0),
+        "RequestedDemandUnits": last_rec.get("RequestedDemandUnits", 0),
+        "PolicyAllowedUnits": last_rec.get("PolicyAllowedUnits", 0),
+        "UnmetDemandUnits": last_rec.get("UnmetDemandUnits", 0),
+        "HouseholdConsumptionDemand": last_rec.get("HouseholdConsumptionDemand", 0.0),
+        "HouseholdConsumption": last_rec.get("HouseholdConsumption", 0.0),
+        "HouseholdConsumptionUnmet": last_rec.get("HouseholdConsumptionUnmet", 0.0),
+        "ExpectedVisitIntervalDays": last_rec.get("ExpectedVisitIntervalDays", 0.0),
+        "RequestedConsumers": last_rec.get("RequestedConsumers", d_consumers),
+        "VisitorCapacityCapped": last_rec.get("VisitorCapacityCapped", 0),
+        "TrafficVariationEnabled": last_rec.get("TrafficVariationEnabled", 0),
         "MeanFatPurchased":     last_rec.get("MeanFatPurchased",     0.0),
         # Consumer welfare — income brackets
         "BudgetExh_Low":    last_rec.get("BudgetExh_Low",    0.0),
@@ -4342,7 +4434,17 @@ def _collect_model_day(model, day: int, scenario_label: str,
         # Theory of Planned Behaviour (Ajzen 1991)
         "AvgSubjectiveNorm":  last_rec.get("AvgSubjectiveNorm",  0.0),
         "AvgTPBIntention":    last_rec.get("AvgTPBIntention",    0.0),
-        # FIES Food Security (FAO 2016) — mean score per bracket
+        # Population-wide realised pantry-consumption access.
+        "AccessStress_Low":     last_rec.get("AccessStress_Low",     0.0),
+        "AccessStress_Mid":     last_rec.get("AccessStress_Mid",     0.0),
+        "AccessStress_High":    last_rec.get("AccessStress_High",    0.0),
+        "AccessStressHigh_Low": last_rec.get("AccessStressHigh_Low", 0.0),
+        "AccessStressHigh_Mid": last_rec.get("AccessStressHigh_Mid", 0.0),
+        "AccessStressHigh_High": last_rec.get("AccessStressHigh_High", 0.0),
+        "ConsumptionShortfall_Low": last_rec.get("ConsumptionShortfall_Low", 0.0),
+        "ConsumptionShortfall_Mid": last_rec.get("ConsumptionShortfall_Mid", 0.0),
+        "ConsumptionShortfall_High": last_rec.get("ConsumptionShortfall_High", 0.0),
+        # Deprecated aliases retained for existing analyses.
         "FIES_Low":           last_rec.get("FIES_Low",           0.0),
         "FIES_Mid":           last_rec.get("FIES_Mid",           0.0),
         "FIES_High":          last_rec.get("FIES_High",          0.0),
@@ -4586,6 +4688,12 @@ def _render_analysis(
 # ===========================================================================
 
 def build_sidebar_params():
+    pending_calibration = st.session_state.pop(
+        "_pending_calibration_widget_values", {}
+    )
+    for widget_key, widget_value in pending_calibration.items():
+        st.session_state[widget_key] = widget_value
+
     st.sidebar.title(_t("sidebar_title"))
     if st.sidebar.button("🎓 Tour", help="Restart the guided tour", key="restart_tour_btn"):
         st.session_state["tour_step"] = 1
@@ -4597,7 +4705,18 @@ def build_sidebar_params():
                                        help="1 year = 365 days | 5 years = 1825 days")
     start_month    = st.sidebar.selectbox(_t("start_month"), list(range(1, 13)), index=0)
     base_consumers = st.sidebar.number_input(_t("base_consumers"), 10, 5000, 100,
-                                              help="Approximate — actual count varies by weekday & season")
+                                              key="sim_base_con",
+                                              help="Exact in evidence-only mode; varies only when exploratory calendar traffic is enabled")
+    traffic_variation = st.sidebar.checkbox(
+        "Enable exploratory calendar traffic variation",
+        value=False,
+        key="sim_traffic_variation",
+        help=(
+            "Applies the assumed weekday/month multipliers and ±10% daily noise. "
+            "GROCERYsim did not measure store footfall time series, so this is off "
+            "in evidence-only runs."
+        ),
+    )
 
     # Auto-calibrated store tier display
     _tier_info = {
@@ -4654,9 +4773,11 @@ Storage capacity = `demand × (lead_time + 4-day safety buffer)`, minimum 2× sh
 - Delivery arrives after **lead time** days
 
 ---
-**Daily traffic variation**
+**Exploratory daily traffic variation**
 
-Actual visitors = `base × weekday factor × month factor × noise (±10%)`
+When explicitly enabled: `base × weekday factor × month factor × noise (±10%)`.
+The evidence-only default uses exactly `base` visitors because GROCERYsim does not
+contain a longitudinal store-footfall series.
 
 | Weekday | Factor | Month | Factor |
 |---|---|---|---|
@@ -4670,9 +4791,9 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
 """)
 
     st.sidebar.header(_t("sidebar_logistics"))
-    reorder_pt  = st.sidebar.slider(_t("reorder_pt"), 10, 90, 30) / 100.0
-    target_stock = st.sidebar.slider(_t("restock_target"), 50, 100, 90) / 100.0
-    lead_time   = st.sidebar.slider(_t("lead_time"), 1, 14, 2)
+    reorder_pt  = st.sidebar.slider(_t("reorder_pt"), 10, 90, 30, key="sim_reorder_pct") / 100.0
+    target_stock = st.sidebar.slider(_t("restock_target"), 50, 100, 90, key="sim_target_pct") / 100.0
+    lead_time   = st.sidebar.slider(_t("lead_time"), 1, 14, 2, key="sim_lead")
 
     st.sidebar.header(_t("sidebar_crisis"))
     cri_start    = st.sidebar.slider(_t("crisis_start"), 1, max(2, days_to_run - 1),
@@ -4692,8 +4813,73 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
     )
 
     st.sidebar.header(_t("sidebar_behaviour"))
-    panic_sens   = st.sidebar.slider(_t("panic_sensitivity"), 0.0, 1.0, 0.50, 0.05)
-    hoarding     = st.sidebar.slider(_t("hoarding_factor"), 1.0, 3.0, 1.5, 0.1)
+    exploratory_behaviour = st.sidebar.checkbox(
+        "Enable exploratory dynamic behaviour",
+        value=False,
+        key="sim_exploratory_behaviour",
+        help=(
+            "Opt in to panic contagion, panic stockpiling, transferred Prospect "
+            "Theory/TPB rules, and repeated-visit preference learning. These "
+            "mechanisms, including labelling-induced choice effects, are not "
+            "identified by the current GROCERYsim export."
+        ),
+    )
+    if exploratory_behaviour:
+        st.sidebar.warning(
+            "Exploratory extensions are ON. Treat differences as assumption-based "
+            "scenario results and include these coefficients in sensitivity analysis."
+        )
+    else:
+        st.sidebar.info(
+            "Empirical-only mode: observed baskets, budgets, DCE attribute weights, "
+            "cross-fitted price response, and substitution remain active. Unvalidated "
+            "panic, TPB, Prospect Theory, archetype modifiers, learning, and labelling "
+            "choice effects are off."
+        )
+    panic_sens = st.sidebar.slider(
+        _t("panic_sensitivity"), 0.0, 1.0, 0.50, 0.05,
+        key="sim_panic", disabled=not exploratory_behaviour,
+    )
+    hoarding = st.sidebar.slider(
+        _t("hoarding_factor"), 1.0, 3.0, 1.5, 0.1,
+        key="sim_hoard", disabled=not exploratory_behaviour,
+    )
+
+    with st.sidebar.expander("🔧 Advanced panic assumptions", expanded=False):
+        st.caption(
+            "These coefficients are not estimated from the current GROCERYsim "
+            "export. Keep them in sensitivity analysis and document any changes."
+        )
+        panic_exposure_floor = st.slider(
+            "Normal scarcity exposure floor", 0.0, 0.50, 0.10, 0.01,
+            key="sim_panic_exposure_floor",
+            disabled=not exploratory_behaviour,
+            help="Share of shoppers signalling scarcity that is treated as ordinary retail friction.",
+        )
+        panic_growth_rate = st.slider(
+            "Scarcity-to-panic growth rate", 0.0, 1.0, 0.50, 0.05,
+            key="sim_panic_growth_rate",
+            disabled=not exploratory_behaviour,
+            help="Daily amplification of scarcity exposure above the floor.",
+        )
+        panic_decay_active = st.slider(
+            "Active-phase panic decay", 0.0, 0.30, 0.05, 0.01,
+            key="sim_panic_decay_active",
+            disabled=not exploratory_behaviour,
+            help="Daily decay while the crisis remains active.",
+        )
+        panic_decay_recovery = st.slider(
+            "Recovery-phase panic decay", 0.0, 0.30, 0.10, 0.01,
+            key="sim_panic_decay_recovery",
+            disabled=not exploratory_behaviour,
+            help="Daily decay after crisis prices and supply conditions normalize.",
+        )
+        inflation_panic_rate = st.slider(
+            "Inflation-to-panic rate", 0.0, 1.0, 0.40, 0.05,
+            key="sim_inflation_panic_rate",
+            disabled=not exploratory_behaviour,
+            help="Direct daily panic signal from the scenario price shock.",
+        )
 
     st.sidebar.header(_t("sidebar_interventions"))
     st.sidebar.caption(_t("sidebar_interventions_caption"))
@@ -4714,11 +4900,13 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
         media_intensity = st.slider(
             _t("media_intensity"), 0.0, 1.0, 0.0, 0.05,
             key="media_intensity",
+            disabled=not exploratory_behaviour,
             help="How strongly media amplifies or dampens panic each day."
         )
         communication_type = st.selectbox(
             _t("comm_type"), ["neutral", "panic", "calming"],
             key="comm_type",
+            disabled=not exploratory_behaviour,
             help=(
                 "panic = sensationalist coverage (raises global panic); "
                 "calming = reassuring coverage (lowers panic); "
@@ -4729,11 +4917,13 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
     with st.sidebar.expander(_t("exp_stockpile"), expanded=False):
         stockpile_days_on = st.checkbox(
             _t("stockpile_on"), False, key="stockpile_on",
-            help="Override the agent's default stockpile planning horizon (β-δ quasi-hyperbolic model)."
+            disabled=not exploratory_behaviour,
+            help="Override the agent's heuristic stockpile planning horizon. The beta mapping is not empirically estimated."
         )
         stockpile_days_val = st.slider(
             _t("stockpile_days"), 1, 14, 3,
             key="stockpile_days_val",
+            disabled=(not exploratory_behaviour or not stockpile_days_on),
             help="O'Donoghue & Rabin (1999): agents plan to hold this many days of supply at home."
         )
         stockpile_days_override = stockpile_days_val if stockpile_days_on else None
@@ -4776,13 +4966,21 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
                                    key="pol_shock_sev")
 
     with st.sidebar.expander(_t("exp_labelling"), expanded=False):
-        lab_active        = st.checkbox(_t("labelling_on"), False, key="pol_lab_active")
+        if not exploratory_behaviour:
+            st.caption(
+                "Choice effects from labelling are not estimated in the current data "
+                "and are disabled in empirical-only mode."
+            )
+        lab_active = st.checkbox(
+            _t("labelling_on"), False, key="pol_lab_active",
+            disabled=not exploratory_behaviour,
+        )
         lab_day           = st.slider(_t("labelling_start"), 1, max(2, days_to_run - 1),
-                                      1, key="pol_lab_day")
+                                      1, key="pol_lab_day", disabled=not exploratory_behaviour)
         lab_health_boost  = st.slider(_t("labelling_health"), 0.0, 0.4, 0.15, 0.05,
-                                      key="pol_lab_health")
+                                      key="pol_lab_health", disabled=not exploratory_behaviour)
         lab_organic_boost = st.slider(_t("labelling_organic"), 0.0, 0.3, 0.10, 0.05,
-                                      key="pol_lab_organic")
+                                      key="pol_lab_organic", disabled=not exploratory_behaviour)
 
     policy_cfg = {
         "fat_tax_active":     fat_tax_active,
@@ -4795,7 +4993,7 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
         "domestic_shock_day":      shock_day,
         "domestic_shock_duration": shock_duration,
         "domestic_shock_severity": shock_severity,
-        "labelling_active":        lab_active,
+        "labelling_active":        lab_active and exploratory_behaviour,
         "labelling_day":           lab_day,
         "labelling_health_boost":  lab_health_boost,
         "labelling_organic_boost": lab_organic_boost,
@@ -4812,16 +5010,23 @@ Actual visitors = `base × weekday factor × month factor × noise (±10%)`
         "cri_duration":            int(cri_duration),   # 0 = indefinite, >0 = days the crisis lasts
         "inf":                     float(inflation),
         "dis":                     int(disruption),
-        "panic":                   panic_sens,
-        "hoard":                   hoarding,
+        "panic":                   panic_sens if exploratory_behaviour else 0.0,
+        "hoard":                   hoarding if exploratory_behaviour else 1.0,
+        "exploratory_behaviour":   bool(exploratory_behaviour),
         "mc_runs":                 int(mc_runs),
         "show_ci":                 bool(show_ci),
         "policy_cfg":              policy_cfg,
         # Behavioural interventions
         "purchase_limit":          purchase_limit,
-        "media_intensity":         media_intensity,
-        "communication_type":      communication_type,
-        "stockpile_days":          stockpile_days_override,
+        "media_intensity":         media_intensity if exploratory_behaviour else 0.0,
+        "communication_type":      communication_type if exploratory_behaviour else "neutral",
+        "stockpile_days":          stockpile_days_override if exploratory_behaviour else None,
+        "traffic_variation":       bool(traffic_variation),
+        "panic_exposure_floor":    panic_exposure_floor,
+        "panic_growth_rate":       panic_growth_rate,
+        "panic_decay_active":      panic_decay_active,
+        "panic_decay_recovery":    panic_decay_recovery,
+        "inflation_panic_rate":    inflation_panic_rate,
     }
 
 
@@ -4832,8 +5037,22 @@ def _make_model(
     ai_recs=None,
     policy_cfg: dict = None,
 ) -> SupermarketModel:
+    config = st.session_state.config_data
+    if config is None:
+        raise RuntimeError("Load population data before constructing the model.")
+    if config.get("stats", {}).get("population_pipeline_version", 0) < 9:
+        raise RuntimeError(
+            "The loaded configuration predates the evidence-separated choice pipeline. "
+            "Reprocess or reload the source files in Data & Population first."
+        )
+    exploratory = bool(params.get("exploratory_behaviour", False))
+    archetypes_supported = bool(
+        config.get("stats", {})
+        .get("archetype_stability", {})
+        .get("archetypes_supported", False)
+    )
     return SupermarketModel(
-        config_data          = st.session_state.config_data,
+        config_data          = config,
         base_consumers       = params["base_con"],
         start_month          = params["month"],
         reorder_pt           = params["reorder"],
@@ -4853,6 +5072,18 @@ def _make_model(
         media_intensity           = params.get("media_intensity", 0.0),
         communication_type        = params.get("communication_type", "neutral"),
         stockpile_days_override   = params.get("stockpile_days"),
+        panic_exposure_floor      = params.get("panic_exposure_floor", 0.10),
+        panic_growth_rate         = params.get("panic_growth_rate", 0.50),
+        panic_decay_active        = params.get("panic_decay_active", 0.05),
+        panic_decay_recovery      = params.get("panic_decay_recovery", 0.10),
+        inflation_panic_rate      = params.get("inflation_panic_rate", 0.40),
+        enable_panic_dynamics     = exploratory,
+        enable_tpb                = exploratory,
+        enable_prospect_theory    = exploratory,
+        enable_preference_learning = exploratory and archetypes_supported,
+        enable_archetype_modifiers = exploratory and archetypes_supported,
+        enable_policy_choice_effects = exploratory,
+        enable_traffic_variation   = bool(params.get("traffic_variation", False)),
     )
 
 
@@ -4866,31 +5097,55 @@ def render_data_tab():
     # ── Bundled-data status banner ────────────────────────────────────────────
     _has_secret  = "firebase" in st.secrets and "data" in st.secrets["firebase"]
     _has_catalogue = (_DATA_DIR / "master_products.json").exists()
+    _has_dce = (
+        ("dce" in st.secrets and "data" in st.secrets["dce"])
+        or _LOCAL_DCE_PATH.exists()
+    )
     if st.session_state.config_data is not None:
         cfg_stats = st.session_state.config_data.get("stats", {})
         n_real  = cfg_stats.get("n_real", "?")
         n_pool  = cfg_stats.get("pool_size", "?")
         n_prods = len(st.session_state.config_data.get("products", []))
-        st.success(
-            f"✅ **Initial data loaded** — {n_real} real participants · "
-            f"{n_pool} synthetic agents · {n_prods} products in catalogue.\n\n"
-            "You can jump straight to **🎮 Interactive Demo**. "
-            "Use the expander below only if you want to load a different dataset."
+        raw_prods = cfg_stats.get("catalogue_rows_raw", n_prods)
+        duplicate_note = (
+            f" ({raw_prods - n_prods} duplicate scene placements collapsed)"
+            if isinstance(raw_prods, int) and raw_prods > n_prods else ""
         )
-    elif not (_has_secret and _has_catalogue):
+        if cfg_stats.get("population_pipeline_version", 0) < 9:
+            st.warning(
+                f"⚠️ **Legacy population loaded** — {n_real} participants · {n_prods} unique SKUs.\n\n"
+                "Simulation is blocked until you reload or reprocess the source files with "
+                "the complete-profile resampling and evidence-separated choice pipeline below."
+            )
+        else:
+            st.success(
+                f"✅ **Initial data loaded** — {n_real} empirical participants · "
+                f"{n_pool} resampled household draws/model · {n_prods} unique SKUs{duplicate_note}.\n\n"
+                "You can jump straight to **🎮 Interactive Demo**. "
+                "Use the expander below only if you want to load a different dataset."
+            )
+    elif not (_has_secret and _has_catalogue and _has_dce):
         missing = []
         if not _has_secret:    missing.append("Firebase secret (add in Streamlit Cloud → Settings → Secrets)")
         if not _has_catalogue: missing.append("product catalogue (data/master_products.json)")
+        if not _has_dce: missing.append("cleaned DCE alternatives CSV with recorded prices")
         st.warning("⚠️ Bundled data not fully configured. Missing: " + " · ".join(missing) +
                    ". Upload files manually below or configure the missing source.")
 
-    with st.expander("🔄 Reload / Override Data Files", expanded=(st.session_state.config_data is None)):
+    _legacy_population = (
+        st.session_state.config_data is not None
+        and st.session_state.config_data.get("stats", {}).get("population_pipeline_version", 0) < 9
+    )
+    with st.expander(
+        "🔄 Reload / Override Data Files",
+        expanded=(st.session_state.config_data is None or _legacy_population),
+    ):
         st.markdown(
-            "Upload a new **Firebase export** and/or **product catalogue** to rebuild the "
-            "agent population pool from scratch."
+            "Upload a new **Firebase export**, **product catalogue**, and cleaned "
+            "**DCE alternatives CSV** to rebuild the evidence pipeline from scratch."
         )
 
-        col_fb, col_prod = st.columns(2)
+        col_fb, col_prod, col_dce = st.columns(3)
         with col_fb:
             fb_file = st.file_uploader(
                 "📂 Firebase Export JSON",
@@ -4905,23 +5160,39 @@ def render_data_tab():
                 key="upload_products",
                 help="master_products.json exported from Unity",
             )
+        with col_dce:
+            dce_file = st.file_uploader(
+                "📂 Cleaned DCE Alternatives CSV",
+                type=["csv"],
+                key="upload_dce",
+                help="Long-format DCE alternatives including respondent_id, choice_id, chosen, attributes, and displayed price",
+            )
 
-        pool_size    = st.number_input("Population Pool Size", 100, 50000, 2000,
-                                       help="Total synthetic agents to generate (real + bootstrapped)")
-        n_archetypes = st.selectbox("Number of Behavioural Archetypes", [2, 3, 4, 5], index=2)
+        pool_size = st.number_input(
+            "Simulated Household Pool Size", 100, 50000, 2000,
+            help="Each model seed resamples this many complete profiles from the observed participants. This changes simulation scale, not empirical sample size.",
+        )
+        n_archetypes = st.selectbox(
+            "Requested exploratory clusters", [2, 3, 4, 5], index=2,
+            help="Clusters affect behaviour only if separation, bootstrap stability, minimum size, and k-selection gates all pass.",
+        )
 
         col_btn1, col_btn2 = st.columns(2)
         if col_btn1.button("🔄 Process Uploaded Files", type="primary"):
-            if fb_file is None or prod_file is None:
-                st.error("Please upload both JSON files before processing.")
+            if fb_file is None or prod_file is None or dce_file is None:
+                st.error("Please upload both JSON files and the cleaned DCE CSV before processing.")
                 return
-            with st.spinner("Parsing profiles, running K-Means clustering, bootstrapping…"):
+            with st.spinner("Parsing profiles, auditing constructs/clusters, and configuring participant resampling…"):
                 try:
                     firebase_dict  = json.load(fb_file)
                     products_dict  = json.load(prod_file)
+                    dce_rows = list(csv.DictReader(io.StringIO(
+                        dce_file.getvalue().decode("utf-8-sig")
+                    )))
                     config         = run_pipeline_from_data(
                         firebase_dict, products_dict,
                         pool_size=int(pool_size), n_archetypes=int(n_archetypes),
+                        dce_rows=dce_rows,
                     )
                     st.session_state.config_data = config
                     for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
@@ -4936,13 +5207,14 @@ def render_data_tab():
 
         if col_btn2.button("♻️ Reload Bundled Files"):
             try:
-                _firebase_dict, _products_dict = _load_bundled_data()
+                _firebase_dict, _products_dict, _dce_rows = _load_bundled_data()
                 if _firebase_dict is None or _products_dict is None:
                     st.error("Bundled data not available. Firebase secret or product catalogue missing.")
                 else:
                     st.session_state.config_data = run_pipeline_from_data(
                         _firebase_dict, _products_dict,
                         pool_size=int(pool_size), n_archetypes=int(n_archetypes),
+                        dce_rows=_dce_rows,
                     )
                     for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
                               "sim_product_recs","sim_model_crisis",
@@ -4962,17 +5234,340 @@ def render_data_tab():
     pool  = cfg["population"]
     prods = cfg["products"]
 
+    if stats.get("population_pipeline_version", 0) < 9:
+        st.error(
+            "This in-memory configuration predates the evidence-separated choice pipeline. "
+            "Use **Reload Bundled Files** or process the uploaded files again before running simulations."
+        )
+
     # ---- Summary metrics ----
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Real Participants", stats["n_real"])
-    c2.metric("Synthetic Agents",  stats["pool_size"] - stats["n_real"])
-    c3.metric("Total Pool Size",   stats["pool_size"])
+    c2.metric("Empirical Sampling Units", stats.get("empirical_sampling_units", stats["n_real"]))
+    c3.metric("Households Drawn / Model", stats["pool_size"])
     c4.metric("Products in Catalogue", len(prods))
 
     if stats.get("n_skipped", 0):
         st.warning(
             f"⚠️ {stats['n_skipped']} participant(s) were skipped "
             "(basket had no products matching the catalogue)."
+        )
+
+    st.caption(
+        "The displayed model population is not 2,000 independent observations. Each seed "
+        "resamples complete participant profiles with replacement; no demographics, beliefs, "
+        "preferences, prices, quantities, or baskets are jittered. Longitudinal household "
+        "state is persistent. Because the source data do not "
+        "contain a validated shopping-frequency variable, expected revisit intervals "
+        "are inferred from household-pool size and configured daily traffic. Calendar "
+        "multipliers and random traffic variation require explicit exploratory opt-in. "
+        "The revisit assumption should be calibrated "
+        "when observed visit-frequency data become available."
+    )
+
+    reliability = stats.get("questionnaire_reliability", {})
+    if reliability.get("status") == "ok":
+        with st.expander("🧾 Questionnaire Construct Audit", expanded=True):
+            reliability_df = pd.DataFrame(reliability.get("constructs", []))
+            st.dataframe(reliability_df, hide_index=True, use_container_width=True)
+            st.caption(
+                "Raw Cronbach alpha uses participants with complete responses for each declared "
+                "positional item group. Missing items are not silently filled with neutral answers. "
+                "Reverse-key metadata and a confirmatory measurement model are not available."
+            )
+            if not reliability.get("all_constructs_acceptable", False):
+                st.warning(
+                    "At least one declared construct did not reach the conservative reliability "
+                    "gate. Treat its factor score as exploratory and inspect item coding before interpretation."
+                )
+
+    cluster_audit = stats.get("archetype_stability", {})
+    if cluster_audit.get("status") == "ok":
+        with st.expander("🧭 Archetype Stability Audit", expanded=True):
+            ca1, ca2, ca3 = st.columns(3)
+            ca1.metric("Requested k", cluster_audit.get("selected_k"))
+            ca2.metric("Best silhouette k", cluster_audit.get("recommended_k"))
+            ca3.metric(
+                "Operational archetypes",
+                "Enabled" if cluster_audit.get("archetypes_supported") else "Disabled",
+            )
+            st.dataframe(
+                pd.DataFrame(cluster_audit.get("candidates", [])),
+                hide_index=True, use_container_width=True,
+            )
+            st.caption(
+                "Operational gate: requested k must be the best silhouette solution, silhouette "
+                "≥ 0.25, median bootstrap adjusted Rand index ≥ 0.75, and every cluster must "
+                "contain at least 5% of participants (minimum five)."
+            )
+            if not cluster_audit.get("archetypes_supported"):
+                st.warning(
+                    "The categorical solution failed at least one gate. Cluster labels remain "
+                    "visible for exploratory description, but agents use their continuous "
+                    "participant-level preferences; archetype modifiers and learning rules are disabled."
+                )
+
+    calibration = stats.get("behavioral_calibration", {})
+    if calibration.get("status") == "ok":
+        with st.expander("🧪 Behavioural Calibration Audit", expanded=True):
+            st.markdown(
+                f"**{calibration['n_observed']}** participants have usable phase-two "
+                f"observations. A fixed **{calibration['n_train']}/{calibration['n_validation']}** "
+                "train/validation split evaluates pre-crisis predictors, while five-fold "
+                "cross-fitting prevents a participant's own phase-two outcome from setting "
+                "their simulated behaviour. The observed median price shock was "
+                f"**{calibration.get('observed_median_price_shock', 0):.0%}**."
+            )
+            calibration_rows = []
+            for key, label in [
+                ("price_response", "Quantity/price response"),
+                ("substitution", "Product substitution"),
+                ("hoarding", "Quantity increase / hoarding"),
+                ("budget_utilization", "Phase-two reservation spending"),
+            ]:
+                retained = calibration.get(f"{key}_model_retained", False)
+                calibration_rows.append({
+                    "Outcome": label,
+                    "Validation MAE": calibration.get(f"{key}_mae"),
+                    "Naive-mean MAE": calibration.get(f"{key}_naive_mae"),
+                    "Skill vs naive": calibration.get(f"{key}_skill"),
+                    "Individual model used": "Yes" if retained else "No — population mean",
+                })
+            st.dataframe(pd.DataFrame(calibration_rows), hide_index=True,
+                         use_container_width=True)
+            st.caption(
+                "One-shopping-occasion price-shock calibration using the empirical "
+                "relative-price rule: revealed-preference margin "
+                f"{calibration.get('revealed_preference_margin', 0):.3f}; held-out "
+                f"observed quantity retention {calibration.get('retention_validation_observed_mean', 0):.1%}, "
+                f"predicted {calibration.get('retention_validation_predicted_mean', 0):.1%}. "
+                f"Individual retention skill versus the naive mean: "
+                f"{calibration.get('retention_validation_skill', 0):+.3f}."
+            )
+            if not calibration.get("price_response_model_retained", False):
+                st.warning(
+                    "Individual price response did not beat the naive validation benchmark. "
+                    "The ABM therefore uses cross-fitted population means rather than "
+                    "inventing unsupported household heterogeneity."
+                )
+            if calibration.get("retention_validation_skill", 0) <= 0:
+                st.warning(
+                    "The one-occasion aggregate mean is aligned, but participant-level "
+                    "retention does not beat a naive mean forecast. This is not validation "
+                    "of the ABM's multi-day inventory/pantry trajectory; do not interpret "
+                    "individual price-response paths as validated predictions."
+                )
+            st.info(
+                "Phase-two baskets are calibration and validation targets only. Simulated "
+                "crisis demand starts from phase-one needs and is generated by model rules."
+            )
+
+    dce_validation = stats.get("dce_choice_validation", {})
+    if dce_validation.get("status") == "ok":
+        with st.expander("🎯 Choice-Experiment Holdout Assessment", expanded=False):
+            d1, d2, d3 = st.columns(3)
+            d1.metric("Held-out choices", dce_validation["n_validation_choices"])
+            d2.metric("Choice accuracy", f"{dce_validation['validation_accuracy']:.1%}")
+            d3.metric(
+                "Null-model accuracy",
+                f"{dce_validation.get('null_model_accuracy', dce_validation['majority_accuracy']):.1%}",
+            )
+            st.write(
+                "Training-cohort pooled coefficients: price "
+                f"**{dce_validation.get('price_coefficient', 0):+.3f} per EUR**, Finnish origin "
+                f"**{dce_validation['origin_coefficient']:+.3f}**, organic "
+                f"**{dce_validation['organic_coefficient']:+.3f}**, fat linear "
+                f"**{dce_validation['fat_linear_coefficient']:+.3f}**, and fat-squared "
+                f"**{dce_validation['fat_quadratic_coefficient']:+.3f}**. These are "
+                "conditional-logit coefficients estimated jointly with the opt-out "
+                "alternative."
+            )
+            st.caption(
+                f"Held-out log loss {dce_validation['validation_log_loss']:.3f} "
+                f"versus null {dce_validation.get('null_model_log_loss', float('nan')):.3f}; "
+                f"{dce_validation.get('n_inferred_price_choice_sets_excluded', 0)} "
+                "choice sets with inferred prices excluded."
+            )
+            if (
+                dce_validation.get("beats_null_benchmark", False)
+                and dce_validation.get("model_converged", True)
+            ):
+                st.success(
+                    "The pooled price-and-attribute model beats the held-out null model. "
+                    "It is used probabilistically to allocate milk substitutes among "
+                    "available and affordable candidates."
+                )
+            else:
+                st.warning(
+                    "The DCE model either did not beat its held-out null benchmark or did "
+                    "not converge. It is therefore diagnostic only and cannot influence agents."
+                )
+            st.warning(
+                "This is a pooled milk-domain model, not evidence of household-specific "
+                "willingness-to-pay heterogeneity. The phase-one/phase-two baskets separately "
+                "identify whether replacement occurs. Milk DCE coefficients are not "
+                "extrapolated to cheese, yogurt, cream, or plant drinks."
+            )
+
+    substitution_validation = stats.get("substitution_choice_validation", {})
+    if substitution_validation.get("status") == "ok":
+        with st.expander("🔁 Replacement-Choice Validity Audit", expanded=True):
+            s1, s2, s3 = st.columns(3)
+            s1.metric(
+                "Unambiguous events",
+                substitution_validation.get("n_unambiguous_events", 0),
+            )
+            s2.metric(
+                "Price-gate target coverage",
+                f"{substitution_validation.get('candidate_price_gate_target_coverage', 0):.1%}",
+            )
+            supported_categories = substitution_validation.get(
+                "supported_ranking_categories", []
+            )
+            transition_categories = substitution_validation.get(
+                "supported_transition_categories", []
+            )
+            s3.metric(
+                "Validated transition shares",
+                ", ".join(transition_categories) if transition_categories else "None",
+            )
+            st.dataframe(
+                pd.DataFrame(substitution_validation.get("categories", [])),
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.caption(
+                "An event requires exactly one removed and one added catalogue SKU "
+                "within a category. Ranking is accepted only with at least 30 events, "
+                "top-1 accuracy of at least 25%, and a five-point advantage over "
+                "leave-one-event-out category popularity. Candidate price screening "
+                "additionally requires at least 100 events and 90% chosen-target coverage."
+            )
+            transition_table = substitution_validation.get(
+                "phase_transition_target_models", []
+            )
+            if transition_table:
+                st.markdown("**Two-stage basket transition destination audit**")
+                st.dataframe(
+                    pd.DataFrame(transition_table),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+                st.caption(substitution_validation.get("transition_gate", ""))
+            if not substitution_validation.get(
+                "candidate_price_gate_supported", False
+            ):
+                st.warning(
+                    "The phase-two retain/drop price threshold does not cover enough "
+                    "observed replacement targets, so it is not transferred to substitute "
+                    "SKU screening. Remaining visit budget remains a hard constraint."
+                )
+                st.caption(
+                    substitution_validation.get(
+                        "candidate_price_gate_limitation", ""
+                    )
+                )
+            if not supported_categories and not transition_categories:
+                st.warning(
+                    "No category has enough predictive evidence for deterministic "
+                    "substitute ranking. The ABM therefore makes a seeded uniform draw "
+                    "among affordable, in-stock, same-category candidates. This is an "
+                    "explicit structural uncertainty, not a validated consumer-choice rule."
+                )
+            else:
+                st.info(
+                    "Replacement incidence comes from the phase-one/phase-two basket "
+                    "difference. Milk target choice uses the validated DCE multinomial "
+                    "model; supported non-milk categories use training-cohort transition "
+                    "shares only after beating uniform choice on held-out participants."
+                )
+            st.info(substitution_validation.get("caution", ""))
+
+    registry = build_parameter_registry(
+        stats=stats,
+        runtime_params=st.session_state.get("_last_params", {}),
+    )
+    registry_errors = validate_parameter_registry(registry)
+    registry_summary = parameter_registry_summary(registry)
+    with st.expander("📑 Parameter Evidence Registry", expanded=True):
+        st.markdown(
+            "This registry separates values **observed in GROCERYsim**, values "
+            "**estimated with held-out or cross-fitted data**, **literature transfers**, "
+            "**scenario inputs**, and **unidentified engineering assumptions**. Its "
+            "classification is intentionally conservative."
+        )
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Influential entries", registry_summary["n_parameters"])
+        r2.metric("Identifiable here", registry_summary["n_identifiable"])
+        r3.metric(
+            "Unresolved high-priority",
+            registry_summary["n_unresolved_high_priority"],
+        )
+        r4.metric(
+            "Policy-grade ready",
+            "Yes" if registry_summary["policy_grade_ready"] else "No",
+        )
+        if registry_errors:
+            st.error("Registry validation failed: " + " | ".join(registry_errors))
+        if not registry_summary["policy_grade_ready"]:
+            st.warning(
+                "The current model is suitable for transparent exploratory scenario "
+                "analysis, but not yet for point prediction or policy-effect claims. "
+                "Critical assumptions must be calibrated, externally validated, or "
+                "propagated through uncertainty analysis before policy-grade use."
+            )
+
+        registry_df = pd.DataFrame(registry)
+        evidence_options = sorted(registry_df["evidence_class"].unique())
+        chosen_evidence = st.multiselect(
+            "Filter evidence classes",
+            evidence_options,
+            default=evidence_options,
+            key="parameter_registry_evidence_filter",
+        )
+        priority_filter = st.selectbox(
+            "Minimum review focus",
+            ["All", "Critical only", "Critical + high"],
+            key="parameter_registry_priority_filter",
+        )
+        shown = registry_df[registry_df["evidence_class"].isin(chosen_evidence)]
+        if priority_filter == "Critical only":
+            shown = shown[shown["priority"] == "critical"]
+        elif priority_filter == "Critical + high":
+            shown = shown[shown["priority"].isin(["critical", "high"])]
+        registry_display = shown[[
+                "parameter_id", "parameter", "component", "current_value",
+                "unit", "evidence_class", "identifiable_from_current_data",
+                "validation", "priority", "uncertainty_treatment", "source",
+            ]].copy()
+        # Values intentionally mix numbers, booleans, and method labels.  Keep
+        # the audit column display-only and Arrow-stable without changing the
+        # machine-readable registry returned by build_parameter_registry().
+        registry_display["current_value"] = registry_display["current_value"].map(str)
+        st.dataframe(
+            registry_display,
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.caption(
+            "Identifiable means the current GROCERYsim export contains enough "
+            "information to estimate the stated quantity; it does not imply external "
+            "validity or causal identification."
+        )
+        dl1, dl2 = st.columns(2)
+        dl1.download_button(
+            "⬇️ Download registry (CSV)",
+            registry_df.to_csv(index=False).encode("utf-8"),
+            file_name="grocerysim_parameter_evidence_registry.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        dl2.download_button(
+            "⬇️ Download registry (JSON)",
+            json.dumps(registry, indent=2, ensure_ascii=False).encode("utf-8"),
+            file_name="grocerysim_parameter_evidence_registry.json",
+            mime="application/json",
+            use_container_width=True,
         )
 
     st.divider()
@@ -5019,25 +5614,36 @@ def render_data_tab():
     with _arch_info:
         with st.popover("ℹ️"):
             st.markdown("""
-**Buyer-type profiles** are derived from PCA on 5 survey attitude dimensions
-(price · health · environment · animal welfare · sensory/habit) and assigned to
-each participant via k-means clustering.
+**Buyer-type profiles** are exploratory k-means descriptions based on five declared
+survey attitude scores plus identifiable origin, organic, and chosen-fat attributes.
+No PCA is used. The descriptive participant cheaper-choice share is excluded;
+the pooled DCE price coefficient is estimated and validated separately.
 
-| Type | Core trait | Crisis behaviour |
-|------|-----------|-----------------|
-| 💸 **Price Champion** | Maximises value; switches brands freely when prices rise | Early substitution, lower budget exhaustion, mild hoarding |
-| 🌿 **Green Buyer** | Prefers organic & domestic; accepts premium pricing | Higher stockout risk on niche lines; slow to panic |
-| 💪 **Health Optimizer** | Fat/nutrition-focused; continuously adjusts diet | Basket disruption when preferred fat-profile products are absent |
-| 🔁 **Habitual Buyer** | Brand-loyal; resists change until forced | Highest panic score; hardest hit by stockouts |
+| Exploratory label | Centroid description |
+|------|-----------|
+| 💸 **Price Champion** | Higher declared price orientation |
+| 🌿 **Green Buyer** | Higher environment, animal-welfare, or organic orientation |
+| 💪 **Health Optimizer** | Higher declared health orientation |
+| 🔁 **Habitual Buyer** | Higher sensory/familiarity orientation |
 
-**Theoretical grounding**
-- Substitution tolerance, hoarding multiplier, and price tolerance differ per archetype
-  (Prospect Theory λ = 2.25; TPB intention weights 0.49 / 0.26 / 0.39).
-- β-δ temporal discounting means present-biased agents (esp. Habitual Buyers)
-  stockpile more aggressively as panic rises (Hendel & Nevo 2006).
-- FIES food-insecurity flags are summed per agent daily (0 = none → 4 = severe).
+These names do **not** establish crisis behaviour, panic, hoarding, or causal response.
+
+**Scientific gate**
+- Categories affect behaviour only when k-selection, separation, bootstrap stability,
+  and minimum-cluster-size requirements pass.
+- Otherwise continuous participant attributes are used and category-specific modifiers
+  and learning rules are disabled.
+- Prospect Theory, TPB, panic stockpiling, and preference learning are disabled
+  in empirical-only mode. They require the explicit exploratory-behaviour opt-in.
+- food-access stress flags are summed per agent daily (0 = none → 4 = severe).
 """)
-    arch_data = stats.get("archetypes_real", {})
+    _clusters_supported = stats.get("archetype_stability", {}).get(
+        "archetypes_supported", False
+    )
+    arch_data = (
+        stats.get("archetypes_real", {}) if _clusters_supported
+        else stats.get("exploratory_archetypes_real", {})
+    )
     if arch_data:
         col_arch, col_radar = st.columns([1, 2])
         with col_arch:
@@ -5063,7 +5669,8 @@ each participant via k-means clustering.
 
             fig_radar = go.Figure()
             for arch in ARCHETYPE_LABELS:
-                sub = df_real[df_real["archetype"] == arch]
+                _group_column = "archetype" if _clusters_supported else "exploratory_archetype"
+                sub = df_real[df_real[_group_column] == arch]
                 if sub.empty:
                     continue
                 means = [sub[c].mean() for c in factor_cols if c in sub.columns]
@@ -5775,7 +6382,7 @@ def render_demo_tab(params: dict):
                             ("MeanFulfillment",      "Basket Fulfillment",    False),
                             ("BudgetExhaustionRate", "Budget Exhausted",      True),
                             ("MeanPanicLevel",       "Panic Level",           True),
-                            ("MeanFIES",             "Food Insecurity (FIES)", True),
+                            ("MeanFIES",             "Exploratory Access Stress", True),
                         ]:
                             if _metric not in _base.columns:
                                 continue
@@ -5804,7 +6411,7 @@ def render_demo_tab(params: dict):
                     ("MeanFulfillment",      "Basket Fulfillment (%)",    "Higher is better"),
                     ("BudgetExhaustionRate", "Budget Exhaustion Rate (%)", "Lower is better"),
                     ("MeanPanicLevel",       "Mean Panic Level",          "Lower is better"),
-                    ("MeanFIES",             "Food Insecurity Score (0–4)", "Lower is better"),
+                    ("MeanFIES",             "Access-Stress Score (0–4)", "Lower is better"),
                 ]
                 _bar_c1, _bar_c2 = st.columns(2)
                 for (_bm, _bl, _note), _bcol in zip(_beh_metrics, [_bar_c1, _bar_c2, _bar_c1, _bar_c2]):
@@ -5844,7 +6451,7 @@ def render_demo_tab(params: dict):
                     (("MeanPanicLevel", "Panic Level"),      _t1),
                     (("MeanFulfillment", "Basket Fulfillment"), _t2),
                     (("BudgetExhaustionRate", "Budget Exhaustion Rate"), _t1),
-                    (("MeanFIES", "Food Insecurity Score"), _t2),
+                    (("MeanFIES", "Realised Access Stress"), _t2),
                 ]:
                     if _tm not in _df_traj.columns:
                         continue
@@ -5886,7 +6493,7 @@ def render_demo_tab(params: dict):
                         ("MeanFulfillment",      "Fulfillment Δ"),
                         ("BudgetExhaustionRate", "Budget Exh. Δ"),
                         ("MeanPanicLevel",       "Panic Δ"),
-                        ("MeanFIES",             "FIES Δ"),
+                        ("MeanFIES",             "Access Stress Δ"),
                     ]:
                         if _m in _b.columns and _m in _c.columns:
                             _row[_lbl] = round(_c[_m].mean() - _b[_m].mean(), 4)
@@ -6990,14 +7597,31 @@ def render_product_tab():
 def render_behaviour_tab(params):
     st.header(_t("header_behaviour"))
     st.markdown(
-        "Visualises how each embedded behavioural science theory shapes simulation "
-        "outcomes. All charts update after running the **Interactive Demo** simulation."
+        "Audits the behavioural mechanisms used in the latest simulation. "
+        "All charts update after running the **Interactive Demo** simulation."
     )
 
     df = st.session_state.get("sim_results")
     if df is None or df.empty:
         st.info("Run the **Interactive Demo** simulation first to populate these charts.")
         return
+
+    extensions_on = (
+        "BehaviorEvidenceMode" in df.columns
+        and (df["BehaviorEvidenceMode"] == "exploratory_extensions").any()
+    )
+    if extensions_on:
+        st.warning(
+            "This run enabled literature-transferred or engineered behavioural "
+            "extensions. Their charts describe model assumptions, not effects "
+            "identified from the GROCERYsim participants."
+        )
+    else:
+        st.success(
+            "This run used empirical-only behaviour. TPB threshold modulation, "
+            "Prospect Theory, panic contagion, archetype modifiers, and preference "
+            "learning were disabled."
+        )
 
     import plotly.express as px
     import plotly.graph_objects as go
@@ -7007,8 +7631,10 @@ def render_behaviour_tab(params):
 
     with c1:
         st.subheader("👥 Theory of Planned Behaviour")
-        st.caption("Ajzen (1991) — Subjective Norm vs Panic Level over simulation days")
-        if "AvgSubjectiveNorm" in df.columns:
+        st.caption("Optional literature-transferred extension; not measured in the current export")
+        if not extensions_on:
+            st.info("Disabled in this run. Enable exploratory dynamic behaviour to inspect it.")
+        elif "AvgSubjectiveNorm" in df.columns:
             fig_tpb = go.Figure()
             fig_tpb.add_trace(go.Scatter(
                 x=df["Day"], y=df["AvgSubjectiveNorm"],
@@ -7045,8 +7671,10 @@ def render_behaviour_tab(params):
 
     with c2:
         st.subheader("💰 Prospect Theory (Kahneman & Tversky 1979)")
-        st.caption("Loss aversion — share of consumers with exhausted budgets vs daily revenue")
-        if "BudgetExhaustionRate" in df.columns:
+        st.caption("Optional literature-transferred extension; λ and curvature are not sample estimates")
+        if not extensions_on:
+            st.info("Disabled in this run. Relative price response uses the empirical-mode rule.")
+        elif "BudgetExhaustionRate" in df.columns:
             pct_exhausted = (df["BudgetExhaustionRate"] * 100).clip(0, 100)
             fig_kt = go.Figure()
             fig_kt.add_trace(go.Bar(
@@ -7120,14 +7748,22 @@ def render_behaviour_tab(params):
             st.warning("GiniAccess column not found. Re-run the simulation.")
 
     with c4:
-        st.subheader("🍽️ FIES Food Security (FAO 2016)")
-        st.caption("Food Insecurity Experience Scale — % severely food-insecure by income bracket")
-        fies_cols = ["FIESSevere_Low", "FIESSevere_Mid", "FIESSevere_High"]
+        st.subheader("🍽️ Realised Consumption Access Stress")
+        st.caption(
+            "% of all represented households with at least 50% of today's "
+            "pantry consumption need unmet; this is not FAO FIES."
+        )
+        canonical_cols = [
+            "AccessStressHigh_Low", "AccessStressHigh_Mid", "AccessStressHigh_High"
+        ]
+        fies_cols = canonical_cols if all(c in df.columns for c in canonical_cols) else [
+            "FIESSevere_Low", "FIESSevere_Mid", "FIESSevere_High"
+        ]
         available = [c for c in fies_cols if c in df.columns]
         if available:
             fig_fies = go.Figure()
-            colors_fies = {"FIESSevere_Low": "#FF5A5A", "FIESSevere_Mid": "#FCC995", "FIESSevere_High": "#BCDC8B"}
-            labels_fies = {"FIESSevere_Low": "Low income", "FIESSevere_Mid": "Mid income", "FIESSevere_High": "High income"}
+            colors_fies = dict(zip(fies_cols, ["#FF5A5A", "#FCC995", "#BCDC8B"]))
+            labels_fies = dict(zip(fies_cols, ["Low income", "Mid income", "High income"]))
             for col in available:
                 fig_fies.add_trace(go.Scatter(
                     x=df["Day"], y=df[col] * 100,
@@ -7135,8 +7771,8 @@ def render_behaviour_tab(params):
                     line=dict(color=colors_fies.get(col, "#92DDDB"), width=2)
                 ))
             fig_fies.update_layout(
-                title="FIES Food Security by Income Bracket",
-                xaxis_title="Day", yaxis_title="Severely Food-Insecure (%)",
+                title="High Realised Consumption Access Stress by Income Bracket",
+                xaxis_title="Day", yaxis_title="Households with high access stress (%)",
                 legend=dict(orientation="h", y=-0.25),
                 height=320, margin=dict(t=40, b=60),
                 template="plotly_white",
@@ -7144,13 +7780,11 @@ def render_behaviour_tab(params):
             st.plotly_chart(fig_fies, use_container_width=True, config=_PLOTLY_CFG)
             with st.expander("📊 Food Security Analysis", expanded=False):
                 for _fc in available:
-                    _lbl = {"FIESSevere_Low": "Low-income severely food-insecure %",
-                            "FIESSevere_Mid": "Mid-income severely food-insecure %",
-                            "FIESSevere_High": "High-income severely food-insecure %"}.get(_fc, _fc)
+                    _lbl = f"{labels_fies.get(_fc, _fc)} high access-stress %"
                     st.markdown(f"**{_lbl}**")
                     _render_analysis(df, _fc, params, suffix=" (0–1)", decimals=3, higher_is_better=False)
         else:
-            st.warning("FIES columns not found. Re-run the simulation.")
+            st.warning("Access-stress columns not found. Re-run the simulation.")
 
     st.divider()
 
@@ -7249,8 +7883,8 @@ def render_behaviour_tab(params):
         {
             "Theory": "Theory of Planned Behaviour",
             "Authors": "Ajzen (1991)",
-            "Key Parameter": "Attitude (0.49), Norm (0.26), PBC (0.39)",
-            "Implementation": "TPB intention modulates utility threshold each step",
+            "Key Parameter": "Normalized: Attitude (0.430), Norm (0.228), PBC (0.342)",
+            "Implementation": "Optional exploratory TPB intention expands the accepted price-loss margin",
             "Policy Relevance": "Social norms campaigns, messaging"
         },
         {
@@ -7261,17 +7895,17 @@ def render_behaviour_tab(params):
             "Policy Relevance": "Rationing fairness, access equity"
         },
         {
-            "Theory": "FIES Food Security",
-            "Authors": "FAO (2016)",
-            "Key Parameter": "8-item scale (0=food-secure, 8=severely food-insecure)",
-            "Implementation": "Per-agent daily score (simplified 4-flag proxy); aggregated by income bracket",
+            "Theory": "Household Consumption Access",
+            "Authors": "Model diagnostic (not a validated scale)",
+            "Key Parameter": "Daily unmet pantry need: 0, <25%, <50%, <90%, ≥90%",
+            "Implementation": "Population-wide realised shortfall category; panic and shopping failure kept separate",
             "Policy Relevance": "Vulnerability targeting, food assistance"
         },
         {
             "Theory": "Temporal Discounting / Stockpiling",
             "Authors": "O'Donoghue & Rabin (1999)",
             "Key Parameter": "β (present bias), stockpile_days horizon",
-            "Implementation": "β-δ quasi-hyperbolic model; pantry inventory tracking",
+            "Implementation": "Quasi-hyperbolic-inspired heuristic; pantry inventory tracking; beta not estimated",
             "Policy Relevance": "Stockpile caps, hoarding mitigation"
         },
         {
@@ -7502,6 +8136,11 @@ def _make_branded_pdf_report(params: dict | None = None) -> bytes:
             ("dis",           "Supply disruption",             "days"),
             ("panic",         "Panic-buying sensitivity",      "0-1"),
             ("hoard",         "Hoarding demand multiplier",    "x"),
+            ("panic_exposure_floor", "Normal scarcity exposure floor", "share"),
+            ("panic_growth_rate", "Scarcity-to-panic growth rate", "per day"),
+            ("panic_decay_active", "Active-phase panic decay", "per day"),
+            ("panic_decay_recovery", "Recovery-phase panic decay", "per day"),
+            ("inflation_panic_rate", "Inflation-to-panic rate", "per day"),
             ("purchase_limit","Purchase limit (nudge)",        "units/visit"),
             ("media_intensity","Media intensity",              "0-1"),
         ]
@@ -7555,8 +8194,8 @@ def _make_branded_pdf_report(params: dict | None = None) -> bytes:
         pdf.chapter(2, "Interactive Demo Analysis", "Demo Results")
         pdf.body(
             "The Interactive Demo module runs parallel Baseline and Crisis simulations "
-            "using the Mesa ABM framework. Consumer agents are calibrated from Discrete "
-            "Choice Experiment (DCE) preference data collected under the SecureFood project. "
+            "using the Mesa ABM framework. Consumer attributes use a held-out DCE assessment "
+            "and cross-fitted phase-transition calibration from the SecureFood project. "
             "Results below reflect the user-configured scenario as run in this session."
         )
 
@@ -7717,8 +8356,8 @@ def _make_branded_pdf_report(params: dict | None = None) -> bytes:
                 + ("exceeding the critical threshold that triggers hoarding multipliers across "
                    "all archetypes -- this amplifies demand spikes far beyond genuine need. "
                    if peak_panic > 0.4 else
-                   "remaining below the critical hoarding threshold (0.4) -- demand spikes were "
-                   "bounded and the supply chain recovered without a full hoarding cascade. ")
+                   "remaining comparatively low -- continuous propensity-weighted demand amplification was "
+                   "bounded and the supply chain recovered without a severe hoarding cascade. ")
                 + f"Sustained mean panic of {sc_c['PanicLevel'].mean():.3f} maintained "
                 f"elevated purchase quantities throughout the crisis window, compressing "
                 f"shelf availability for later-arriving consumer cohorts (primarily low-income "
@@ -7784,31 +8423,30 @@ def _make_branded_pdf_report(params: dict | None = None) -> bytes:
 
         # ── 2.5 FIES Food Insecurity ─────────────────────────────────────────
         if "FIESSevere_Low" in df_sim.columns and not sc_c.empty:
-            pdf.sub("2.5  FIES Food Security Indicators")
+            pdf.sub("2.5  Food-Access Stress Indicators")
             fies_lo_peak = sc_c["FIESSevere_Low"].max()  * 100
             fies_mi_peak = sc_c["FIESSevere_Mid"].max()  * 100 if "FIESSevere_Mid"  in sc_c.columns else 0
             fies_hi_peak = sc_c["FIESSevere_High"].max() * 100 if "FIESSevere_High" in sc_c.columns else 0
             fies_b_base  = sc_b["FIESSevere_Low"].mean() * 100 if not sc_b.empty and "FIESSevere_Low" in sc_b.columns else 0
 
             pdf.metric_row([
-                ("FIES Severe: Low Income",
+                ("Access Stress High: Low Income",
                  f"{fies_lo_peak:.1f}%", "peak during crisis", fies_lo_peak < 10),
-                ("FIES Severe: Mid Income",
+                ("Access Stress High: Mid Income",
                  f"{fies_mi_peak:.1f}%", "peak during crisis", fies_mi_peak < 5),
-                ("Baseline FIES (Low)",
+                ("Baseline Access Stress (Low)",
                  f"{fies_b_base:.1f}%",  "pre-crisis level",   True),
             ])
 
             fies_lift = fies_lo_peak - fies_b_base
             pdf.body(
-                f"The crisis elevated severe food insecurity (FIES-severe) among low-income "
+                f"The crisis elevated high modeled access stress among low-income "
                 f"agents by {fies_lift:.1f} percentage points -- from a baseline of "
                 f"{fies_b_base:.1f}% to a crisis peak of {fies_lo_peak:.1f}%. "
                 f"Mid- and high-income archetypes reached peaks of {fies_mi_peak:.1f}% and "
-                f"{fies_hi_peak:.1f}% respectively, confirming that food insecurity risk "
-                f"is highly concentrated in lower socioeconomic groups. The FIES score is "
-                f"computed per-agent per-day using a FAO-aligned methodology based on "
-                f"basket-shortfall frequency and severity."
+                f"{fies_hi_peak:.1f}% respectively. This is an exploratory scenario "
+                f"diagnostic based on basket shortfall, budget exhaustion, and panic, "
+                f"not a survey-calibrated prevalence measure."
             )
 
         # ── 2.6 Environmental Footprint ──────────────────────────────────────
@@ -7884,7 +8522,7 @@ def _make_branded_pdf_report(params: dict | None = None) -> bytes:
             ("Budget Exhaustion %",  "BudgetExhaustionRate", True,  False),
             ("Food Stressed %",      "FoodStressedPct",      True,  False),
             ("Fulfilment Rate %",    "FulfillmentRate",      True,  True),
-            ("FIES Severe Low %",    "FIESSevere_Low",       True,  False),
+            ("Access Stress High Low %",    "FIESSevere_Low",       True,  False),
             ("Import Dependency %",  "ImportDepPct",         True,  False),
             ("Gini Access Index",    "GiniAccess",           False, False),
             ("Panic Level",          "PanicLevel",           False, False),
@@ -8195,41 +8833,48 @@ def _make_branded_pdf_report(params: dict | None = None) -> bytes:
     pdf.body(
         "GROCERYsim ABM v2.0 is a Mesa-based agent-based model for Finnish dairy retail "
         "and food-system resilience research. The model implements three agent classes: "
-        "(1) Consumer agents calibrated from Discrete Choice Experiment (DCE) preference "
-        "data collected under the SecureFood project; "
+        "(1) Consumer agents using a held-out DCE attribute assessment and cross-fitted "
+        "phase-transition response calibration from the SecureFood project; "
         "(2) Product agents representing Finnish dairy SKUs with dynamic pricing, stock "
         "management, and per-unit CO2 tracking; "
         "(3) a SupermarketModel orchestrating daily supply-chain events, crisis triggers, "
         "policy lever application, and population-level metric aggregation."
     )
 
-    pdf.sub("6.2  Consumer Archetypes & Calibration")
+    pdf.sub("6.2  Consumer Profiles & Calibration")
     pdf.body(
-        "Population archetypes are derived from K-Means clustering (k=4) on price "
-        "sensitivity, health consciousness, and local-product preference scores from the "
-        "DCE survey (SecureFood, 2024-2026). Four archetypes: H-SENS (high price "
-        "sensitivity), L-SENS (low price sensitivity, high WTP), ORG-PREF (organic "
-        "preference), LOCAL (Finnish-origin preference). Stratified bootstrap sampling "
-        "ensures realistic income-group representation (Low 30%, Mid 50%, High 20%). "
-        "Consumer utility: U = origin_bonus + organic_bonus + fat_match - price_disutility. "
-        "Agents update preferences via archetype-specific Bayesian learning (base rate 0.015/day)."
+        "Questionnaire constructs are audited for missingness and raw internal reliability. "
+        "K-Means solutions from k=2 through k=6 are compared using silhouette separation, "
+        "bootstrap adjusted-Rand stability, and minimum cluster size. Categorical archetype "
+        "modifiers operate only when every declared gate passes; otherwise the model uses "
+        "continuous participant attributes. Each model seed draws complete observed profiles "
+        "with replacement to the requested simulation size. No synthetic attributes, prices, "
+        "quantities, demographics, or baskets are jittered. "
+        "Requested products use a separately calibrated proportional-price acceptance rule. "
+        "Same-category substitutes must be in stock and affordable. Reconstructed "
+        "replacement events gate transfer of the price screen and deterministic ranking; "
+        "unsupported allocation uses a seeded uniform draw among feasible candidates. "
+        "The default empirical-only mode uses a linear relative-price rule and disables "
+        "panic contagion, TPB threshold modulation, Prospect Theory, archetype modifiers, "
+        "and preference learning. Those mechanisms require explicit exploratory opt-in."
     )
 
     pdf.sub("6.3  Supply Chain & Crisis Mechanics")
     pdf.body(
         "Product agents implement (s, S) inventory policies with configurable reorder "
         "points and target stock levels. The crisis window introduces: supply disruption "
-        "reducing inbound deliveries; price inflation on all products; increased panic "
-        "sensitivity activating hoarding multipliers. Monte Carlo confidence bands (when "
+        "reducing inbound deliveries and price inflation on all products. Panic and "
+        "hoarding operate only in explicitly labelled exploratory runs. Monte Carlo confidence bands (when "
         "enabled) use non-parametric percentiles (p10/p25/p75/p90) -- more robust than "
         "Gaussian assumptions for short-horizon ABM outputs."
     )
 
     pdf.sub("6.4  Food Security & Welfare Metrics")
     pdf.body(
-        "FIES (Food Insecurity Experience Scale) scores are computed per-agent per-day "
-        "using a FAO 2016-aligned methodology based on basket-shortfall frequency and "
-        "severity. The Gini Access Index measures inequality of basket fulfilment across "
+        "An exploratory access-stress score is computed for every represented household "
+        "from realised daily pantry-consumption shortfall. Panic and shopping basket "
+        "shortfall are separate outcomes. It is not the FAO FIES scale. The Gini Access Index "
+        "measures inequality of basket fulfilment across "
         "the agent population (0 = perfect equality, 1 = complete inequality). Budget "
         "exhaustion measures the fraction of agents whose daily food spend reaches the "
         "maximum before their basket is complete."
@@ -8654,12 +9299,20 @@ def _make_policy_pdf_brief(
     # ---- 7. Methods ----
     pdf.add_page()
     pdf.section("7. Model Methods Note")
+    _behaviour_mode = (
+        str(df_pol["BehaviorEvidenceMode"].iloc[0])
+        if "BehaviorEvidenceMode" in df_pol.columns and not df_pol.empty
+        else "empirical_only"
+    )
     pdf.body(
         "GROCERYsim ABM v2.0: Mesa-based agent-based model for Finnish dairy retail. "
-        "Consumer agents calibrated from DCE preference scores and questionnaire data. "
-        "K-Means archetype clustering (k=4); stratified bootstrap population pool. "
-        "Utility function: U = origin_bonus + organic_bonus + fat_match - price_disutility. "
-        "Agents update preferences via archetype-specific learning rules (rate=0.015/day). "
+        "Consumer agents use a held-out DCE attribute assessment and cross-fitted transition calibration. "
+        "Reliability-audited constructs; stability-gated exploratory clusters; complete-profile participant resampling. "
+        "Phase-transition retain/drop behaviour is separated from the pooled milk DCE "
+        "price-and-attribute candidate-choice model. "
+        f"Behavioural evidence mode: {_behaviour_mode}. In empirical-only mode, panic contagion, "
+        "TPB, Prospect Theory, archetype modifiers, and preference learning are disabled. "
+        "In exploratory mode these are unvalidated assumptions, not sample estimates. "
         "Policy levers: fat tax surcharge, domestic/organic subsidy, domestic supply shock, "
         "nutritional labelling preference boost. CO2 factors: Finnish organic=0.8, "
         "Finnish conventional=1.2, Imported organic=1.5, Imported conventional=2.2 kg CO2-eq/unit. "
@@ -8845,7 +9498,7 @@ def _generate_policy_narrative(
 # 11b. TAB: MODEL VALIDATION (Pattern-Oriented Modelling)
 # ===========================================================================
 
-def render_validation_tab(params: dict):
+def _render_validation_tab_legacy(params: dict):
     st.header("✅ Model Validation")
     st.markdown(
         "Professional ABMs are validated by checking that the model simultaneously "
@@ -9100,7 +9753,547 @@ def render_validation_tab(params: dict):
 
 
 # ===========================================================================
-# 11c. TAB: MODEL DOCUMENTATION (ODD+D Protocol)
+# 11c. TAB: EVIDENCE-AWARE MODEL VALIDATION
+# ===========================================================================
+
+def render_validation_tab(params: dict):
+    st.header("✅ Validation & Verification")
+    st.markdown(
+        "This page separates **internal verification**, **calibration holdout evidence**, "
+        "**scenario plausibility**, and **independent external validation**. Passing a code "
+        "check or a broad literature range does not validate the model empirically."
+    )
+
+    st.info(
+        "**Current scientific status:** no bundled dataset is treated as independent external "
+        "validation evidence. Upload a locked validation plan with traceable sources and run the "
+        "model before making a target-specific external-validity claim."
+    )
+
+    st.subheader("1. Phase-one baseline reproduction")
+    st.markdown(
+        "This test asks whether the ABM's repeated visits, pantry accounting, and store "
+        "inventory preserve the phase-one GROCERYsim shopping patterns that initialise "
+        "agents. It is an **internal reproduction test**, not independent validation."
+    )
+    _baseline_targets = (
+        st.session_state.config_data.get("stats", {}).get(
+            "baseline_reproduction_targets", {}
+        ) if st.session_state.config_data else {}
+    )
+    if _baseline_targets.get("status") != "ok":
+        st.warning(
+            "Reload the bundled data with the current pipeline before running the "
+            "baseline-reproduction audit."
+        )
+    else:
+        _bt1, _bt2, _bt3 = st.columns(3)
+        _bt1.metric(
+            "Observed basket units",
+            f"{_baseline_targets['mean_linked_basket_units']:.2f}",
+        )
+        _bt2.metric(
+            "Observed basket value",
+            f"€{_baseline_targets['mean_linked_basket_value']:.2f}",
+        )
+        _bt3.metric(
+            "Observed occasions",
+            _baseline_targets["n_shopping_occasions"],
+        )
+        st.caption(
+            "The observed basket is already a household shopping outcome and is not "
+            "multiplied by household size. Inter-visit time was not collected; the ABM "
+            "derives it from represented households and analyst-selected store traffic."
+        )
+        if st.button(
+            "▶️ Run baseline-reproduction audit",
+            key="validation_baseline_reproduction_btn",
+        ):
+            with st.spinner("Running three evidence-only baseline replicates…"):
+                _bp = dict(params)
+                _bp.update({
+                    "exploratory_behaviour": False,
+                    "inf": 0.0,
+                    "dis": 0,
+                    "purchase_limit": None,
+                    "traffic_variation": False,
+                })
+                _baseline_rows = []
+                for _run, _seed in enumerate((41, 42, 43)):
+                    _bm = _make_model(
+                        _bp, is_crisis=False, seed=_seed, policy_cfg={}
+                    )
+                    _run_days = max(
+                        60,
+                        2 * int(math.ceil(
+                            _bm.expected_household_visit_interval
+                        )) + 14,
+                    )
+                    for _day in range(1, _run_days + 1):
+                        _bm.step()
+                        _row, _ = _collect_model_day(
+                            _bm, _day, "Baseline", collect_products=False
+                        )
+                        _row["Run"] = _run
+                        _baseline_rows.append(_row)
+                _baseline_df = pd.DataFrame(_baseline_rows)
+                st.session_state["baseline_reproduction_audit"] = (
+                    evaluate_baseline_reproduction(
+                        _baseline_targets, _baseline_df
+                    )
+                )
+
+        _baseline_audit = st.session_state.get(
+            "baseline_reproduction_audit"
+        )
+        if _baseline_audit:
+            _ba1, _ba2, _ba3 = st.columns(3)
+            _ba1.metric(
+                "Checks passed",
+                f"{_baseline_audit['passed']}/{_baseline_audit['total']}",
+            )
+            _ba2.metric("Warm-up", f"{_baseline_audit['warmup_days']} days")
+            _ba3.metric(
+                "Implied revisit interval",
+                f"{_baseline_audit['expected_visit_interval_days']:.1f} days",
+            )
+            if _baseline_audit["status"] == "pass":
+                st.success(
+                    "All declared phase-one reproduction and temporal-accounting "
+                    "gates passed for the current store configuration."
+                )
+            else:
+                st.error(
+                    "The baseline does not reproduce all declared phase-one patterns. "
+                    "Resolve failed mechanisms before interpreting crisis or policy results."
+                )
+            st.dataframe(
+                pd.DataFrame(_baseline_audit["checks"]),
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.warning(_baseline_audit["claim"])
+
+    st.subheader("2. Phase-two one-occasion holdout reproduction")
+    st.markdown(
+        "This controlled test applies training-cohort median phase-two SKU prices "
+        "where available, uses the observed median shock for uncovered SKUs, and "
+        "applies each holdout participant's phase-two maximum budget to phase-one "
+        "needs. Inventory is non-binding so response is not confused with stockouts."
+    )
+    _phase2_targets = (
+        st.session_state.config_data.get("stats", {}).get(
+            "phase2_reproduction_targets", {}
+        ) if st.session_state.config_data else {}
+    )
+    if _phase2_targets.get("status") != "ok":
+        st.warning(
+            "Reload the bundled data with the current pipeline before running the "
+            "phase-two holdout audit."
+        )
+    else:
+        _p21, _p22, _p23 = st.columns(3)
+        _p21.metric("Holdout participants", _phase2_targets["n_holdout"])
+        _p22.metric(
+            "Controlled price shock",
+            f"{100 * float(_phase2_targets.get('price_shock') or 0):.1f}%",
+        )
+        _p23.metric("Stochastic replicates", 30)
+        _sub_action = (
+            st.session_state.config_data.get("stats", {})
+            .get("behavioral_calibration", {})
+        )
+        if _sub_action.get("substitution_action_model_retained", False):
+            st.caption(
+                "Replacement propensity uses a participant-specific prediction "
+                "that beat the calibration-cohort naive benchmark under repeated "
+                "nested cross-validation."
+            )
+        else:
+            st.caption(
+                "Replacement propensity uses the calibration-cohort fallback "
+                f"probability ({100 * float(_sub_action.get('substitution_action_naive_probability', 0)):.1f}% "
+                "per baseline basket line). The participant-specific model did not "
+                "beat the naive benchmark, so individual substitution prediction is "
+                "not claimed."
+            )
+        if st.button(
+            "▶️ Run phase-two holdout audit",
+            key="validation_phase2_reproduction_btn",
+        ):
+            with st.spinner("Running controlled one-occasion holdout visits…"):
+                _source_config = st.session_state.config_data
+                _validation_profiles = [
+                    profile for profile in _source_config.get("population", [])
+                    if profile.get("phase2_calibration_role") == "validation"
+                ]
+                _phase2_rows = []
+                _shock_pct = 100.0 * float(
+                    _phase2_targets.get("price_shock") or 0.0
+                )
+                for _run in range(30):
+                    _controlled_config = {
+                        "products": copy.deepcopy(_source_config.get("products", [])),
+                        "population": copy.deepcopy(_validation_profiles),
+                        "stats": copy.deepcopy(_source_config.get("stats", {})),
+                    }
+                    _model = SupermarketModel(
+                        config_data=_controlled_config,
+                        base_consumers=max(1, len(_validation_profiles)),
+                        start_month=params["month"],
+                        reorder_pt=params["reorder"],
+                        target_stock=params["target"],
+                        lead_time=params["lead"],
+                        is_crisis_mode=True,
+                        scenario_start_day=1,
+                        inflation_pct=_shock_pct,
+                        disruption_days=0,
+                        fixed_seed=4200 + _run,
+                        policy_cfg={},
+                        enable_traffic_variation=False,
+                        scenario_price_overrides=_phase2_targets.get(
+                            "training_phase2_price_overrides", {}
+                        ),
+                    )
+                    # Isolate consumer response: every catalogue SKU is available
+                    # in a fresh, non-expiring batch throughout this one visit.
+                    for _product in _model.products:
+                        _product.max_shelf_capacity = 1_000_000
+                        _product.max_storage_capacity = 1_000_000
+                        _product.stock_storage = 1_000_000
+                        _product.shelf_batches = [{"qty": 1_000_000, "age": -1}]
+                    _model.step()
+                    for _agent in _model.last_daily_agents:
+                        _profile = _agent.profile
+                        _base_units = max(1, _agent.items_base_wanted)
+                        _purchased_lines = max(1, _agent.choice_lines_purchased)
+                        _phase2_rows.append({
+                            "Run": _run,
+                            "source_id": _profile.get("source_id"),
+                            "model_quantity_retention": (
+                                _agent.items_purchased / _base_units
+                            ),
+                            "observed_quantity_retention": _profile.get(
+                                "observed_quantity_retention", 0.0
+                            ),
+                            "model_spending_reduction": max(
+                                0.0,
+                                1.0 - _agent.amount_spent / max(_agent.budget, 0.01),
+                            ),
+                            "observed_spending_reduction": _profile.get(
+                                "observed_spending_reduction", 0.0
+                            ),
+                            "model_budget_utilization": min(
+                                1.0,
+                                _agent.amount_spent / max(_agent.crisis_budget, 0.01),
+                            ),
+                            "observed_budget_utilization": _profile.get(
+                                "observed_budget_utilization", 0.0
+                            ),
+                            "model_substitution_rate": (
+                                _agent.choice_lines_substituted / _purchased_lines
+                                if _agent.choice_lines_purchased > 0 else 0.0
+                            ),
+                            "observed_substitution_rate": _profile.get(
+                                "observed_substitution_rate", 0.0
+                            ),
+                        })
+                st.session_state["phase2_reproduction_audit"] = (
+                    evaluate_phase2_reproduction(
+                        _phase2_targets, pd.DataFrame(_phase2_rows)
+                    )
+                )
+
+        _phase2_audit = st.session_state.get("phase2_reproduction_audit")
+        if _phase2_audit:
+            _ph1, _ph2, _ph3 = st.columns(3)
+            _ph1.metric(
+                "Metrics passed",
+                f"{_phase2_audit['passed']}/{_phase2_audit['total']}",
+            )
+            _ph2.metric("Holdout N", _phase2_audit["n_holdout"])
+            _ph3.metric("Replicates", _phase2_audit["n_replicates"])
+            if _phase2_audit["status"] == "pass":
+                st.success(
+                    "All applicable aggregate and retained individual-skill gates passed."
+                )
+            else:
+                st.error(
+                    "The controlled consumer model does not reproduce every phase-two "
+                    "holdout outcome. Failed mechanisms remain unsuitable for predictive use."
+                )
+            st.dataframe(
+                pd.DataFrame(_phase2_audit["checks"]),
+                hide_index=True,
+                use_container_width=True,
+            )
+            st.warning(_phase2_audit["claim"])
+
+    with st.expander("Evidence tiers and claim rules", expanded=False):
+        st.markdown(
+            "- **Internal invariant:** checks implementation, accounting, and reproducibility. "
+            "It cannot establish empirical validity.\n"
+            "- **Calibration holdout:** tests prediction within the GROCERYsim collection/calibration "
+            "pipeline. It is useful internal evidence but is not an independent external test.\n"
+            "- **Scenario plausibility:** checks direction or order of magnitude. It is diagnostic, "
+            "not confirmatory validation.\n"
+            "- **External independent:** requires a preregistered acceptance interval, timestamped "
+            "registration, population/period metadata, a traceable source, and data not used for calibration."
+        )
+
+    st.subheader("3. Preregistered empirical validation plan")
+    st.markdown(
+        "Prepare the plan **before inspecting the corresponding model outputs**. Each row declares "
+        "one metric, scenario and time window, aggregation rule, acceptance interval, and evidence provenance."
+    )
+    _template = validation_target_template()
+    st.download_button(
+        "⬇️ Download validation-plan template",
+        data=_template.to_csv(index=False).encode("utf-8"),
+        file_name="GROCERYsim_validation_plan_TEMPLATE.csv",
+        mime="text/csv",
+        key="validation_template_download",
+    )
+    st.caption(
+        "The example rows deliberately fail integrity checks until all EXAMPLE/REPLACE placeholders "
+        "and acceptance bounds are replaced. This prevents accidental use as evidence."
+    )
+
+    _validation_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "validation")
+    _catalogue_path = os.path.join(_validation_dir, "evidence_catalogue.csv")
+    _draft_path = os.path.join(_validation_dir, "validation_plan_DRAFT.csv")
+    _protocol_path = os.path.join(_validation_dir, "VALIDATION_DATA_PROTOCOL.md")
+    try:
+        _evidence_catalogue = pd.read_csv(_catalogue_path)
+        with st.expander("Independent-data acquisition catalogue", expanded=False):
+            st.markdown(
+                "The catalogue distinguishes datasets that can validate model outputs from sources "
+                "that only provide inputs or broad plausibility context. **Conditional** does not mean validated."
+            )
+            st.dataframe(
+                _evidence_catalogue[[
+                    "source_name", "access", "candidate_uses", "evidence_role",
+                    "current_admissibility", "blocking_issue", "priority",
+                ]],
+                use_container_width=True,
+                hide_index=True,
+            )
+        _asset_c1, _asset_c2, _asset_c3 = st.columns(3)
+        with open(_catalogue_path, "rb") as _file:
+            _asset_c1.download_button(
+                "⬇️ Evidence catalogue", _file.read(), "GROCERYsim_evidence_catalogue.csv",
+                "text/csv", key="validation_catalogue_download", use_container_width=True,
+            )
+        with open(_draft_path, "rb") as _file:
+            _asset_c2.download_button(
+                "⬇️ Draft target plan", _file.read(), "GROCERYsim_validation_plan_DRAFT.csv",
+                "text/csv", key="validation_draft_download", use_container_width=True,
+            )
+        with open(_protocol_path, "rb") as _file:
+            _asset_c3.download_button(
+                "⬇️ Data protocol", _file.read(), "GROCERYsim_VALIDATION_DATA_PROTOCOL.md",
+                "text/markdown", key="validation_protocol_download", use_container_width=True,
+            )
+        st.warning(
+            "The bundled draft plan is intentionally inadmissible: empirical bounds, observation "
+            "periods/populations, independence confirmation, and a registration reference are still missing."
+        )
+    except (FileNotFoundError, KeyError, pd.errors.ParserError) as _asset_error:
+        st.error(f"Validation support files could not be loaded: {_asset_error}")
+
+    _uploaded_plan = st.file_uploader(
+        "Upload completed validation plan (CSV)",
+        type=["csv"],
+        key="validation_plan_upload",
+        help="Use exact simulation column names in metric, such as Sales, Waste, Revenue, or FulfillmentRate.",
+    )
+
+    _evaluated = None
+    _summary = None
+    if _uploaded_plan is None:
+        st.warning("External validation not evaluated: no registered target plan is loaded.")
+    else:
+        try:
+            _targets = pd.read_csv(_uploaded_plan)
+            _plan_errors = validate_target_definitions(_targets)
+        except Exception as _exc:
+            _targets = None
+            _plan_errors = [f"The CSV could not be read: {_exc}"]
+
+        if _plan_errors:
+            st.error("The validation plan is not admissible.")
+            for _error in _plan_errors:
+                st.markdown(f"- {_error}")
+        elif st.session_state.get("sim_results") is None:
+            st.success("Plan integrity checks passed.")
+            st.warning("Run the ABM first; no simulation output is available for target evaluation.")
+        else:
+            _raw_baseline = (
+                st.session_state.get("data_base_opt")
+                if st.session_state.get("data_base_opt") is not None
+                else st.session_state.get("data_base_raw")
+            )
+            _raw_crisis = st.session_state.get("data_crisis")
+            if (
+                isinstance(_raw_baseline, pd.DataFrame) and not _raw_baseline.empty
+                and isinstance(_raw_crisis, pd.DataFrame) and not _raw_crisis.empty
+                and "Run" in _raw_baseline.columns and "Run" in _raw_crisis.columns
+            ):
+                _vb = _raw_baseline.copy(); _vb["Scenario"] = "Baseline"
+                _vc = _raw_crisis.copy(); _vc["Scenario"] = "Crisis"
+                _validation_output = pd.concat([_vb, _vc], ignore_index=True)
+                _simulation_source = "raw Monte Carlo replicates"
+            else:
+                _validation_output = st.session_state.sim_results.copy()
+                if "Scenario" in _validation_output.columns:
+                    _validation_output["Scenario"] = _validation_output["Scenario"].replace(
+                        {value: "Baseline" for value in _validation_output["Scenario"].unique()
+                         if str(value).lower().startswith("baseline")}
+                    )
+                _simulation_source = "quick-preview/mean trajectory (not sufficient for external acceptance)"
+            _evaluated = evaluate_targets(_targets, _validation_output)
+            _summary = validation_summary(_evaluated)
+            _claim_status = _summary["claim_status"]
+            if _claim_status == "external_targets_met":
+                st.success(_summary["claim"])
+            elif _claim_status == "external_targets_not_met":
+                st.error(_summary["claim"])
+            else:
+                st.warning(_summary["claim"])
+
+            _vc1, _vc2, _vc3, _vc4 = st.columns(4)
+            _vc1.metric("External targets", _summary["external_total"])
+            _vc2.metric("Passed", _summary["external_passed"])
+            _vc3.metric("Failed", _summary["external_failed"])
+            _vc4.metric("Not evaluated", _summary["external_not_evaluated"])
+            st.caption(f"Evaluation source: {_simulation_source}.")
+
+            _display = _evaluated[[
+                "target_id", "label", "evidence_tier", "scenario", "aggregation",
+                "observed", "simulation_lower_95", "simulation_upper_95", "n_replicates",
+                "lower", "upper", "unit", "status", "reason",
+                "source_name", "source_reference",
+            ]].copy()
+            st.dataframe(_display, use_container_width=True, hide_index=True)
+
+            _audit = {
+                "protocol_version": "GROCERYsim-validation-1.0",
+                "claim_status": _summary["claim_status"],
+                "claim": _summary["claim"],
+                "summary": _summary,
+                "tier_counts": evidence_tier_counts(_evaluated),
+                "targets": json.loads(_evaluated.to_json(orient="records")),
+                "simulation_source": _simulation_source,
+                "simulation_rows": int(len(_validation_output)),
+                "simulation_columns": list(_validation_output.columns),
+            }
+            _dl1, _dl2 = st.columns(2)
+            _dl1.download_button(
+                "⬇️ Download evaluated targets (CSV)",
+                data=_evaluated.to_csv(index=False).encode("utf-8"),
+                file_name="GROCERYsim_validation_results.csv",
+                mime="text/csv",
+                key="validation_results_csv",
+                use_container_width=True,
+            )
+            _dl2.download_button(
+                "⬇️ Download validation audit (JSON)",
+                data=json.dumps(_audit, indent=2).encode("utf-8"),
+                file_name="GROCERYsim_validation_audit.json",
+                mime="application/json",
+                key="validation_results_json",
+                use_container_width=True,
+            )
+
+    st.divider()
+    st.subheader("4. Internal verification — fixed-seed reproducibility")
+    st.markdown(
+        "This test checks deterministic execution under a fixed seed. A pass supports software "
+        "verification only; it says nothing about correspondence with real grocery systems."
+    )
+    if st.session_state.config_data is None:
+        st.info("Load population data to run the reproducibility check.")
+    else:
+        if st.button("▶️ Run reproducibility check", key="validation_repro_btn_v2"):
+            with st.spinner("Running two independently instantiated 30-day models…"):
+                _vp = dict(params)
+                _vp["days"] = 30
+                _m1 = _make_model(_vp, is_crisis=False, seed=99)
+                _m2 = _make_model(_vp, is_crisis=False, seed=99)
+                _rows_1, _rows_2 = [], []
+                for _day in range(1, 31):
+                    _m1.step(); _m2.step()
+                    _r1, _ = _collect_model_day(_m1, _day, "Baseline", collect_products=False)
+                    _r2, _ = _collect_model_day(_m2, _day, "Baseline", collect_products=False)
+                    _rows_1.append(_r1)
+                    _rows_2.append(_r2)
+                _left = pd.DataFrame(_rows_1).sort_index(axis=1)
+                _right = pd.DataFrame(_rows_2).sort_index(axis=1)
+                _same = _left.equals(_right)
+                _different_cells = int((_left.ne(_right) & ~(_left.isna() & _right.isna())).sum().sum())
+                st.session_state["validation_repro_v2"] = {
+                    "same": _same,
+                    "different_cells": _different_cells,
+                    "rows": len(_left),
+                    "columns": len(_left.columns),
+                }
+        _repro = st.session_state.get("validation_repro_v2")
+        if _repro:
+            if _repro["same"]:
+                st.success(
+                    f"PASS — both instances produced identical {_repro['rows']}-day aggregate tables "
+                    f"across {_repro['columns']} fields. Classification: internal invariant."
+                )
+            else:
+                st.error(
+                    f"FAIL — {_repro['different_cells']} aggregate cells differ. Resolve RNG leakage "
+                    "before interpreting stochastic experiments."
+                )
+
+    st.divider()
+    st.subheader("5. Price-response diagnostic")
+    st.markdown(
+        "The former elasticity pass/fail check used a hard-coded literature range and was labelled "
+        "empirical validation. It is now a **diagnostic only**. To validate price response, add a "
+        "source-specific elasticity target to the preregistered plan, with the matching product scope, "
+        "price definition, horizon, population, and uncertainty interval."
+    )
+    if st.session_state.config_data is None:
+        st.info("Load population data to compute the diagnostic.")
+    elif st.button("▶️ Compute 10% price-shock diagnostic", key="validation_elasticity_btn_v2"):
+        with st.spinner("Running paired 30-day baseline and price-shock models…"):
+            _ep = dict(params)
+            _ep["days"] = 30
+            _ep0 = dict(_ep); _ep0["inf"] = 0.0
+            _ep1 = dict(_ep); _ep1["inf"] = 10.0
+            _base = _make_model(_ep0, is_crisis=True, seed=7)
+            _shock = _make_model(_ep1, is_crisis=True, seed=7)
+            _sales_base = _sales_shock = 0.0
+            for _day in range(1, 31):
+                _base.step(); _shock.step()
+                _rb, _ = _collect_model_day(_base, _day, "Baseline", collect_products=False)
+                _rs, _ = _collect_model_day(_shock, _day, "Shock", collect_products=False)
+                _sales_base += _rb.get("Sales", 0)
+                _sales_shock += _rs.get("Sales", 0)
+            _quantity_change = (_sales_shock - _sales_base) / max(_sales_base, 1) * 100
+            st.session_state["validation_elasticity_v2"] = _quantity_change / 10.0
+    if "validation_elasticity_v2" in st.session_state:
+        st.metric("Arc-style quantity response / 10% price shock", f"{st.session_state['validation_elasticity_v2']:.3f}")
+        st.caption("Exploratory diagnostic — no acceptance decision and no external-validity claim.")
+
+    st.divider()
+    st.subheader("6. Documentation")
+    st.markdown(
+        "The ODD+D record documents model mechanisms and now states the evidence-tier rules and "
+        "current external-validation limitation."
+    )
+    if st.button("→ Go to Model Documentation", key="validation_goto_docs_v2"):
+        st.session_state["nav_section"] = "docs"
+        st.rerun()
+
+
+# ===========================================================================
+# 11d. TAB: MODEL DOCUMENTATION (ODD+D Protocol)
 # ===========================================================================
 
 def _make_odd_d_pdf(params: dict | None = None) -> bytes:
@@ -9175,8 +10368,9 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
     pdf.set_x(30)
     pdf.multi_cell(150, 4.8,
         "This document follows the ODD+D (Overview, Design Concepts, Details + "
-        "Decision) protocol for agent-based models. It provides sufficient detail "
-        "for an independent researcher to re-implement and validate the model.",
+        "Decision) protocol for agent-based models. It documents the structural "
+        "implementation for independent scrutiny and re-implementation; empirical "
+        "validation still depends on the evidence gaps stated in this document.",
         align="C")
     pdf.set_text_color(0, 0, 0)
 
@@ -9218,14 +10412,13 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
         ("SupplyTruck",   "Singleton logistics agent. Queues orders, enforces lead times, "
                           "executes deliveries, and blocks supply during disruption windows. "
                           "Handles domestic supply shocks at the product-origin level."),
-        ("ConsumerAgent", "One instance per daily visitor (not persistent between days; "
-                          "recreated from population pool). Makes utility-based purchase "
-                          "decisions, tracks home inventory for stockpiling, updates "
-                          "preferences via Bayesian learning, and records welfare outcomes "
-                          "(FIES, budget exhaustion, basket fulfilment)."),
+        ("ConsumerAgent", "One shopping-visit instance linked to a persistent household "
+                          "profile. Stable household state retains pantry inventory and visit "
+                          "history. Reference-price adaptation and learned preferences are optional. "
+                          "The visit instance records budget and basket outcomes."),
         ("SupermarketModel", "Model orchestrator. Coordinates daily agent activation "
-                             "order (RandomActivation), manages crisis state transitions, "
-                             "applies seasonality and weekday demand multipliers, "
+                             "order (products, logistics, then shuffled shoppers), manages crisis state transitions, "
+                             "optionally applies exploratory calendar traffic multipliers, "
                              "aggregates welfare and supply chain metrics."),
     ])
 
@@ -9234,72 +10427,69 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
         ("ProductAgent: shelf_batches",       "List of {qty, age} dicts (FIFO queue). Drives waste, near-expiry, and stock availability."),
         ("ProductAgent: stock_storage",       "Scalar (units). Back-room inventory feeding shelf replenishment."),
         ("ProductAgent: current_price",       "Float (EUR). Inflation-adjusted and policy-modified shelf price."),
-        ("ConsumerAgent: price_sensitivity",  "Float [0-1]. Updated daily via archetype-specific Bayesian learning."),
-        ("ConsumerAgent: _home_inv",          "Dict {product_name: units}. Home pantry stock driving stockpile demand."),
-        ("ConsumerAgent: food_insecurity_score", "Int [0-4]. FAO FIES proxy computed each step."),
-        ("SupermarketModel: global_panic_level", "Float [0-1]. Aggregate panic signal propagated to all consumers."),
-        ("SupermarketModel: is_scenario_active", "Bool. True during the crisis window; toggles crisis baskets and inflation."),
+        ("ConsumerAgent: price_sensitivity",  "Float [0-1]. Cross-fitted phase-response value; fixed in empirical-only mode."),
+        ("Household profile: _home_inv",       "Dict {SKU id: units}. Persistent pantry stock consumed every calendar day."),
+        ("Household profile: _access_stress_score", "Int [0-4]. Daily realised pantry-consumption shortfall category; not a validated FIES estimate."),
+        ("SupermarketModel: global_panic_level", "Float [0-1]. Optional exploratory panic signal; fixed at zero in empirical-only mode."),
+        ("SupermarketModel: is_scenario_active", "Bool. True during the crisis window; toggles inflation, supply disruption, and panic dynamics. Phase-two baskets are never simulated demand."),
     ])
 
     pdf.sub("2.3  Scales")
     pdf.kv([
         ("Temporal resolution", "1 simulation step = 1 calendar day"),
         ("Spatial resolution",  "Single store (multi-store extension: N stores with inter-store panic contagion)"),
-        ("Population scale",    "Default 200 consumer agents/day; calibrated from real DCE cohort (N=116)"),
-        ("Product catalogue",   "Finnish dairy SKUs (variable count, typically 8-15 products)"),
+        ("Population scale",    "Default 100 visits/day from 2,000 persistent household profiles; 116 records collected, 108 usable"),
+        ("Product catalogue",   "107 unique Finnish dairy SKUs after collapsing 340 duplicate Unity scene placements"),
         ("Simulation horizon",  "Configurable 30-365 days; typical run 90 days"),
     ])
 
     # ── 3. PROCESS OVERVIEW AND SCHEDULING ────────────────────────────────────
     pdf.chapter(3, "Process Overview & Scheduling", "Scheduling")
     pdf.body(
-        "Each simulation day executes in the following fixed order "
-        "(RandomActivation within agent classes):"
+        "Each simulation day executes in the following fixed order:"
     )
     pdf.kv([
-        ("Step 1 — ProductAgent.step()", "Reset daily counters; refill shelf from storage (50% threshold); "
+        ("Step 1 — Household consumption", "Deplete every persistent household pantry using basket quantity divided by its expected revisit interval; record realised shortfall."),
+        ("Step 2 — Visit scheduling",    "Select the most-due unique households using constant declared traffic; optional calendar/noise variation is exploratory."),
+        ("Step 3 — ProductAgent.step()", "Reset daily counters; refill shelf from storage (50% threshold); "
                                           "update price (inflation + policy); age all batches; remove "
                                           "expired batches (waste log); flag near-expiry batches."),
-        ("Step 2 — SupplyTruck.step()",  "Deliver queued orders that have reached their arrival day; "
+        ("Step 4 — SupplyTruck.step()",  "Deliver queued orders that have reached their arrival day; "
                                           "apply domestic shock (block fraction of Finnish-origin deliveries); "
                                           "place new orders for products below reorder trigger; "
                                           "queue delivery for lead_time days hence."),
-        ("Step 3 — Consumer sampling",   "Sample target_count consumers from population pool "
-                                          "(stratified bootstrap). Apply seasonality (monthly) and "
-                                          "weekday demand multipliers. Create ConsumerAgent instances."),
-        ("Step 4 — ConsumerAgent.step()", "Update TPB subjective norm and PBC from crowd density and panic; "
-                                           "update stockpile target (quasi-hyperbolic discounting); "
-                                           "deplete home inventory; execute shopping loop; compute FIES; "
-                                           "update preferences (Bayesian learning); write back to profile pool."),
-        ("Step 5 — Aggregation",          "Compute population-level welfare metrics: fulfilment by income "
-                                           "bracket, budget exhaustion, FIES by bracket, Gini access index, "
+        ("Step 5 — ConsumerAgent.step()", "Compute pantry-adjusted replenishment need; apply the evidence-gated "
+                                           "choice rule; execute shopping loop; record shopping shortfall. "
+                                           "TPB, panic stockpiling, and preference updates run only in exploratory mode."),
+        ("Step 6 — Aggregation",          "Compute visit-level fulfilment and budget exhaustion plus population-wide "
+                                           "consumption access stress by bracket, Gini shopping-access index, "
                                            "panic level, CO2 totals, import dependency. Append daily_records."),
     ])
     pdf.body(
-        "The panic signal (global_panic_level) is updated continuously during Step 4: "
-        "each near-empty shelf (stock < 3 units) adds a panic impulse, averaged over "
-        "all consumers and decayed by a configurable panic_sensitivity parameter. "
-        "This creates an endogenous panic propagation mechanism without requiring "
-        "explicit agent-to-agent communication."
+        "The panic signal is updated from the share of shoppers exposed to a near-empty "
+        "shelf. Each shopper signals at most once per day; ordinary scarcity exposure up "
+        "to 10% is treated as retail friction, and excess exposure is multiplied by "
+        "panic_sensitivity before daily decay. "
+        "When exploratory panic dynamics are enabled this creates a global broadcast "
+        "mechanism without explicit agent-to-agent communication. It is inactive by default."
     )
 
     # ── 4. DESIGN CONCEPTS ────────────────────────────────────────────────────
     pdf.chapter(4, "Design Concepts", "Design Concepts")
     pdf.kv([
-        ("Emergence",       "Aggregate panic, waste rates, market-level food security outcomes, "
+        ("Emergence",       "Waste rates, fulfilment, access-stress outcomes, "
                             "and revenue volatility all emerge from individual agent decisions "
                             "and product-level stock dynamics. No macro-level targets are imposed."),
-        ("Adaptation",      "Consumer agents update price sensitivity, organic preference, fat preference, "
-                            "and substitution tolerance daily via archetype-specific Bayesian learning "
-                            "(rate 0.015/day). Preferences persist between days via the shared profile pool."),
-        ("Objectives",      "Consumers maximise utility U = origin_bonus + organic_bonus + fat_match "
-                            "- price_disutility subject to budget constraint and basket fulfilment. "
+        ("Adaptation",      "Disabled in empirical-only mode. Optional archetype-specific heuristic reinforcement "
+                            "(rate 0.015/visit) requires exploratory mode and a passing archetype gate."),
+        ("Objectives",      "Consumers replenish observed needs subject to price acceptance, budget, and stock. "
+                            "Validated rankings may order feasible substitutes; otherwise allocation is seeded stochastic. "
                             "ProductAgents minimise stockout risk via (s,S) reorder policy."),
-        ("Learning",        "Archetype-specific preference drift: price_champion shifts toward lower-cost "
+        ("Learning",        "Optional archetype-specific preference drift: price_champion shifts toward lower-cost "
                             "alternatives under budget stress; green_buyer strengthens organic preference "
                             "when organic products are available; health_optimizer tracks fat content "
                             "relative to health target; habitual_buyer resists substitution but becomes "
-                            "more flexible under repeated budget exhaustion."),
+                            "more flexible under repeated budget exhaustion. These are hypotheses, not estimated rules."),
         ("Prediction",      "Consumers do not predict future prices or supply availability. Stockpiling "
                             "is driven by present-biased hyperbolic discounting (beta-delta model) — "
                             "agents over-weight current scarcity signals relative to expected future "
@@ -9310,8 +10500,8 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
         ("Interaction",     "Indirect interaction only: consumers compete for finite shelf stock "
                             "(depletion externality). Panic is propagated as a global broadcast signal. "
                             "In multi-store mode, inter-store panic contagion is modelled explicitly."),
-        ("Stochasticity",   "Consumer pool sampling (stratified random); daily consumer count (+/-10% "
-                            "noise); purchase order within a day (RandomActivation shuffle). "
+        ("Stochasticity",   "Due-household tie breaking and shuffled purchase order within a day; "
+                            "optional +/-10% traffic noise is exploratory. "
                             "All stochasticity is seeded for full reproducibility."),
         ("Collectives",     "Consumer archetypes are analytical groups, not explicit collectives. "
                             "Population pool is stratified by archetype to preserve empirical distribution."),
@@ -9338,8 +10528,13 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
         "One ProductAgent per catalogue SKU and one SupplyTruck are added to the schedule.",
         "PolicyConfig is instantiated from the policy dict (fat tax, subsidy, labelling, "
         "domestic shock parameters); all levers are inactive unless explicitly enabled.",
-        "Population pool is built from config_data: real profiles are augmented with "
-        "synthetic profiles (archetype-stratified bootstrap) to reach the target pool size.",
+        "The configuration retains observed participant profiles. Each model seed resamples "
+        "complete profiles with replacement to reach the simulation pool size; no participant "
+        "attribute or basket value is independently jittered.",
+        "Phase-two baskets are excluded from simulated demand. They serve as empirical "
+        "targets for an 80/20 hold-out audit and five-fold cross-fitted response estimates. "
+        "Any individual-level estimator that does not beat the training-mean benchmark is "
+        "rejected and replaced by cross-fitted population means.",
     ])
 
     _init_rows = []
@@ -9364,37 +10559,43 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
     )
     pdf.kv([
         ("Consumer Survey (DCE)",
-         "N=116 Finnish grocery shoppers. Attributes scored: price sensitivity (0-1), "
-         "Finnish-origin preference (0-1), organic preference (0-1), preferred fat content "
-         "(g/100ml), reference price (EUR), income bracket (5-point scale). "
+         "116 Finnish participant records collected; 108 currently yield usable matched baskets. "
+         "The export includes phase-one and phase-two shopping tasks, a beliefs questionnaire, "
+         "and product-attribute choices. The cleaned long-format DCE supplies displayed "
+         "prices for a participant-held-out pooled milk choice model; individual random "
+         "coefficients and household-specific willingness to pay are not claimed. "
          "Collected under SecureFood ethics approval, stored in Firebase Realtime Database."),
         ("Product Catalogue",
          "Finnish dairy SKUs with: name, category, price (EUR), fat content (%), "
          "origin ('Suomi' or import), organic flag, shelf life (days), initial stock levels. "
          "Stored in data/master_products.json; curated from Finnish grocery retail data."),
-        ("Archetype Clustering",
-         "K-Means (k=4) on standardised DCE preference scores. Cluster centroids define "
-         "four archetypes: price_champion, green_buyer, health_optimizer, habitual_buyer. "
-         "Archetype modifiers (substitution tolerance, hoarding multiplier) are set from "
-         "centroid positions, not hand-coded."),
-        ("External Benchmarks (validation only)",
-         "Statistics Finland consumer price index, PTY annual footfall statistics, "
-         "Luke/SYKE food waste benchmarks, Evira/ETL import dependency data."),
+        ("Questionnaire and Exploratory Clustering",
+         "Declared item groups are audited for missingness and raw Cronbach alpha. K-Means "
+         "uses five questionnaire scores plus identifiable origin, organic, and chosen-fat "
+         "attributes; the non-identified lookup-price score is excluded. Categories affect "
+         "behaviour only if k-selection, separation, bootstrap stability, and size gates pass."),
+        ("External validation evidence",
+         "No bundled source is currently accepted as independent external validation. "
+         "Broad literature ranges previously displayed in the application are retained "
+         "only as background and cannot generate a validation claim."),
     ])
 
     # ── 7. SUBMODELS ──────────────────────────────────────────────────────────
     pdf.chapter(7, "Submodels", "Submodels")
 
-    pdf.sub("7.1  Consumer Utility Function")
+    pdf.sub("7.1  Evidence-Separated Consumer Choice")
     pdf.body(
-        "U(product) = origin_bonus + organic_bonus + fat_match - price_disutility\n\n"
-        "  origin_bonus   = finnish_preference  if product.is_finnish else 0\n"
-        "  organic_bonus  = organic_preference  if product.is_organic  else 0\n"
-        "  fat_match      = max(0, 1 - |product.fat_content - preferred_fat| / 3.0)\n"
-        "  price_disutility = price_sensitivity * (current_price / reference_price - 1)\n\n"
-        "Purchase proceeds if U >= utility_threshold (calibrated from price_sensitivity "
-        "and archetype price_tolerance_extra). Threshold is modulated daily by TPB "
-        "intention: higher intention -> lower threshold -> more willing to purchase."
+        "Requested-SKU price loss = price_response * (current_price/reference_price - 1).\n"
+        "The product is accepted when this loss is no greater than the phase-transition "
+        "calibrated margin. Optional exploratory Prospect Theory changes only this price-loss rule.\n\n"
+        "For substitution, candidates must share the catalogue category, be in stock, "
+        "and be affordable within the remaining visit budget. Reconstructed one-to-one "
+        "replacement events gate transfer of the retention-price screen and deterministic "
+        "ranking. During the phase transition, the cross-fitted propensity supplies one "
+        "proactive substitution decision per basket line. Failed allocation gates use a "
+        "seeded uniform draw among feasible candidates. The maximum crisis budget is "
+        "separated from a cross-fitted reservation-spending share. DCE "
+        "compatibility is not cardinal utility or willingness to pay."
     )
 
     pdf.sub("7.2  Inventory (s, S) Reorder Policy")
@@ -9409,35 +10610,109 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
 
     pdf.sub("7.3  Panic Propagation")
     pdf.body(
-        "Each shopping day:\n"
-        "  panic_signals += 1  for each near-empty shelf (stock < 3 units) observed\n"
-        "  global_panic_level = panic_sensitivity * (signals / daily_consumer_count)\n"
-        "  global_panic_level = max(0, global_panic_level - daily_decay)\n\n"
-        "Consumers with panic_level > 0.4 apply the hoarding multiplier to all "
-        "basket quantities. Panic_level > 0.5 triggers stockpile-demand calculation "
-        "via quasi-hyperbolic discounting (beta-delta model, beta=0.7)."
+        "Each shopper contributes at most one scarcity signal per day. Then:\n"
+        "  exposure = signalling_shoppers / daily_consumer_count\n"
+        "  growth = panic_sensitivity * max(0, exposure - 0.10) * 0.50\n"
+        "  global_panic_level = clamp(global_panic_level + growth - daily_decay)\n\n"
+        "This submodel is disabled in empirical-only mode. When explicitly enabled, "
+        "hoarding amplification is continuous: 1 + (maximum_multiplier - 1) x "
+        "cross_fitted_household_propensity x panic_level. Precautionary pantry cover "
+        "also rises continuously with panic via a quasi-hyperbolic discounting heuristic. "
+        "Beta varies from 0.75 to 0.90 "
+        "as a deterministic function of price sensitivity; this mapping is an "
+        "unvalidated model assumption, not an estimated beta-delta parameter."
     )
 
-    pdf.sub("7.4  FIES Food Insecurity Score")
+    pdf.sub("7.4  Exploratory Food-Access Stress Score")
     pdf.body(
-        "Simplified 4-item FIES proxy per FAO (2016) methodology:\n"
-        "  +1 if panic_level > 0.5          (Q1: worried about food)\n"
-        "  +1 if fulfilment < 0.70           (Q2: unable to eat variety)\n"
-        "  +1 if budget_exhausted AND items_unmet > 0  (Q3: ran out of food)\n"
-        "  +1 if fulfilment < 0.30           (Q4: severe deprivation)\n\n"
-        "FIES_severe = fraction of agents with score >= 3, disaggregated by income bracket."
+        "This objective model diagnostic is calculated for every represented household "
+        "from the share of today's interval-adjusted pantry consumption need that cannot "
+        "be met: 0 = none; 1 = (0%,25%); 2 = [25%,50%); 3 = [50%,90%); "
+        "4 = [90%,100%]. High access stress means score >= 3. Shopping basket shortfall "
+        "and panic are reported separately and do not enter the score. "
+        "The legacy output labels FIES_* are aliases retained for compatibility. They must not "
+        "be interpreted as a prevalence estimate comparable to survey-based FIES."
     )
 
-    pdf.sub("7.5  Bayesian Preference Learning")
+    pdf.sub("7.5  Heuristic Preference Reinforcement")
     pdf.body(
-        "Each archetype updates a different preference dimension daily "
-        "(learning rate lr = 0.015 / day):\n\n"
+        "Each archetype updates a different preference dimension after a shopping visit "
+        "(learning rate lr = 0.015 / visit):\n\n"
         "  price_champion:  price_sensitivity += lr * (budget_stress_signal - price_sensitivity)\n"
         "  green_buyer:     organic_preference += lr * (organic_availability - organic_preference)\n"
         "  health_optimizer: preferred_fat += lr * (health_target_fat - preferred_fat)\n"
         "  habitual_buyer:  sub_tolerance += lr * (0.80 - sub_tolerance) if budget_exhausted\n\n"
         "Updated preferences are written back to the shared profile pool and persist "
         "across simulation days, creating path-dependent preference evolution."
+    )
+
+    pdf.sub("7.6  Global Sensitivity and Uncertainty Analysis")
+    pdf.body(
+        "Selected model inputs are varied jointly with Latin Hypercube Sampling over "
+        "user-declared uniform screening ranges. Every design point is repeated using "
+        "the same replicate-seed set (common random numbers). Outcomes are summarized "
+        "over the active crisis phase. Partial rank correlation coefficients are computed "
+        "after residualizing ranked inputs and ranked outcomes against all other ranked "
+        "inputs; 95% intervals use non-parametric bootstrap resampling. A held-out random-"
+        "forest permutation ranking is reported only when its test-set R-squared is positive. "
+        "Nested-design PRCC rankings provide a convergence diagnostic, while between-point "
+        "and within-point variances separate range-driven uncertainty from stochastic noise."
+    )
+
+    pdf.sub("7.7  Parameter Evidence and Scientific Readiness")
+    _registry = build_parameter_registry(
+        stats=(st.session_state.config_data or {}).get("stats", {}),
+        runtime_params=params or {},
+    )
+    _registry_summary = parameter_registry_summary(_registry)
+    pdf.body(
+        f"The machine-readable evidence registry contains {_registry_summary['n_parameters']} "
+        f"influential entries. {_registry_summary['n_identifiable']} are identifiable from "
+        "the current GROCERYsim export; "
+        f"{_registry_summary['n_unresolved_high_priority']} critical/high-priority entries "
+        "remain literature transfers, scenario inputs, or engineering assumptions. "
+        "Consequently, the current implementation is classified as an exploratory "
+        "scenario tool, not a policy-grade point-prediction or causal-effect model."
+    )
+    pdf.bullet([
+        "Observed data are separated from held-out and cross-fitted calibration results.",
+        "Recorded DCE prices identify a pooled milk-choice price coefficient; individual "
+        "willingness-to-pay heterogeneity is not estimated.",
+        "Panic dynamics, traffic/capacity rules, policy treatment effects, access-stress "
+        "thresholds, and provisional CO2 factors require external calibration or validation.",
+        "Policy-grade use requires uncertainty propagation across all unresolved critical "
+        "parameters plus temporal and external validation on independent data.",
+    ])
+
+    pdf.sub("7.8  Identifiability-Gated Calibration")
+    pdf.body(
+        "Calibration parameters are varied jointly with Latin Hypercube Sampling and "
+        "common-random-number replicates. Target residuals are standardized by analyst-"
+        "declared measurement-error or tolerance scales. Waste share uses physical "
+        "throughput (waste / [sales + waste]), never currency. Before a numerical "
+        "best fit can be applied, the workflow requires: at least ten design points per "
+        "free parameter; target-space rank at least equal to the number of free parameters; "
+        "between-parameter signal exceeding within-point stochastic noise; nearest-neighbour "
+        "synthetic recovery for every parameter; and positive validation skill against a "
+        "naive training-mean forecast on the final 20 percent of an observed daily series. "
+        "KPI-only fits lack a held-out period and are therefore always exploratory."
+    )
+
+    pdf.sub("7.9  Evidence-Tiered Validation Protocol")
+    pdf.body(
+        "Validation evidence is classified as internal invariant, calibration holdout, "
+        "scenario plausibility, or external independent. Internal reproducibility and "
+        "accounting checks verify implementation but cannot establish empirical validity. "
+        "SecureFood phase-two and DCE holdouts test prediction within the model-development "
+        "data pipeline and are not labelled independent external validation. An external "
+        "target is admissible only when its metric, scenario, time window, aggregation, "
+        "acceptance interval, source population and period are declared in advance; the "
+        "source is traceable; a timestamped registration is supplied; and the data were not "
+        "used for calibration. Stochastic targets require raw Monte Carlo replicates; both "
+        "the replicate mean and central 95 percent simulation interval must remain within "
+        "the preregistered bounds. Results are exported with unevaluated targets and failures, "
+        "and a pass supports validity only for the declared targets and scope. At this "
+        "release, no bundled dataset satisfies that external-evidence gate."
     )
 
     # ── 8. REFERENCES ─────────────────────────────────────────────────────────
@@ -9454,6 +10729,7 @@ def _make_odd_d_pdf(params: dict | None = None) -> bytes:
         "FAO (2016). Methods for estimating comparable rates of food insecurity globally.",
         "Kahneman, D. & Tversky, A. (1979). Prospect Theory. Econometrica 47(2), 263-291.",
         "O'Donoghue, T. & Rabin, M. (1999). Doing it now or later. AER 89(1), 103-124.",
+        "McKay, M. D., Beckman, R. J. & Conover, W. J. (1979). A comparison of three methods for selecting values of input variables. Technometrics 21(2), 239-245.",
         "Thaler, R. H. & Sunstein, C. R. (2008). Nudge. Yale University Press.",
         "SecureFood Consortium (2024-2027). Horizon Europe Grant No. 101136583.",
     ])
@@ -9471,8 +10747,7 @@ def render_documentation_tab(params: dict):
     st.header("📋 Model Documentation (ODD+D Protocol)")
     st.markdown(
         "The **ODD+D protocol** (Grimm et al. 2006, 2010, 2020) is the community standard "
-        "for documenting agent-based models. It is required for submission to the *Journal "
-        "of Artificial Societies and Social Simulation* (JASSS) and is increasingly "
+        "for documenting agent-based models. It supports transparent review and is increasingly "
         "expected by EU Horizon funding bodies and FAO model assessment panels. "
         "Below is the full protocol rendered interactively; download the formatted PDF "
         "for citation and archiving."
@@ -9511,7 +10786,7 @@ under baseline and crisis conditions. Three research objectives:
 
 - **Supply disruption impact**: Quantify how climate-driven disruptions affect revenue, food waste, and food security
 - **Policy effectiveness**: Evaluate fat taxation, domestic subsidies, nutritional labelling, and purchase limits
-- **Equity analysis**: Identify vulnerable consumer archetypes and income groups; quantify equity implications
+- **Equity analysis**: Describe outcomes across income and participant-profile groups; exploratory archetype labels are not treated as validated types
         """),
         ("2. Entities, State Variables & Scales", """
 **Agent types:**
@@ -9519,30 +10794,31 @@ under baseline and crisis conditions. Three research objectives:
 |---|---|---|
 | `ProductAgent` | 1 per SKU | `shelf_batches` (FIFO), `stock_storage`, `current_price` |
 | `SupplyTruck` | 1 (singleton) | `delivery_queue`, `log` |
-| `ConsumerAgent` | ~200/day (recreated daily) | `price_sensitivity`, `_home_inv`, `food_insecurity_score` |
+| `ConsumerAgent` | 1 visit instance per selected persistent household | visit outcomes; household profile retains pantry; preference learning is optional and off by default |
 | `SupermarketModel` | 1 | `global_panic_level`, `is_scenario_active`, `daily_records` |
 
-**Scales:** 1 step = 1 day · single store · default 200 agents/day · 90-day horizon
+**Scales:** 1 step = 1 day · single store · default 100 visits/day · 2,000 household profiles
         """),
         ("3. Process Overview & Scheduling", """
-Fixed daily order (RandomActivation within classes):
+Fixed daily order:
 
-1. **ProductAgent.step()** — Reset counters → refill shelf from storage (50% threshold) → update price (inflation + policy) → age batches → remove expired (waste log)
-2. **SupplyTruck.step()** — Deliver arrived orders → apply domestic shock → place new orders
-3. **Consumer sampling** — Sample target count from pool (seasonality × weekday × ±10% noise)
-4. **ConsumerAgent.step()** — Update TPB/PBC → stockpile target → deplete home inventory → shop → FIES → preference learning
-5. **Aggregation** — Welfare metrics, panic level, CO₂, import dependency → `daily_records`
+1. **Household consumption** — Deplete every household pantry using interval-adjusted daily need; record realised shortfall
+2. **Visit scheduling** — Select the most-due unique households at constant declared traffic; calendar multipliers and ±10% noise are exploratory
+3. **ProductAgent.step()** — Reset counters → refill shelf from storage (50% threshold) → update price (inflation + policy) → age batches → remove expired (waste log)
+4. **SupplyTruck.step()** — Deliver arrived orders → apply domestic shock → place new orders
+5. **ConsumerAgent.step()** — Compute pantry-adjusted demand → apply gated decision rule → shop → record shopping shortfall; optional dynamics run only in exploratory mode
+6. **Aggregation** — Welfare metrics, panic level, CO₂, import dependency → `daily_records`
         """),
         ("4. Design Concepts", """
 | Concept | Implementation |
 |---|---|
-| **Emergence** | Panic, waste rates, food security outcomes emerge from individual decisions |
-| **Adaptation** | Preference drift (Bayesian, rate 0.015/day) per archetype-specific rule |
+| **Emergence** | Inventory depletion, waste, fulfilment, and access stress emerge from household and store interactions; panic emerges only in exploratory mode |
+| **Adaptation** | Off in empirical-only mode; optional heuristic preference reinforcement (rate 0.015/visit) is an unvalidated extension |
 | **Objectives** | Consumers: maximise U subject to budget. Products: minimise stockout via (s,S) policy |
-| **Learning** | Archetype-specific: price_champion → cost minimisation; green_buyer → organic reinforcement |
+| **Learning** | Disabled by default; archetype-specific rules require both exploratory mode and a passing archetype gate |
 | **Sensing** | Shelf stock, shelf price, global panic, crowd ratio — no private information |
 | **Interaction** | Indirect (shelf depletion competition) + panic broadcast signal |
-| **Stochasticity** | Pool sampling, daily count noise, activation order — all seeded |
+| **Stochasticity** | Due-household tie breaking, daily count noise, within-day shopper order — all seeded |
 | **Observation** | Full daily log: per-agent, per-product, model-level — Monte Carlo ensemble aggregation |
         """),
         ("5. Initialisation", """
@@ -9551,30 +10827,73 @@ At model creation:
 - Store capacities auto-calibrated from population basket frequencies × shelf-cover heuristic
 - Initial stock: 75% max shelf capacity, 60% max storage capacity
 - PolicyConfig instantiated (all levers inactive unless explicitly enabled)
-- Population pool: real profiles + archetype-stratified synthetic bootstrap
+- Persistent household pool: complete observed participant profiles resampled with replacement per model seed; 2,000 draws do not increase empirical N
         """),
         ("6. Input Data", """
 | Dataset | Description | Source |
 |---|---|---|
-| DCE Consumer Survey | N=116 Finnish shoppers; price sensitivity, origin preference, organic preference, fat preference, income bracket | SecureFood project, Firebase |
+| DCE Consumer Survey | 108 linked respondents; participant-held-out pooled price/origin/organic/fat/opt-out model; individual WTP heterogeneity is not claimed | SecureFood cleaned DCE + Firebase |
 | Product Catalogue | Finnish dairy SKUs: name, category, price, fat%, origin, organic flag, shelf life | `master_products.json` |
-| Archetype Clustering | K-Means k=4 on DCE scores → 4 archetypes with calibrated behavioural modifiers | data_processor.py |
+| Questionnaire/clusters | Reliability audit plus k=2–6 separation and bootstrap-stability checks; categories are operational only if all gates pass | `data_processor.py` |
         """),
         ("7. Submodels", """
-**Utility function:**
-`U = origin_bonus + organic_bonus + fat_match - price_disutility`
+**Evidence-separated choice:**
+Requested products pass a phase-transition-calibrated proportional-price gate. For
+substitution, same-category candidates must also be in stock and affordable. Replacement
+incidence is learned from phase-one/phase-two basket transitions. Milk candidates are
+sampled from the held-out-tested pooled DCE price-and-attribute probabilities. Other
+categories use held-out-supported transition target shares or a seeded uniform fallback.
 
 **Inventory policy (s, S):**
 Order when `total_supply = storage + pipeline < reorder_point`; quantity = `target_qty - total_supply`
 
 **Panic propagation:**
-`global_panic += panic_sensitivity × (near-empty shelves / daily_consumers)` → decays daily
+`growth = panic_sensitivity × max(0, scarcity_exposure − exposure_floor) × growth_rate`;
+active and recovery decay rates are explicit scenario assumptions. This entire pathway
+is disabled in empirical-only mode.
 
-**FIES proxy (FAO 2016):**
-+1 each: panic > 0.5 · fulfilment < 0.70 · budget exhausted + unmet items · fulfilment < 0.30
+**Continuous hoarding:**
+`multiplier = 1 + (scenario_max − 1) × cross_fitted_propensity × panic_level`.
+There is no arbitrary panic activation threshold, but the mechanism is disabled in
+empirical-only mode because real-world panic hoarding is not identified by the experiment.
 
-**Bayesian preference learning:**
-Archetype-specific update rules; rate 0.015/day; preferences persist via shared profile pool
+The stockpile beta is a heuristic deterministic function of price sensitivity (0.75–0.90),
+not an empirically estimated beta-delta coefficient.
+
+**Exploratory food-access stress score (not a validated FIES measure):**
+For every household, classify today's unmet share of interval-adjusted pantry need:
+0 = none · 1 = (0%,25%) · 2 = [25%,50%) · 3 = [50%,90%) · 4 = [90%,100%].
+High access stress is score ≥3. Panic and shopping shortfall are reported separately.
+
+**Heuristic preference reinforcement:**
+Disabled by default. In exploratory mode, archetype-specific heuristic update rules
+(rate 0.015/visit) are permitted only if the archetype stability gate passes.
+
+**Global sensitivity and uncertainty:**
+Joint Latin Hypercube sampling over declared ranges; common-random-number replicates;
+bootstrap PRCC; held-out nonlinear permutation importance only when predictive;
+nested-design convergence and between-parameter versus within-seed variance audit.
+
+**Parameter evidence and readiness:**
+The machine-readable registry classifies each influential value as observed data,
+held-out/cross-fitted calibration, literature transfer, scenario input, or engineering
+assumption. The current model is an exploratory scenario tool; unresolved critical
+parameters preclude policy-grade point predictions or causal-effect claims.
+
+**Identifiability-gated calibration:**
+Replicated joint LHS designs are screened for target-space rank, stochastic signal,
+and nearest-neighbour synthetic parameter recovery. Applying a fitted value additionally
+requires positive predictive skill on the final 20% of an observed daily series.
+KPI-only fits are exploratory because they have no independent validation period.
+
+**Evidence-tiered validation:**
+Internal invariants, calibration holdouts, and scenario-plausibility checks cannot imply
+external validity. External targets require a preregistered acceptance interval, traceable
+source and scope metadata, a timestamped registration, and independence from calibration.
+A stochastic target requires raw Monte Carlo replicates; both the replicate mean and central
+95% simulation interval must stay within the registered acceptance interval.
+A complete pass is explicitly limited to the declared targets, population, period, and
+scenarios. No bundled dataset currently passes this independent-external-evidence gate.
         """),
         ("8. References", """
 - Grimm, V. et al. (2020). ODD+D Protocol. *JASSS* 23(2), 7.
@@ -10439,13 +11758,18 @@ def render_stakeholder_tab():
                 st.markdown("**Model configuration**")
                 st.json({
                     "mesa_version": "2.3.4",
-                    "consumer_model": "utility-based (DCE-calibrated)",
-                    "archetype_clustering": "K-Means (k=4)",
+                    "consumer_model": "calibrated requested-SKU price acceptance + replacement-gated stochastic substitution",
+                    "archetype_clustering": (
+                        "operational" if stats.get("archetype_stability", {}).get("archetypes_supported")
+                        else "exploratory only—categorical modifiers disabled"
+                    ),
                     "population_pool_size": stats.get("pool_size", "N/A"),
                     "real_participants": stats.get("n_real", "N/A"),
-                    "bootstrap_method": "stratified by archetype",
+                    "population_resampling": stats.get("population_method", "N/A"),
+                    "empirical_sampling_units": stats.get("empirical_sampling_units", "N/A"),
                     "shelf_model": "FIFO batches with near-expiry discount",
-                    "learning": "adaptive preferences (rate=0.015/day)",
+                    "default_behavior_evidence_mode": "empirical_only",
+                    "unvalidated_dynamic_extensions": "explicit opt-in; off by default",
                 })
             with col_r2:
                 st.markdown("**Simulation parameters**")
@@ -10461,6 +11785,27 @@ def render_stakeholder_tab():
                         "inflation_pct":     model_cris.inflation_percent,
                         "disruption_days":   model_cris.supply_disruption_days,
                         "panic_sensitivity": model_cris.panic_sensitivity,
+                        "panic_exposure_floor": model_cris.panic_exposure_floor,
+                        "panic_growth_rate": model_cris.panic_growth_rate,
+                        "panic_decay_active": model_cris.panic_decay_active,
+                        "panic_decay_recovery": model_cris.panic_decay_recovery,
+                        "inflation_panic_rate": model_cris.inflation_panic_rate,
+                        "behavior_evidence_mode": (
+                            "exploratory_extensions"
+                            if any((model_cris.panic_dynamics_enabled,
+                                    model_cris.tpb_enabled,
+                                    model_cris.prospect_theory_enabled,
+                                    model_cris.preference_learning_enabled,
+                                    model_cris.archetype_modifiers_enabled,
+                                    model_cris.policy_choice_effects_enabled))
+                            else "empirical_only"
+                        ),
+                        "panic_dynamics_enabled": model_cris.panic_dynamics_enabled,
+                        "tpb_enabled": model_cris.tpb_enabled,
+                        "prospect_theory_enabled": model_cris.prospect_theory_enabled,
+                        "preference_learning_enabled": model_cris.preference_learning_enabled,
+                        "archetype_modifiers_enabled": model_cris.archetype_modifiers_enabled,
+                        "policy_choice_effects_enabled": model_cris.policy_choice_effects_enabled,
                         "fixed_seed":        model_cris.fixed_seed,
                     })
                 else:
@@ -10476,18 +11821,26 @@ def render_stakeholder_tab():
         st.markdown(
             """
             > **GROCERYsim ABM v2.0** is a Mesa-based agent-based model of dairy product retail.
-            > Consumer agents are calibrated from discrete choice experiment (DCE) responses and
-            > questionnaire data collected via a Unity-based task simulation. Agents are clustered
-            > into four behavioural archetypes (price_champion, green_buyer, health_optimizer,
-            > habitual_buyer) using K-Means (k=4) on eight preference dimensions. A stratified
-            > bootstrap generates the synthetic population pool. Purchase decisions follow a
-            > utility function: *U = origin_bonus + organic_bonus + fat_match − price_disutility*.
-            > Preferences update each day via archetype-specific learning rules (rate = 0.015).
+            > Consumer agents use a participant-held-out pooled DCE assessment for milk price/origin/organic/fat choice and
+            > cross-fitted phase-transition calibration for price response and substitution.
+            > individual willingness-to-pay heterogeneity is not claimed. Declared
+            > questionnaire constructs are reliability-audited, and k=2–6 clustering solutions are
+            > checked for separation, bootstrap stability, and minimum size. Categorical modifiers
+            > operate only when every gate passes. Each model seed resamples complete observed
+            > participant profiles with replacement; no synthetic attributes are jittered. Requested-SKU
+            > acceptance uses a separately calibrated proportional-price gate. Same-category substitutes
+            > must be affordable. Milk candidate allocation uses pooled DCE multinomial probabilities;
+            > other categories use held-out-supported phase-transition target shares or a seeded uniform
+            > draw among feasible candidates.
+            > Empirical-only mode is the default: price response uses a transparent relative-price rule,
+            > while panic contagion, TPB, Prospect Theory, archetype modifiers, reference-price adaptation,
+            > and preference learning are disabled. These mechanisms require explicit exploratory opt-in
+            > and are reported as assumptions rather than participant-derived effects.
             > Supply chain uses FIFO shelf batches with near-expiry (50% off) discounting and
             > reorder-point replenishment. Policy levers (fat tax, subsidy, supply shock,
             > nutritional labelling) modify prices and delivery volumes. Environmental impact
-            > is tracked via product-level CO₂ emission factors. Consumer welfare is measured
-            > by budget exhaustion rate, food stress prevalence, and basket fulfillment.
+            > is tracked via product-level CO₂ emission factors. Consumer welfare separates
+            > visit-level budget/basket outcomes from population-wide realised pantry-consumption shortfall.
             > SecureFood / Horizon Europe — grant agreement No. 101136583.
             """
         )
@@ -10502,397 +11855,318 @@ def render_stakeholder_tab():
 
 
 # ===========================================================================
-# 11d. TAB: SENSITIVITY ANALYSIS
+# 11d-b. REPLICATED GLOBAL SENSITIVITY AND UNCERTAINTY ANALYSIS
 # ===========================================================================
 
 def render_sensitivity_tab(params: dict):
     st.header(_t("header_sensitivity"))
     st.markdown(
-        "**One-at-a-time (OAT) parameter sweep** — vary each model parameter across its "
-        "range while holding all others at their baseline value. The result shows which "
-        "parameters most influence the chosen output metric (tornado chart). "
-        "This is a lightweight alternative to Sobol indices for fast, interpretable results."
+        "All selected inputs vary jointly with **Latin Hypercube Sampling (LHS)**. "
+        "Every design point is repeated with common random-number seeds, allowing "
+        "parameter-driven variation to be separated from stochastic simulation noise. "
+        "PRCC screens monotonic effects; nonlinear permutation importance is reported "
+        "only if its emulator predicts unseen design points."
     )
-
+    st.warning(
+        "Results are conditional on the stated uniform screening ranges, selected "
+        "outcome, and crisis configuration. They are not universal causal effects or "
+        "probabilistic forecasts. Policy interventions are analysed separately."
+    )
     if st.session_state.config_data is None:
         st.warning("⚠️ Upload and process data in **🏠 Data & Population** first.")
         return
 
-    # ---- Parameter definitions ----
-    PARAM_DEFS = {
-        "reorder_pt":    {"label": "Reorder Point",       "min": 0.10, "max": 0.60, "steps": 5, "key": "reorder"},
-        "target_stock":  {"label": "Restock Target",      "min": 0.60, "max": 0.99, "steps": 5, "key": "target"},
-        "lead_time":     {"label": "Lead Time (days)",     "min": 1,    "max": 10,   "steps": 5, "key": "lead"},
-        "base_consumers":{"label": "Base Consumers/day",  "min": 20,   "max": 300,  "steps": 5, "key": "base_con"},
-        "panic_sens":    {"label": "Panic Sensitivity",   "min": 0.10, "max": 0.90, "steps": 5, "key": "panic"},
-        "inflation":     {"label": "Inflation % (crisis)","min": 0,    "max": 100,  "steps": 5, "key": "inf"},
-        "fat_tax_rate":  {"label": "Fat Tax Rate",        "min": 0.0,  "max": 0.5,  "steps": 5, "key": None},
-        "shock_severity":{"label": "Shock Severity",     "min": 0.0,  "max": 1.0,  "steps": 5, "key": None},
+    definitions = {
+        "reorder": ("Reorder point", 0.10, 0.60, "float"),
+        "target": ("Restock target", 0.60, 0.99, "float"),
+        "lead": ("Lead time (days)", 1, 10, "int"),
+        "base_con": ("Daily consumers", 50, 250, "int"),
+        "panic": ("Panic sensitivity", 0.0, 1.0, "float"),
+        "hoard": ("Hoarding multiplier", 1.0, 2.5, "float"),
+        "inf": ("Crisis inflation (%)", 0.0, 100.0, "float"),
+        "dis": ("Supply disruption (days)", 0, 21, "int"),
+        "panic_exposure_floor": ("Normal scarcity exposure floor", 0.0, 0.30, "float"),
+        "panic_growth_rate": ("Scarcity-to-panic growth rate", 0.10, 1.0, "float"),
+        "panic_decay_active": ("Active-phase panic decay", 0.0, 0.15, "float"),
+        "panic_decay_recovery": ("Recovery-phase panic decay", 0.02, 0.25, "float"),
+        "inflation_panic_rate": ("Inflation-to-panic rate", 0.0, 0.80, "float"),
     }
-
-    OUTPUT_METRICS = {
-        "Revenue":               "Avg Daily Revenue (€)",
-        "Waste":                 "Avg Daily Waste (units)",
-        "CO2Total":              "Avg Daily CO₂ (kg)",
-        "ImportDepPct":          "Avg Import Dependency %",
-        "BudgetExhaustionRate":  "Avg Budget Exhaustion %",
-        "FulfillmentRate":       "Avg Fulfillment %",
-        "LostSales":             "Avg Lost Sales",
+    exploratory_sensitivity = bool(params.get("exploratory_behaviour", False))
+    if not exploratory_sensitivity:
+        for assumption_key in (
+            "panic", "hoard", "panic_exposure_floor", "panic_growth_rate",
+            "panic_decay_active", "panic_decay_recovery", "inflation_panic_rate",
+        ):
+            definitions.pop(assumption_key, None)
+        st.info(
+            "Empirical-only sensitivity: unidentified panic and hoarding parameters "
+            "are excluded. Enable exploratory dynamic behaviour to screen them."
+        )
+    metrics = {
+        "Revenue": "Mean crisis-phase constant-price revenue",
+        "Sales": "Mean crisis-phase units sold",
+        "Waste": "Mean crisis-phase waste",
+        "LostSales": "Mean crisis-phase lost sales",
+        "BudgetExhaustionRate": "Mean crisis-phase budget exhaustion",
+        "FulfillmentRate": "Mean crisis-phase shopping fulfillment",
+        "ConsumptionFulfillmentRate": "Mean crisis-phase consumption fulfillment",
+        "HouseholdConsumptionShortfallShare": "Households with consumption shortfall",
+        "CumulativeConsumptionShortfallRate": "End-of-run cumulative consumption shortfall",
+        "AccessStressHigh_Low": "High consumption-access stress: low income",
+        "PanicLevel": "Mean crisis-phase panic",
+        "CO2Total": "Mean crisis-phase CO₂",
     }
-
-    col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
-    with col_cfg1:
-        sa_days = st.slider("Days per run", 14, 365, 60, key="sa_days")
-    with col_cfg2:
-        sa_metric = st.selectbox("Output metric", list(OUTPUT_METRICS.keys()),
-                                  format_func=lambda k: OUTPUT_METRICS[k],
-                                  key="sa_metric")
-    with col_cfg3:
-        sa_include_policy = st.checkbox("Include policy params", True, key="sa_pol",
-                                        help="Include fat_tax_rate and shock_severity in the sweep")
-
-    selected_params = {k: v for k, v in PARAM_DEFS.items()
-                       if v["key"] is not None or sa_include_policy}
-
-    st.markdown(f"Will vary **{len(selected_params)}** parameters × {PARAM_DEFS['reorder_pt']['steps']} levels "
-                f"= **{len(selected_params)*5} simulation runs** of {sa_days} days each.")
-
-    run_sa = st.button(_t("btn_run_sensitivity"), type="primary", key="sa_run_btn")
-
-    if "sa_results" not in st.session_state:
-        st.session_state.sa_results = None
-
-    if run_sa:
-        base_policy_cfg = params.get("policy_cfg", {})
-        results = {}   # param_name → list of (param_value, metric_mean)
-
-        total_runs = len(selected_params) * 5
-        bar = st.progress(0, text="Starting…")
-        run_counter = [0]
-
-        def _run_one(override_params: dict, override_policy: dict = None) -> float:
-            p = {**params, **override_params}
-            m = _make_model(p, is_crisis=False, seed=42,
-                            policy_cfg=override_policy or {})
-            for _ in range(sa_days):
-                m.step()
-            vals = [r.get(sa_metric, 0) for r in m.daily_records]
-            return float(np.mean(vals)) if vals else 0.0
-
-        for pname, pdef in selected_params.items():
-            lo, hi, steps = pdef["min"], pdef["max"], pdef["steps"]
-            levels = np.linspace(lo, hi, steps).tolist()
-            results[pname] = []
-            for val in levels:
-                override = {}
-                override_pol = {}
-                if pdef["key"]:
-                    override[pdef["key"]] = val
-                elif pname == "fat_tax_rate":
-                    override_pol = {**base_policy_cfg,
-                                    "fat_tax_active": True,
-                                    "fat_tax_rate": val}
-                elif pname == "shock_severity":
-                    override_pol = {**base_policy_cfg,
-                                    "domestic_shock_active": True,
-                                    "domestic_shock_day": 10,
-                                    "domestic_shock_duration": sa_days,
-                                    "domestic_shock_severity": val}
-                metric_val = _run_one(override, override_pol or None)
-                results[pname].append((val, metric_val))
-                run_counter[0] += 1
-                bar.progress(run_counter[0] / total_runs,
-                             text=f"Varying {pdef['label']} — {run_counter[0]}/{total_runs}")
-
-        bar.empty()
-        st.session_state.sa_results = results
-        st.success(f"✅ Sensitivity analysis complete — {total_runs} runs.")
-
-    if st.session_state.sa_results is None:
-        st.info("Click **▶️ Run Sensitivity Analysis** to generate results.")
+    if not exploratory_sensitivity:
+        metrics.pop("PanicLevel", None)
+    label_to_key = {definition[0]: key for key, definition in definitions.items()}
+    default_sensitivity_keys = ["reorder", "target", "lead", "base_con", "inf", "dis"]
+    if exploratory_sensitivity:
+        default_sensitivity_keys[4:4] = ["panic", "hoard"]
+    selected_labels = st.multiselect(
+        "Parameters varied jointly", list(label_to_key),
+        default=[definitions[key][0] for key in default_sensitivity_keys],
+        key="gsa_parameters_v2",
+    )
+    selected_keys = [label_to_key[label] for label in selected_labels]
+    if len(selected_keys) < 3:
+        st.error("Select at least three parameters for global sensitivity analysis.")
         return
 
-    results = st.session_state.sa_results
-    metric_label = OUTPUT_METRICS.get(sa_metric, sa_metric)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric = st.selectbox(
+            "Outcome", list(metrics), format_func=lambda key: metrics[key],
+            key="gsa_metric_v2",
+        )
+    with c2:
+        n_samples = st.slider("LHS design points", 32, 160, 80, 8, key="gsa_samples_v2")
+    with c3:
+        n_replicates = st.slider("Replicates per point", 2, 5, 3, 1, key="gsa_reps_v2")
+    with c4:
+        minimum_days = max(21, int(params.get("cri_start", 30)) + 7)
+        maximum_days = max(365, minimum_days + 30)
+        days = st.slider(
+            "Days per run", minimum_days, maximum_days, max(60, minimum_days),
+            key="gsa_days_v2",
+        )
 
-    # ---- Compute sensitivity index: (max − min) of metric across levels ----
-    sensitivity = {}
-    for pname, vals in results.items():
-        metric_vals = [v for _, v in vals]
-        sensitivity[pname] = max(metric_vals) - min(metric_vals)
+    ranges = []
+    with st.expander("🎛️ Parameter ranges (uniform screening ranges)", expanded=False):
+        for key in selected_keys:
+            label, low_default, high_default, _ = definitions[key]
+            r1, r2 = st.columns(2)
+            with r1:
+                low = st.number_input(
+                    f"{label} — minimum", value=float(low_default), key=f"gsa_low_{key}"
+                )
+            with r2:
+                high = st.number_input(
+                    f"{label} — maximum", value=float(high_default), key=f"gsa_high_{key}"
+                )
+            ranges.append((key, float(low), float(high)))
+    if any(high <= low for _, low, high in ranges):
+        st.error("Every parameter maximum must be greater than its minimum.")
+        return
+    if n_samples < 10 * len(selected_keys):
+        st.warning(
+            f"Screening reliability is limited: {n_samples} points for "
+            f"{len(selected_keys)} inputs. At least 10 points per input is recommended."
+        )
+    if n_replicates < 3:
+        st.warning(
+            "Two replicates provide only a coarse stochastic-noise estimate. "
+            "Use at least three replicates for results intended for publication."
+        )
 
-    df_tornado = pd.DataFrame([
-        {"Parameter": PARAM_DEFS[k]["label"], "Range (max-min)": v}
-        for k, v in sorted(sensitivity.items(), key=lambda x: -abs(x[1]))
-    ])
-
-    st.subheader(f"🌪️ Tornado Chart — Effect on {metric_label}")
-    fig_tor = px.bar(
-        df_tornado, x="Range (max-min)", y="Parameter",
-        orientation="h",
-        title=f"Parameter Sensitivity: Range of {metric_label} across 5 levels",
-        color="Range (max-min)",
-        color_continuous_scale=["#2980b9", "#e74c3c"],
-    )
-    fig_tor.update_layout(
-        template="plotly_white",
-        yaxis=dict(autorange="reversed"),
-        coloraxis_showscale=False,
-    )
-    st.plotly_chart(fig_tor, use_container_width=True, config=_PLOTLY_CFG)
-
+    total_runs = n_samples * n_replicates
+    crisis_start = int(params.get("cri_start", 30))
     st.caption(
-        "Bar length = max(metric) − min(metric) as each parameter sweeps its range. "
-        "Longer bars = higher influence on the output. Parameters at the top are the "
-        "key levers for this metric."
+        f"Planned: {n_samples} joint points × {n_replicates} replicates = "
+        f"{total_runs} ABM runs; outcome summarized from crisis day {crisis_start}."
     )
 
-    # ---- Individual parameter response curves ----
-    st.subheader("📈 Parameter Response Curves")
-    n_params = len(results)
-    cols_per_row = 3
-    param_items = [(k, PARAM_DEFS[k]["label"]) for k in results]
-    for row_start in range(0, n_params, cols_per_row):
-        cols = st.columns(cols_per_row)
-        for col_idx, (pname, plabel) in enumerate(param_items[row_start:row_start+cols_per_row]):
-            x_vals = [v for v, _ in results[pname]]
-            y_vals = [m for _, m in results[pname]]
-            fig_curve = go.Figure()
-            fig_curve.add_trace(go.Scatter(
-                x=x_vals, y=y_vals, mode="lines+markers",
-                line=dict(color="#003399"), marker=dict(size=6),
-            ))
-            fig_curve.update_layout(
-                title=plabel, template="plotly_white",
-                xaxis_title=plabel, yaxis_title=metric_label,
-                margin=dict(t=40, b=30),
-            )
-            cols[col_idx].plotly_chart(fig_curve, use_container_width=True, config=_PLOTLY_CFG)
+    if st.button("🔬 Run Replicated Global Sensitivity Analysis", type="primary", key="gsa_run_v2"):
+        unit = latin_hypercube(n_samples, len(selected_keys), seed=20260721)
+        physical = scale_design(unit, [(low, high) for _, low, high in ranges])
+        replicate_matrix = np.empty((n_samples, n_replicates), dtype=float)
+        raw_rows = []
+        progress = st.progress(0, text="Starting replicated LHS…")
+        completed = 0
 
-    # ---- Download ----
-    sa_rows = []
-    for pname, vals in results.items():
-        for pval, mval in vals:
-            sa_rows.append({
-                "Parameter": PARAM_DEFS[pname]["label"],
-                "ParameterValue": pval,
-                metric_label: mval,
-            })
-    st.download_button(
-        "📥 Download Sensitivity Data (CSV)",
-        pd.DataFrame(sa_rows).to_csv(index=False).encode("utf-8"),
-        "sensitivity_analysis.csv",
-        "text/csv",
-        key="dl_sa",
-    )
-
-    # ── Global Sensitivity Analysis (Morris + PRCC) ────────────────────────────
-    st.divider()
-    st.markdown("## 🔬 Global Sensitivity Analysis")
-    st.markdown(
-        "**Morris Method** (elementary effects, Saltelli et al. 2008) distinguishes *influential* parameters (high μ\\*) "
-        "from those with *non-linear / interaction* effects (high σ). "
-        "**PRCC** (Partial Rank Correlation Coefficient) measures the monotonic relationship "
-        "between each parameter and the output *after removing* the linear effects of all others — "
-        "a robust global sensitivity measure for non-linear models."
-    )
-
-    _gcol1, _gcol2, _gcol3 = st.columns(3)
-    with _gcol1:
-        gsa_metric = st.selectbox("Output metric (GSA)", list(OUTPUT_METRICS.keys()),
-                                   format_func=lambda k: OUTPUT_METRICS[k], key="gsa_metric")
-    with _gcol2:
-        gsa_traj = st.slider("Morris trajectories (r)", 4, 12, 6, key="gsa_traj",
-                              help="r × (k+1) total runs. More trajectories → more stable μ* estimates.")
-    with _gcol3:
-        gsa_days = st.slider("Days per GSA run", 14, 60, 30, key="gsa_days")
-
-    if st.button("🔬 Run Global Sensitivity Analysis", type="primary", key="gsa_run_btn"):
-        from scipy.stats import spearmanr
-        from sklearn.linear_model import LinearRegression as _LR
-
-        _gsa_params = {k: v for k, v in PARAM_DEFS.items()
-                       if v["key"] is not None or sa_include_policy}
-        _gpl = list(_gsa_params.items())   # [(name, def), ...]
-        _k   = len(_gpl)
-        _r   = gsa_traj
-        _p   = 4          # Morris grid levels
-        _D   = _p / (2 * (_p - 1))   # Δ = 2/3
-
-        def _gsa_run(x_vec):
-            _ov = {}
-            for _j, (_pn, _pd) in enumerate(_gpl):
-                _ov[_pn] = _pd["min"] + x_vec[_j] * (_pd["max"] - _pd["min"])
-            _pp = {**params, **_ov}
-            _mm = _make_model(_pp, is_crisis=False, seed=42)
-            for _ in range(gsa_days):
-                _mm.step()
-            _vals = [_rec.get(gsa_metric, 0) for _rec in _mm.daily_records]
-            return float(np.mean(_vals)) if _vals else 0.0
-
-        _rng_gsa = np.random.default_rng(seed=77)
-        _all_ee  = {_pn: [] for _pn, _ in _gpl}
-
-        _total_morris = _r * (_k + 1)
-        _gsa_prog = st.progress(0, text="Morris trajectories…")
-        _run_n    = [0]
-
-        for _traj in range(_r):
-            # random starting point on the Morris grid
-            _x = np.array([
-                _rng_gsa.choice(np.linspace(0.0, 1.0 - _D, max(2, int(round(1.0 / _D)))))
-                for _ in _gpl
-            ])
-            _perm = _rng_gsa.permutation(_k)
-            _y_prev = _gsa_run(_x)
-            _run_n[0] += 1
-            _gsa_prog.progress(_run_n[0] / _total_morris, f"Morris {_traj+1}/{_r}…")
-
-            for _j_idx in range(_k):
-                _i = _perm[_j_idx]
-                _xn = _x.copy()
-                _sign = 1 if _rng_gsa.random() > 0.5 else -1
-                _xn[_i] = float(np.clip(_x[_i] + _sign * _D, 0.0, 1.0))
-                _denom = (_xn[_i] - _x[_i]) * (_gpl[_i][1]["max"] - _gpl[_i][1]["min"])
-                if abs(_denom) < 1e-12:
-                    _denom = _sign * _D * (_gpl[_i][1]["max"] - _gpl[_i][1]["min"])
-                _y_new = _gsa_run(_xn)
-                _run_n[0] += 1
-                _gsa_prog.progress(_run_n[0] / _total_morris, f"Morris {_traj+1}/{_r}…")
-                _all_ee[_gpl[_i][0]].append((_y_new - _y_prev) / _denom)
-                _x = _xn
-                _y_prev = _y_new
-
-        _morris_stats = {}
-        for _pn, _ees in _all_ee.items():
-            _arr = np.array(_ees) if _ees else np.zeros(1)
-            _morris_stats[_pn] = {
-                "mu_star": float(np.mean(np.abs(_arr))),
-                "mu":      float(np.mean(_arr)),
-                "sigma":   float(np.std(_arr)),
-            }
-
-        # PRCC — Latin Hypercube samples
-        _n_prcc = max(40, _r * _k * 2)
-        _lhs = np.zeros((_n_prcc, _k))
-        for _j in range(_k):
-            _prm = _rng_gsa.permutation(_n_prcc)
-            _lhs[:, _j] = (_prm + _rng_gsa.random(_n_prcc)) / _n_prcc
-
-        _prcc_prog = st.progress(0, text="PRCC Latin Hypercube samples…")
-        _prcc_y = []
-        for _si in range(_n_prcc):
-            _prcc_prog.progress((_si + 1) / _n_prcc, f"PRCC sample {_si+1}/{_n_prcc}…")
-            _prcc_y.append(_gsa_run(_lhs[_si]))
-        _ya = np.array(_prcc_y)
-
-        _prcc_scores = {}
-        for _j, (_pn, _) in enumerate(_gpl):
-            _xj = _lhs[:, _j]
-            _oth = np.delete(_lhs, _j, axis=1)
-            if _oth.shape[1] > 0:
-                _rx = _LR().fit(_oth, _xj).predict(_oth)
-                _ry = _LR().fit(_oth, _ya).predict(_oth)
-                _res_x = _xj - _rx
-                _res_y = _ya - _ry
-            else:
-                _res_x, _res_y = _xj, _ya
-            _rval, _pval = spearmanr(_res_x, _res_y)
-            _prcc_scores[_pn] = {"prcc": float(_rval), "p_value": float(_pval)}
-
-        st.session_state["gsa_results"] = {
-            "morris": _morris_stats,
-            "prcc":   _prcc_scores,
-            "metric": gsa_metric,
-            "labels": {_pn: PARAM_DEFS[_pn]["label"] for _pn, _ in _gpl},
+        for sample_id, values in enumerate(physical):
+            overrides = {}
+            for column, (key, value) in enumerate(zip(selected_keys, values)):
+                kind = definitions[key][3]
+                overrides[key] = int(round(value)) if kind == "int" else float(value)
+                # Statistical analysis must use the value the ABM actually received.
+                physical[sample_id, column] = overrides[key]
+            for replicate in range(n_replicates):
+                run_params = {**params, **overrides, "days": days}
+                seed = 9100 + replicate  # common random numbers across design points
+                model = _make_model(
+                    run_params, is_crisis=True, seed=seed,
+                    policy_cfg=params.get("policy_cfg", {}),
+                )
+                for _ in range(days):
+                    model.step()
+                phase = [
+                    record for record in model.daily_records
+                    if int(record.get("Day", 0)) >= crisis_start
+                ] or model.daily_records
+                if metric == "CumulativeConsumptionShortfallRate":
+                    outcome = float(phase[-1].get(metric, 0.0))
+                else:
+                    outcome = float(np.mean([record.get(metric, 0.0) for record in phase]))
+                replicate_matrix[sample_id, replicate] = outcome
+                raw_row = {
+                    "DesignPoint": sample_id, "Replicate": replicate,
+                    "Seed": seed, "Outcome": outcome,
+                }
+                raw_row.update(overrides)
+                raw_rows.append(raw_row)
+                completed += 1
+                if completed % max(1, total_runs // 100) == 0:
+                    progress.progress(
+                        completed / total_runs,
+                        text=f"Replicated LHS: {completed}/{total_runs} runs",
+                    )
+        progress.empty()
+        design_means = replicate_matrix.mean(axis=1)
+        st.session_state.gsa_results_v2 = {
+            "raw": pd.DataFrame(raw_rows),
+            "physical": physical,
+            "design_means": design_means,
+            "replicates": replicate_matrix,
+            "keys": selected_keys,
+            "labels": {key: definitions[key][0] for key in selected_keys},
+            "ranges": ranges,
+            "metric": metric,
+            "metric_label": metrics[metric],
+            "days": days,
+            "crisis_start": crisis_start,
+            "prcc": bootstrap_prcc(physical, design_means, 300, seed=20260722),
+            "nonlinear": nonlinear_permutation_importance(
+                physical, design_means, seed=20260723
+            ),
+            "convergence": convergence_diagnostics(physical, design_means),
+            "decomposition": variance_decomposition(replicate_matrix),
         }
-        st.success(f"✅ GSA complete — {_total_morris + _n_prcc} total runs.")
+        st.success(f"✅ Replicated global analysis complete — {total_runs} ABM runs.")
 
-    if st.session_state.get("gsa_results"):
-        _gr     = st.session_state["gsa_results"]
-        _labels = _gr["labels"]
-        _met_lbl = OUTPUT_METRICS.get(_gr["metric"], _gr["metric"])
+    results = st.session_state.get("gsa_results_v2")
+    if not results:
+        st.info("Run the replicated analysis to generate uncertainty and importance results.")
+        return
 
-        _t_morris, _t_prcc = st.tabs(["📊 Morris Elementary Effects", "📉 PRCC"])
+    design_means = np.asarray(results["design_means"])
+    replicates = np.asarray(results["replicates"])
+    decomposition = results["decomposition"]
+    q05, q50, q95 = np.quantile(design_means, [0.05, 0.50, 0.95])
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Median outcome", f"{q50:.4g}")
+    k2.metric("90% screening range", f"{q05:.4g} – {q95:.4g}")
+    k3.metric("Parameter variance share", f"{decomposition['parameter_variance_share']:.1%}")
+    k4.metric("ABM runs", str(replicates.size))
+    st.caption(
+        "The 5th–95th percentile range is induced by the declared uniform screening "
+        "ranges. It is not a forecast interval or confidence interval."
+    )
 
-        with _t_morris:
-            st.markdown(
-                "**μ\\*** = mean |EE| — overall sensitivity. "
-                "**σ** = std(EE) — non-linearity / interaction effects. "
-                "Parameters in the **upper-right** region are both influential *and* non-linear."
-            )
-            _df_mo = pd.DataFrame([
-                {"Parameter":           _labels[_pn],
-                 "μ* (sensitivity)":    _v["mu_star"],
-                 "σ (non-linearity)":   _v["sigma"],
-                 "μ (direction)":       _v["mu"]}
-                for _pn, _v in _gr["morris"].items()
-            ]).sort_values("μ* (sensitivity)", ascending=False)
+    prcc_rows = []
+    for key, estimate in zip(results["keys"], results["prcc"]):
+        prcc_rows.append({
+            "Parameter": results["labels"][key],
+            "PRCC": estimate["coefficient"],
+            "CI low": estimate["ci_low"],
+            "CI high": estimate["ci_high"],
+            "p-value (unadjusted)": estimate["p_value"],
+            "Robust direction": (
+                "yes" if estimate["ci_low"] * estimate["ci_high"] > 0 else "no"
+            ),
+        })
+    prcc_df = pd.DataFrame(prcc_rows).sort_values("PRCC", key=abs, ascending=False)
+    st.subheader("📉 Monotonic importance: PRCC with bootstrap intervals")
+    colors = ["#DC143C" if value > 0 else "#2980b9" for value in prcc_df["PRCC"]]
+    fig_prcc = go.Figure(go.Bar(
+        x=prcc_df["PRCC"], y=prcc_df["Parameter"], orientation="h",
+        marker_color=colors,
+        error_x=dict(
+            type="data", symmetric=False,
+            array=prcc_df["CI high"] - prcc_df["PRCC"],
+            arrayminus=prcc_df["PRCC"] - prcc_df["CI low"],
+        ),
+    ))
+    fig_prcc.add_vline(x=0, line_color="#042026", line_width=1)
+    fig_prcc.update_layout(
+        template="plotly_white", xaxis=dict(range=[-1, 1], title="PRCC"),
+        yaxis=dict(autorange="reversed"), title=results["metric_label"],
+    )
+    st.plotly_chart(fig_prcc, use_container_width=True, config=_PLOTLY_CFG)
+    st.dataframe(prcc_df.round(4), use_container_width=True, hide_index=True)
+    st.caption(
+        "PRCC uses ranked inputs and outcome, residualized against every other "
+        "ranked input. P-values are descriptive and unadjusted; prefer the bootstrap interval."
+    )
 
-            _fig_mob = px.bar(
-                _df_mo, x="μ* (sensitivity)", y="Parameter", orientation="h",
-                title=f"Morris μ* — {_met_lbl}",
-                color="μ* (sensitivity)",
-                color_continuous_scale=["#44A1A0", "#DBA159", "#DC143C"],
-            )
-            _fig_mob.update_layout(template="plotly_white", yaxis=dict(autorange="reversed"),
-                                   coloraxis_showscale=False)
-            st.plotly_chart(_fig_mob, use_container_width=True, config=_PLOTLY_CFG)
+    st.subheader("🌲 Nonlinear screening")
+    nonlinear = results["nonlinear"]
+    if nonlinear["status"] == "retained":
+        nonlinear_df = pd.DataFrame({
+            "Parameter": [results["labels"][key] for key in results["keys"]],
+            "Normalized permutation importance": nonlinear["importance"],
+        }).sort_values("Normalized permutation importance", ascending=False)
+        st.metric("Held-out emulator R²", f"{nonlinear['heldout_r2']:.3f}")
+        fig_nonlinear = px.bar(
+            nonlinear_df, x="Normalized permutation importance", y="Parameter",
+            orientation="h", title="Held-out nonlinear permutation importance",
+        )
+        fig_nonlinear.update_layout(template="plotly_white", yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_nonlinear, use_container_width=True, config=_PLOTLY_CFG)
+    else:
+        st.warning(
+            f"Nonlinear importance rejected ({nonlinear['status']}; held-out "
+            f"R²={nonlinear['heldout_r2']:.3f}). The emulator did not predict unseen "
+            "points reliably, so its ranking is not shown."
+        )
 
-            _fig_ms = px.scatter(
-                _df_mo, x="μ* (sensitivity)", y="σ (non-linearity)",
-                text="Parameter",
-                title="Morris μ* vs σ — Sensitivity vs Non-linearity",
-                color="μ* (sensitivity)",
-                color_continuous_scale=["#44A1A0", "#DC143C"],
-                size="μ* (sensitivity)", size_max=28,
-            )
-            _fig_ms.update_traces(textposition="top center", textfont_size=10)
-            _fig_ms.update_layout(template="plotly_white", coloraxis_showscale=False)
-            st.plotly_chart(_fig_ms, use_container_width=True, config=_PLOTLY_CFG)
-            st.dataframe(_df_mo.round(4), use_container_width=True, hide_index=True)
+    st.subheader("🧪 Convergence and stochastic-noise audit")
+    convergence_df = pd.DataFrame(results["convergence"]["rows"])
+    st.dataframe(convergence_df.round(4), use_container_width=True, hide_index=True)
+    if results["convergence"]["stable"]:
+        st.success("PRCC ranking is stable between the half and full designs (ρ ≥ 0.8).")
+    else:
+        st.warning("PRCC ranking has not converged; increase the LHS design size.")
+    st.markdown(
+        f"- Between-parameter variance: `{decomposition['between_parameter_variance']:.6g}`\n"
+        f"- Mean within-point stochastic variance: `{decomposition['within_stochastic_variance']:.6g}`\n"
+        f"- Share associated with parameter variation over these ranges: "
+        f"`{decomposition['parameter_variance_share']:.1%}`"
+    )
 
-        with _t_prcc:
-            st.markdown(
-                "**PRCC** values near ±1 indicate a strong monotonic influence. "
-                "Red bars = positive effect (higher param → higher output). "
-                "Blue bars = negative effect. ✅ = significant at p < 0.05."
-            )
-            _df_pc = pd.DataFrame([
-                {"Parameter": _labels[_pn],
-                 "PRCC":      _v["prcc"],
-                 "p-value":   _v["p_value"],
-                 "Significant": "✅" if _v["p_value"] < 0.05 else "—"}
-                for _pn, _v in _gr["prcc"].items()
-            ]).sort_values("PRCC", key=abs, ascending=False)
-
-            _pc_colors = ["#DC143C" if v > 0 else "#2980b9" for v in _df_pc["PRCC"]]
-            _fig_pc = go.Figure(go.Bar(
-                x=_df_pc["PRCC"], y=_df_pc["Parameter"],
-                orientation="h", marker_color=_pc_colors,
-            ))
-            _fig_pc.add_vline(x=0, line_color="#042026", line_width=1.5)
-            _fig_pc.update_layout(
-                title=f"PRCC — {_met_lbl}",
-                template="plotly_white",
-                xaxis=dict(range=[-1, 1], title="PRCC"),
-                yaxis=dict(autorange="reversed"),
-                margin=dict(l=160),
-            )
-            st.plotly_chart(_fig_pc, use_container_width=True, config=_PLOTLY_CFG)
-            st.dataframe(_df_pc.round(4), use_container_width=True, hide_index=True)
-            st.download_button(
-                "📥 Download GSA Results (CSV)",
-                _df_pc.to_csv(index=False).encode("utf-8"),
-                "gsa_results.csv", "text/csv", key="dl_gsa",
-            )
+    metadata = pd.DataFrame([{
+        "Metric": results["metric"], "MetricLabel": results["metric_label"],
+        "Days": results["days"], "CrisisStart": results["crisis_start"],
+        "DesignPoints": len(design_means), "Replicates": replicates.shape[1],
+        "Sampling": "Latin Hypercube; uniform screening ranges",
+        "SeedStrategy": "common random numbers; seeds 9100+replicate",
+    }])
+    st.download_button(
+        "📥 Download replicated design and outcomes (CSV)",
+        results["raw"].to_csv(index=False).encode("utf-8"),
+        "grocerysim_global_sensitivity_runs.csv", "text/csv", key="dl_gsa_v2",
+    )
+    st.download_button(
+        "📥 Download analysis metadata (CSV)",
+        metadata.to_csv(index=False).encode("utf-8"),
+        "grocerysim_global_sensitivity_metadata.csv", "text/csv", key="dl_gsa_meta_v2",
+    )
 
 
 # ===========================================================================
 # 11e. MODEL CALIBRATION TAB
 # ===========================================================================
 
-def render_calibration_tab(params: dict):
+def _render_calibration_tab_legacy(params: dict):
     st.header("🎯 Model Calibration")
     st.markdown(
         "**Calibration** fits model parameters to empirical targets using "
@@ -11171,6 +12445,446 @@ def render_calibration_tab(params: dict):
         )
 
 
+def render_calibration_tab(params: dict):
+    """Identifiability-gated calibration with temporal holdout validation."""
+    st.header("🎯 Model Calibration")
+    st.markdown(
+        "This workflow separates **numerical fit** from **parameter identification**. "
+        "A candidate can be applied only after replicated simulations pass target-space "
+        "rank, stochastic-noise, synthetic-recovery, and held-out validation checks."
+    )
+    st.warning(
+        "A low calibration error alone does not identify a parameter. KPI-only targets "
+        "lack an independent validation period and therefore produce exploratory fits, "
+        "never an automatically applicable recommendation."
+    )
+    if st.session_state.config_data is None:
+        st.warning("⚠️ Load data in **🏠 Data & Population** first.")
+        return
+
+    regime_col, mode_col = st.columns(2)
+    with regime_col:
+        regime = st.radio(
+            "Simulation regime", ["Baseline", "Crisis"], horizontal=True,
+            key="cal_regime_v2",
+            help="Panic parameters are inactive and unavailable under Baseline.",
+        )
+    with mode_col:
+        mode = st.radio(
+            "Target evidence",
+            ["KPI values (no holdout)", "Observed daily time series"],
+            horizontal=True, key="cal_mode_v2",
+        )
+
+    st.subheader("🎯 Empirical Targets and Error Scales")
+    target_ready = True
+    target_values = target_scales = target_series = None
+    target_column = None
+    target_labels = []
+    series_scale = None
+    if mode == "KPI values (no holdout)":
+        k1, k2, k3 = st.columns(3)
+        with k1:
+            target_revenue = st.number_input(
+                "Mean daily constant-price revenue (€)", 1.0, 50000.0,
+                5000.0, 100.0, key="cal_rev_v2",
+            )
+            scale_revenue = st.number_input(
+                "Revenue error scale (€)", 1.0, 10000.0, 500.0, 10.0,
+                key="cal_rev_scale_v2",
+            )
+        with k2:
+            target_fulfilment = st.number_input(
+                "Mean shopping fulfilment (%)", 0.0, 100.0, 92.0, 0.5,
+                key="cal_ful_v2",
+            )
+            scale_fulfilment = st.number_input(
+                "Fulfilment error scale (percentage points)", 0.1, 50.0,
+                3.0, 0.5, key="cal_ful_scale_v2",
+            )
+        with k3:
+            target_waste = st.number_input(
+                "Waste share of physical throughput (%)", 0.0, 100.0,
+                2.5, 0.1, key="cal_waste_v2",
+            )
+            scale_waste = st.number_input(
+                "Waste-share error scale (percentage points)", 0.1, 50.0,
+                1.0, 0.1, key="cal_waste_scale_v2",
+            )
+        target_values = np.asarray(
+            [target_revenue, target_fulfilment, target_waste], dtype=float
+        )
+        target_scales = np.asarray(
+            [scale_revenue, scale_fulfilment, scale_waste], dtype=float
+        )
+        target_labels = ["Revenue", "Fulfilment %", "Waste share %"]
+        st.caption(
+            "Waste share = wasted units / (sold units + wasted units). Error scales "
+            "define target weights and must reflect measurement error or tolerance."
+        )
+    else:
+        upload = st.file_uploader(
+            "CSV containing Day and one supported model-output column",
+            type=["csv"], key="cal_ts_upload_v2",
+        )
+        supported = [
+            "Revenue", "FulfillmentRate", "Sales", "Waste", "LostSales",
+            "PanicLevel", "ConsumptionFulfillmentRate",
+        ]
+        if upload is None:
+            target_ready = False
+            st.info("Upload an observed daily series to enable temporal holdout validation.")
+        else:
+            try:
+                uploaded = pd.read_csv(upload)
+                available = [column for column in supported if column in uploaded.columns]
+                if "Day" not in uploaded.columns or not available:
+                    raise ValueError(
+                        "CSV must contain Day and one of: " + ", ".join(supported)
+                    )
+                target_column = st.selectbox(
+                    "Observed output column", available, key="cal_ts_col_v2"
+                )
+                target_series = uploaded[["Day", target_column]].copy()
+                target_series[target_column] = pd.to_numeric(
+                    target_series[target_column], errors="coerce"
+                )
+                target_series = (
+                    target_series.dropna().sort_values("Day").reset_index(drop=True)
+                )
+                if len(target_series) < 10:
+                    raise ValueError("At least 10 valid daily observations are required.")
+                default_scale = max(
+                    0.001, float(target_series[target_column].std(ddof=1)) * 0.25
+                )
+                series_scale = st.number_input(
+                    "Measurement / tolerance scale (same unit as series)",
+                    min_value=0.001, value=default_scale, key="cal_ts_scale_v2",
+                )
+                st.success(
+                    f"Loaded {len(target_series)} observations: first 80% fit, "
+                    "final 20% held out for validation."
+                )
+                st.caption(
+                    "The uploaded column must use the model export unit exactly "
+                    "(for example FulfillmentRate is 0–1, not 0–100)."
+                )
+                st.dataframe(target_series.head(10), hide_index=True, use_container_width=True)
+            except Exception as error:
+                target_ready = False
+                st.error(f"Invalid calibration series: {error}")
+
+    st.divider()
+    st.subheader("⚙️ Free Parameters")
+    definitions = {
+        "base_con": ("Daily visitors", 30, 250, "int", False,
+                     "Prefer direct measurement from transaction counts"),
+        "reorder": ("Reorder point", 0.10, 0.60, "float", True,
+                    "Store operating rule"),
+        "target": ("Restock target", 0.60, 0.99, "float", True,
+                   "Store operating rule"),
+        "lead": ("Lead time", 1, 10, "int", False,
+                 "Prefer direct measurement from supplier records"),
+    }
+    if regime == "Crisis":
+        definitions.update({
+            "panic": ("Panic sensitivity", 0.0, 1.0, "float", False,
+                      "Unidentified behavioral assumption"),
+            "hoard": ("Maximum hoarding multiplier", 1.0, 3.0, "float", False,
+                      "Scaled by cross-fitted household propensity"),
+            "panic_exposure_floor": ("Scarcity exposure floor", 0.0, 0.30, "float", False,
+                                     "Unidentified panic-dynamics assumption"),
+            "panic_growth_rate": ("Panic growth rate", 0.10, 1.0, "float", False,
+                                  "Unidentified panic-dynamics assumption"),
+            "panic_decay_active": ("Active panic decay", 0.0, 0.15, "float", False,
+                                   "Unidentified panic-dynamics assumption"),
+            "inflation_panic_rate": ("Inflation-to-panic rate", 0.0, 0.80, "float", False,
+                                     "Unidentified panic-dynamics assumption"),
+        })
+    active = {}
+    check_columns = st.columns(3)
+    for index, (name, definition) in enumerate(definitions.items()):
+        label, low, high, kind, default, note = definition
+        with check_columns[index % 3]:
+            if st.checkbox(
+                f"{label} ({low}–{high})", value=default,
+                key=f"cal_v2_{regime}_{name}", help=note,
+            ):
+                active[name] = {
+                    "label": label, "min": low, "max": high, "kind": kind,
+                }
+    if not active:
+        st.warning("Select at least one free parameter.")
+        return
+
+    control1, control2, control3 = st.columns(3)
+    with control1:
+        n_samples = st.slider(
+            "LHS design points", 24, 160, 64, 8, key="cal_samples_v2"
+        )
+    with control2:
+        n_replicates = st.slider(
+            "Replicates per point", 2, 5, 3, 1, key="cal_replicates_v2"
+        )
+    with control3:
+        minimum_days = (
+            max(14, int(params.get("cri_start", 30)) + 7)
+            if regime == "Crisis" else 14
+        )
+        days = st.slider(
+            "Days per run", minimum_days, 120, max(minimum_days, 45),
+            key="cal_days_v2",
+        )
+    if n_samples < 10 * len(active):
+        st.warning(
+            f"Design adequacy will fail: use at least {10 * len(active)} points "
+            f"for {len(active)} free parameters."
+        )
+    total_runs = n_samples * n_replicates
+    st.info(
+        f"Planned: **{n_samples} joint design points × {n_replicates} "
+        f"common-seed replicates = {total_runs} ABM runs**."
+    )
+
+    if st.button(
+        "🎯 Run Identifiability-Gated Calibration", type="primary",
+        key="cal_run_v2", disabled=not target_ready,
+    ):
+        names = list(active)
+        specs = [(active[n]["min"], active[n]["max"], active[n]["kind"]) for n in names]
+        design = calibration_design(n_samples, specs, seed=20260724)
+        if mode == "Observed daily time series":
+            observed = target_series[target_column].to_numpy(dtype=float)
+            observed = observed[:min(days, len(observed))]
+            split = max(2, min(len(observed) - 2, int(len(observed) * 0.80)))
+            train_target, validation_target = observed[:split], observed[split:]
+            train_scales = np.full(split, float(series_scale))
+            validation_scales = np.full(len(validation_target), float(series_scale))
+            feature_count = split
+        else:
+            observed = validation_target = validation_scales = None
+            split = None
+            train_target, train_scales = target_values, target_scales
+            feature_count = len(target_values)
+
+        outputs = np.full((n_samples, n_replicates, feature_count), np.nan)
+        full_outputs = (
+            np.full((n_samples, n_replicates, len(observed)), np.nan)
+            if observed is not None else None
+        )
+        failures = []
+        progress = st.progress(0, text="Running replicated calibration design…")
+        completed = 0
+        for point, values in enumerate(design):
+            overrides = {
+                name: (int(round(value)) if active[name]["kind"] == "int" else float(value))
+                for name, value in zip(names, values)
+            }
+            for replicate in range(n_replicates):
+                try:
+                    run_params = {**params, **overrides, "days": days}
+                    model = _make_model(
+                        run_params, is_crisis=(regime == "Crisis"),
+                        seed=12000 + replicate,
+                        policy_cfg=params.get("policy_cfg", {}),
+                    )
+                    for _ in range(days):
+                        model.step()
+                    frame = pd.DataFrame(model.daily_records)
+                    if mode == "Observed daily time series":
+                        simulated = frame[target_column].to_numpy(dtype=float)[:len(observed)]
+                        if len(simulated) != len(observed):
+                            raise ValueError("simulation is shorter than the target window")
+                        full_outputs[point, replicate] = simulated
+                        outputs[point, replicate] = simulated[:split]
+                    else:
+                        phase = frame
+                        if regime == "Crisis":
+                            phase = frame[frame["Day"] >= int(params.get("cri_start", 30))]
+                        if phase.empty:
+                            raise ValueError("calibration window has no active observations")
+                        outputs[point, replicate] = [
+                            float(phase["Revenue"].mean()),
+                            float(phase["FulfillmentRate"].mean() * 100.0),
+                            waste_rate_percent(phase["Sales"], phase["Waste"]),
+                        ]
+                except Exception as error:
+                    failures.append(f"point {point}, replicate {replicate}: {error}")
+                completed += 1
+                progress.progress(
+                    completed / total_runs,
+                    text=f"Calibration simulations: {completed}/{total_runs}",
+                )
+        progress.empty()
+
+        valid = np.all(np.isfinite(outputs), axis=(1, 2))
+        if int(np.sum(valid)) < max(3, 10 * len(names)):
+            st.error(
+                f"Only {int(np.sum(valid))} complete design points remain; "
+                "identifiability cannot be assessed."
+            )
+        else:
+            design_valid, outputs_valid = design[valid], outputs[valid]
+            full_valid = full_outputs[valid] if full_outputs is not None else None
+            means = outputs_valid.mean(axis=1)
+            objectives = np.asarray([
+                standardized_rmse(row, train_target, train_scales) for row in means
+            ])
+            best_index = int(np.argmin(objectives))
+            diagnostics = identifiability_diagnostics(names, design_valid, outputs_valid)
+            validation = {
+                "available": mode == "Observed daily time series", "passed": False,
+                "rmse": None, "naive_rmse": None, "skill_vs_naive": None,
+            }
+            best_full = None
+            if full_valid is not None:
+                best_full = full_valid[best_index].mean(axis=0)
+                validation_rmse = standardized_rmse(
+                    best_full[split:], validation_target, validation_scales
+                )
+                naive_rmse = standardized_rmse(
+                    np.full(len(validation_target), float(np.mean(train_target))),
+                    validation_target, validation_scales,
+                )
+                skill = 1.0 - validation_rmse / naive_rmse if naive_rmse > 1e-12 else 0.0
+                validation.update({
+                    "passed": bool(skill > 0), "rmse": validation_rmse,
+                    "naive_rmse": naive_rmse, "skill_vs_naive": skill,
+                })
+            eligible = bool(diagnostics["recommendation_allowed"] and validation["passed"])
+            rows = []
+            for row_index, objective in enumerate(objectives):
+                row = {"DesignPoint": row_index, "Training standardized RMSE": objective}
+                row.update({n: design_valid[row_index, col] for col, n in enumerate(names)})
+                rows.append(row)
+            best_params = {
+                name: (int(round(design_valid[best_index, col]))
+                       if active[name]["kind"] == "int"
+                       else float(design_valid[best_index, col]))
+                for col, name in enumerate(names)
+            }
+            st.session_state["calibration_v2"] = {
+                "regime": regime, "mode": mode, "names": names,
+                "labels": {name: active[name]["label"] for name in names},
+                "rows": pd.DataFrame(rows).sort_values("Training standardized RMSE").reset_index(drop=True),
+                "best_params": best_params,
+                "best_objective": float(objectives[best_index]),
+                "best_full_series": best_full,
+                "target_series": (
+                    target_series.iloc[:len(observed)].copy()
+                    if observed is not None else None
+                ),
+                "target_column": target_column,
+                "split": split, "diagnostics": diagnostics,
+                "validation": validation, "eligible": eligible,
+                "failures": failures, "n_runs": total_runs,
+            }
+
+    results = st.session_state.get("calibration_v2")
+    if not results:
+        return
+    st.divider()
+    st.subheader("🧪 Identifiability and Recoverability Decision")
+    diagnostics, validation = results["diagnostics"], results["validation"]
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Target-space rank", f"{diagnostics['target_rank']}/{diagnostics['n_parameters']}")
+    d2.metric("Signal/noise", f"{diagnostics['median_signal_to_noise']:.2f}")
+    d3.metric(
+        "Held-out skill",
+        f"{validation['skill_vs_naive']:+.3f}" if validation["available"] else "Unavailable",
+    )
+    d4.metric("Recommendation", "Allowed" if results["eligible"] else "Blocked")
+    diagnostic_frame = pd.DataFrame(diagnostics["parameters"])
+    diagnostic_frame["parameter"] = diagnostic_frame["parameter"].map(results["labels"])
+    st.dataframe(diagnostic_frame.round(4), hide_index=True, use_container_width=True)
+    reasons = list(diagnostics["reasons"])
+    if not validation["available"]:
+        reasons.append("no independent held-out target period")
+    elif not validation["passed"]:
+        reasons.append("held-out trajectory did not beat the naive training-mean forecast")
+    if reasons:
+        st.error("Parameter recommendation blocked: " + "; ".join(reasons) + ".")
+    else:
+        st.success("Synthetic recovery, stochastic signal, target rank, and held-out validation passed.")
+
+    st.subheader("Best numerical fit")
+    st.caption(
+        "These values minimize training error. They are not a defensible parameter "
+        "recommendation unless the decision above says Allowed."
+    )
+    best_columns = st.columns(max(1, len(results["best_params"])))
+    for index, (name, value) in enumerate(results["best_params"].items()):
+        best_columns[index].metric(results["labels"][name], f"{value:.4g}")
+    st.metric("Training standardized RMSE", f"{results['best_objective']:.4f}")
+
+    widget_map = {
+        "base_con": ("sim_base_con", lambda value: int(round(value))),
+        "reorder": ("sim_reorder_pct", lambda value: int(round(value * 100))),
+        "target": ("sim_target_pct", lambda value: int(round(value * 100))),
+        "lead": ("sim_lead", lambda value: int(round(value))),
+        "panic": ("sim_panic", float), "hoard": ("sim_hoard", float),
+        "panic_exposure_floor": ("sim_panic_exposure_floor", float),
+        "panic_growth_rate": ("sim_panic_growth_rate", float),
+        "panic_decay_active": ("sim_panic_decay_active", float),
+        "inflation_panic_rate": ("sim_inflation_panic_rate", float),
+    }
+    if st.button(
+        "⚡ Apply identified recommendation to simulation controls",
+        type="primary", key="cal_apply_v2", disabled=not results["eligible"],
+    ):
+        st.session_state["_pending_calibration_widget_values"] = {
+            widget_map[name][0]: widget_map[name][1](value)
+            for name, value in results["best_params"].items()
+        }
+        st.rerun()
+
+    st.subheader("Top numerical fits")
+    st.dataframe(results["rows"].head(15).round(5), hide_index=True, use_container_width=True)
+    if results["mode"] == "Observed daily time series":
+        observed_frame = results["target_series"]
+        observed_values = observed_frame[results["target_column"]].to_numpy(dtype=float)
+        split = results["split"]
+        figure = go.Figure()
+        figure.add_trace(go.Scatter(
+            x=observed_frame["Day"], y=observed_values,
+            name="Observed", line=dict(color="#DC143C", width=2),
+        ))
+        figure.add_trace(go.Scatter(
+            x=observed_frame["Day"], y=results["best_full_series"],
+            name="Best numerical fit", line=dict(color="#DBA159", width=2),
+        ))
+        figure.add_vline(
+            x=float(observed_frame["Day"].iloc[split]), line_dash="dash",
+            annotation_text="Held-out period", line_color="#042026",
+        )
+        figure.update_layout(
+            title=f"Training and held-out validation: {results['target_column']}",
+            xaxis_title="Day", yaxis_title=results["target_column"],
+            template="plotly_white",
+        )
+        st.plotly_chart(figure, use_container_width=True, config=_PLOTLY_CFG)
+
+    st.download_button(
+        "📥 Download calibration design and fit (CSV)",
+        results["rows"].to_csv(index=False).encode("utf-8"),
+        "grocerysim_calibration_design.csv", "text/csv", key="dl_cal_v2",
+    )
+    audit = {
+        "regime": results["regime"], "target_mode": results["mode"],
+        "best_training_standardized_rmse": results["best_objective"],
+        "best_parameters": results["best_params"],
+        "eligible_to_apply": results["eligible"],
+        "identifiability": diagnostics, "heldout_validation": validation,
+        "simulation_runs": results["n_runs"],
+    }
+    st.download_button(
+        "📥 Download calibration audit (JSON)",
+        json.dumps(audit, indent=2).encode("utf-8"),
+        "grocerysim_calibration_audit.json", "application/json",
+        key="dl_cal_audit_v2",
+    )
+
+
 # ===========================================================================
 # 12. SCENARIO COMPARE TAB
 # ===========================================================================
@@ -11250,7 +12964,7 @@ def render_scenario_compare_tab():
                 "lost_sales":     "Lost Sales (€) ↓ lower = better",
                 "waste":          "Waste (units) ↓",
                 "co2":            "Avg CO₂ / day (kg) ↓",
-                "fies_low":       "FIES Severe Low-income ↓",
+                "fies_low":       "Access Stress High Low-income ↓",
             }.get(k, k),
             key="rank_metric",
         )
@@ -11275,7 +12989,7 @@ def render_scenario_compare_tab():
             "Lost Sales":     f"{_sc.get('lost_sales', 0):,.0f}",
             "Waste":          f"{_sc.get('waste', 0):,.0f}",
             "CO₂/day":        f"{_sc.get('co2', 0):.1f}",
-            "FIES Low":       f"{_sc.get('fies_low', 0):.3f}",
+            "Access Stress Low":       f"{_sc.get('fies_low', 0):.3f}",
         })
     st.dataframe(pd.DataFrame(_rank_rows), use_container_width=True, hide_index=True)
 
@@ -11284,7 +12998,7 @@ def render_scenario_compare_tab():
     st.markdown("### 🕸️ KPI Radar — All Scenarios")
     st.caption(
         "Each axis is normalised 0–1 across saved scenarios. "
-        "Revenue and Fulfilment point outward = good; Waste, CO₂, FIES and Lost Sales inverted."
+        "Revenue and Fulfilment point outward = good; Waste, CO₂, access stress and Lost Sales inverted."
     )
 
     _RADAR_AXES = [
@@ -11293,7 +13007,7 @@ def render_scenario_compare_tab():
         ("lost_sales",     "Lost Sales\n(lower=better)", False),
         ("waste",          "Waste\n(lower=better)",      False),
         ("co2",            "CO₂\n(lower=better)",        False),
-        ("fies_low",       "FIES Low\n(lower=better)",   False),
+        ("fies_low",       "Access Stress Low\n(lower=better)",   False),
     ]
     _rdr_labels = [lbl for _, lbl, _ in _RADAR_AXES]
 
@@ -11350,7 +13064,7 @@ def render_scenario_compare_tab():
             ("Waste (units)",     "waste"),
             ("Fulfilment",        "fulfillment"),
             ("CO₂/day (kg)",      "co2"),
-            ("FIES Severe Low",   "fies_low"),
+            ("Access Stress High Low",   "fies_low"),
         ]
         def _pct_diff_html(a, b):
             if b == 0:
@@ -11457,37 +13171,37 @@ _STRESS_SCENARIOS = [
         "id": "supply_shock",
         "name": "🌊 Supply Chain Collapse",
         "desc": "Complete delivery stoppage for 10 days (flood / logistics failure)",
-        "overrides": {"dis": 10, "inf": 0.05, "panic": 0.6, "hoard": 1.4},
+        "overrides": {"dis": 10, "inf": 5.0, "panic": 0.6, "hoard": 1.4},
     },
     {
         "id": "price_spike",
         "name": "💸 Commodity Price Spike",
         "desc": "40% price inflation shock with moderate supply disruption",
-        "overrides": {"inf": 0.40, "dis": 3, "panic": 0.4, "hoard": 1.2},
+        "overrides": {"inf": 40.0, "dis": 3, "panic": 0.4, "hoard": 1.2},
     },
     {
         "id": "panic_buying",
         "name": "😱 Panic Buying Wave",
         "desc": "Media-driven panic: high hoarding, rapid shelf depletion",
-        "overrides": {"panic": 0.9, "hoard": 2.5, "dis": 2, "inf": 0.08},
+        "overrides": {"panic": 0.9, "hoard": 2.5, "dis": 2, "inf": 8.0},
     },
     {
         "id": "import_dep",
         "name": "🚢 Import Dependency Crisis",
         "desc": "Extended import disruption — 14 days, high inflation",
-        "overrides": {"dis": 14, "inf": 0.20, "panic": 0.5, "hoard": 1.3},
+        "overrides": {"dis": 14, "inf": 20.0, "panic": 0.5, "hoard": 1.3},
     },
     {
         "id": "demand_surge",
         "name": "📈 Demand Surge (+80%)",
         "desc": "Sudden 80% increase in shoppers (tourism / refugee influx)",
-        "overrides": {"base_con_mult": 1.80, "dis": 1, "inf": 0.05},
+        "overrides": {"base_con_mult": 1.80, "dis": 1, "inf": 5.0},
     },
     {
         "id": "deep_freeze",
         "name": "🧊 Deep Freeze (Cold-chain Failure)",
         "desc": "Perishables supply cut by 60% for 7 days",
-        "overrides": {"dis": 7, "inf": 0.15, "panic": 0.55, "hoard": 1.6},
+        "overrides": {"dis": 7, "inf": 15.0, "panic": 0.55, "hoard": 1.6},
     },
 ]
 
@@ -11514,14 +13228,25 @@ def render_stress_tab(params: dict):
                             help="More runs = more accurate but slower. 2–3 is sufficient for stress ranking.")
 
     st.markdown("### 📋 Scenarios to Test")
+    exploratory_stress = bool(params.get("exploratory_behaviour", False))
+    if not exploratory_stress:
+        st.info(
+            "Empirical-only mode: the panic-buying-wave scenario is unavailable, "
+            "and panic/hoarding overrides in other scenarios are ignored."
+        )
     cols = st.columns(3)
     selected_ids = []
     for i, sc in enumerate(_STRESS_SCENARIOS):
         with cols[i % 3]:
             with st.container(border=True):
-                checked = st.checkbox(sc["name"], value=True, key=f"stress_chk_{sc['id']}")
+                panic_only = sc["id"] == "panic_buying"
+                checked = st.checkbox(
+                    sc["name"], value=not panic_only,
+                    key=f"stress_chk_{sc['id']}",
+                    disabled=panic_only and not exploratory_stress,
+                )
                 st.caption(sc["desc"])
-                if checked:
+                if checked and (not panic_only or exploratory_stress):
                     selected_ids.append(sc["id"])
 
     if not selected_ids:
@@ -11591,6 +13316,9 @@ def render_stress_tab(params: dict):
                 "Avg Fulfillment":    round(float(np.mean(run_fulfill)), 3),
                 "Baseline Revenue":   round(rev_base_mean, 0),
                 "Crisis Revenue":     round(rev_crisis_mean, 0),
+                "Behaviour Evidence Mode": (
+                    "exploratory_extensions" if exploratory_stress else "empirical_only"
+                ),
                 "_severity":          revenue_loss_pct,
             })
 
@@ -11821,7 +13549,7 @@ def render_stress_tab(params: dict):
         with mk3:
             st.metric("Median Revenue Loss",           f"{_median:.1f}%")
         with mk4:
-            st.metric(f"VaR({_vp}%) FIES Severe",     f"{_var_fies:.1f}%",
+            st.metric(f"VaR({_vp}%) Access Stress High",     f"{_var_fies:.1f}%",
                       help="Food insecurity level (low-income agents) in the worst disruption scenarios.")
 
         st.markdown(
@@ -11887,7 +13615,7 @@ def render_stress_tab(params: dict):
             _cbar = _fig_sc.colorbar(_ax_s.collections[0], ax=_ax_s)
             _cbar.set_label("Fulfilment — Low Income (%)", fontsize=8)
             _ax_s.set_xlabel("Revenue Loss (%)")
-            _ax_s.set_ylabel("Peak FIES Severe — Low Income (%)")
+            _ax_s.set_ylabel("Peak Access Stress High — Low Income (%)")
             _ax_s.set_title("Risk Trade-off: Revenue Loss vs. Food Insecurity")
             _ax_s.spines[["top", "right"]].set_visible(False)
             _fig_sc.tight_layout()
@@ -11958,6 +13686,8 @@ def _collect_agent_snapshot(model, day: int, scenario: str) -> list[dict]:
         rows.append({
             "Day":             day,
             "Scenario":        scenario,
+            "HouseholdID":     agent.household_id,
+            "VisitNumber":     agent.visit_number,
             "Archetype":       agent.archetype,
             "IncomeBracket":   _income_bracket(agent.income_midpoint),
             "IncomeMidpoint":  round(agent.income_midpoint, 0),
@@ -11971,6 +13701,9 @@ def _collect_agent_snapshot(model, day: int, scenario: str) -> list[dict]:
             "PriceSensitivity": round(agent.price_sensitivity, 3),
             "OrganicPref":     round(agent.organic_preference, 3),
             "FinnishPref":     round(agent.finnish_preference, 3),
+            "AccessStress":    agent.access_stress_score,
+            "ShoppingShortfall": round(agent.shopping_shortfall_rate, 3),
+            # Deprecated alias retained for old replay exports.
             "FIES":            agent.food_insecurity_score,
         })
     return rows
@@ -13086,17 +14819,17 @@ _NAV_CARDS = [
             {"key": "product",     "label": "📦 Per-Product",
              "desc": "Stock, sales, CO₂ per SKU"},
             {"key": "behaviour",   "label": "🧪 Behavioural Theory",
-             "desc": "Prospect theory, TPB, FIES food security"},
+             "desc": "Prospect theory, TPB, and exploratory access stress"},
             {"key": "sensitivity", "label": "🎚️ Sensitivity Analysis",
-             "desc": "One-at-a-time parameter sweeps"},
+             "desc": "Replicated global uncertainty and importance screening"},
             {"key": "compare",     "label": "📊 Compare Scenarios",
              "desc": "Side-by-side saved simulation runs"},
             {"key": "agent",       "label": "🎬 Agent Replay",
              "desc": "Day-level individual shopper decisions"},
             {"key": "validation",  "label": "✅ Model Validation",
-             "desc": "POM stylised facts · reproducibility · elasticity check"},
+             "desc": "Preregistered targets · evidence tiers · verification audit"},
             {"key": "calibration", "label": "🎯 Model Calibration",
-             "desc": "LHS parameter estimation · RMSE minimisation · apply best-fit"},
+             "desc": "Replicated LHS · synthetic recovery · held-out validation gate"},
         ],
     },
     {
@@ -13388,6 +15121,19 @@ def main():
                 except FileNotFoundError:
                     pass
     st.divider()
+
+    if params.get("exploratory_behaviour", False):
+        st.warning(
+            "**Behavioural evidence mode: exploratory extensions.** Panic, TPB, "
+            "Prospect Theory, and other unvalidated dynamics may affect results. "
+            "Do not interpret their effects as estimated from GROCERYsim."
+        )
+    else:
+        st.success(
+            "**Behavioural evidence mode: empirical only.** Unvalidated dynamic "
+            "mechanisms are disabled; the model uses observed and calibration-gated "
+            "GROCERYsim behaviour."
+        )
 
     _nav_section = st.session_state.get("nav_section")
 
