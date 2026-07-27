@@ -1981,8 +1981,31 @@ def _sf_summary_box(title: str, bullets: list, recommendation: str):
 def _sf_run_simulation(params: dict):
     """Run baseline + crisis models and return result dict, or None on failure."""
     try:
-        m_base   = _make_model(params, is_crisis=False, seed=42)
-        m_crisis = _make_model(params, is_crisis=True,  seed=42)
+        policy_cfg = params.get("policy_cfg", {}) or {}
+        has_policy = any([
+            policy_cfg.get("fat_tax_active", False),
+            policy_cfg.get("subsidy_active", False),
+            policy_cfg.get("domestic_shock_active", False),
+            policy_cfg.get("labelling_active", False),
+            params.get("purchase_limit") is not None,
+            float(params.get("media_intensity", 0.0)) > 0,
+        ])
+        no_policy_params = {
+            **params,
+            "purchase_limit": None,
+            "media_intensity": 0.0,
+            "communication_type": "neutral",
+        }
+        m_base = _make_model(
+            no_policy_params, is_crisis=False, seed=42, policy_cfg={}
+        )
+        m_crisis = _make_model(
+            params, is_crisis=True, seed=42, policy_cfg=policy_cfg
+        )
+        m_crisis_no_policy = (
+            _make_model(no_policy_params, is_crisis=True, seed=42, policy_cfg={})
+            if has_policy else None
+        )
         agg_rows, prod_rows = [], []
         for day in range(1, params["days"] + 1):
             m_base.step()
@@ -1991,10 +2014,18 @@ def _sf_run_simulation(params: dict):
             agg_c, pc = _collect_model_day(m_crisis, day, "Crisis")
             agg_rows += [agg_b, agg_c]
             prod_rows += pb + pc
+            if m_crisis_no_policy is not None:
+                m_crisis_no_policy.step()
+                agg_u, pu = _collect_model_day(
+                    m_crisis_no_policy, day, "Crisis (No Policy)"
+                )
+                agg_rows.append(agg_u)
+                prod_rows.extend(pu)
         return {
             "df":      pd.DataFrame(agg_rows),
             "df_prod": pd.DataFrame(prod_rows),
             "params":  params,
+            "has_policy_counterfactual": has_policy,
         }
     except Exception as e:
         st.error(f"Simulation error: {e}")
@@ -2052,8 +2083,8 @@ def _render_sf_sc_results(data: dict):
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Revenue Loss", f"€{rev_loss:,.0f}",
               f"−{rev_loss_pct:.1f}% vs baseline", delta_color="inverse")
-    k2.metric("Stockout Losses", f"€{lost_total:,.0f}",
-              "unrecoverable demand", delta_color="inverse")
+    k2.metric("Unmet Demand", f"{lost_total:,.0f} units",
+              "stock/price constrained", delta_color="inverse")
     k3.metric("Peak Panic Level", f"{peak_panic:.2f} / 1.0",
               f"mean {mean_panic:.2f}", delta_color="inverse")
     k4.metric("Supply Recovery",
@@ -2098,36 +2129,35 @@ def _render_sf_sc_results(data: dict):
     )
 
     # ── Chart 2: Stockout Events ──────────────────────────────────────────────
-    st.markdown("#### 2 · Stockout Events & Lost Sales")
+    st.markdown("#### 2 · Unmet Demand Events")
     df_c2 = df_c.copy()
     df_c2["CumLost"] = df_c2["LostSales"].cumsum()
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(x=df_c2["Day"], y=df_c2["LostSales"],
-                          name="Daily Lost Sales (Crisis)",
+                          name="Daily Unmet Demand (Crisis)",
                           marker_color="rgba(231,76,60,0.65)", marker_line_width=0))
     fig2.add_trace(go.Scatter(x=df_c2["Day"], y=df_c2["CumLost"],
-                              name="Cumulative Lost Sales",
+                              name="Cumulative Unmet Demand",
                               line=dict(color="#922b21", width=2.5), yaxis="y2"))
     fig2.add_trace(go.Scatter(x=df_b["Day"], y=df_b["LostSales"],
-                              name="Baseline Lost Sales",
+                              name="Baseline Unmet Demand",
                               line=dict(color="#aab7b8", width=1.2, dash="dot")))
     fig2 = _sf_crisis_band(fig2, cri_start, cri_end, days)
     fig2.update_layout(
         template="plotly_white", height=360,
-        xaxis_title="Simulation Day", yaxis_title="Lost Sales €/day",
-        yaxis2=dict(title="Cumulative (€)", overlaying="y", side="right"),
-        title="Revenue Lost to Stockouts — Daily Events and Cumulative Accumulation",
+        xaxis_title="Simulation Day", yaxis_title="Unmet Demand Units/day",
+        yaxis2=dict(title="Cumulative Units", overlaying="y", side="right"),
+        title="Unmet Demand — Daily Events and Cumulative Accumulation",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig2, use_container_width=True)
     _sf_analysis_box(
-        f"Cumulative stockout losses reached **€{lost_total:,.0f}**. Peak occurred on **Day {peak_lost_day}** "
-        f"(€{peak_lost_val:,.0f}), driven by the combination of panic-buying demand spikes and "
-        f"delayed replenishment from the {p['dis']}-day supply disruption. "
-        f"Stockout events represent unrecoverable demand — empirical studies show 21–43% of consumers "
-        f"switch brands permanently after a stockout ([Gruen et al., 2002](https://www.supplychain247.com/images/pdfs/GMA_2002_Worldwide_OOS_Study.pdf)). "
-        f"Grey dotted line = baseline lost sales, isolating the crisis-attributable component."
+        f"Cumulative unmet demand reached **{lost_total:,.0f} units**. Peak occurred on "
+        f"**Day {peak_lost_day}** ({peak_lost_val:,.0f} units). The counter includes quantity "
+        f"not fulfilled after price rejection, substitution, or stock constraints; it is not "
+        f"denominated in euros and does not imply permanent customer loss. The grey dotted "
+        f"line is the paired baseline."
     )
 
     # ── Chart 3: Inventory Availability ──────────────────────────────────────
@@ -2189,32 +2219,29 @@ def _render_sf_sc_results(data: dict):
                               name="Stockpile Pressure (Crisis)",
                               line=dict(color="#e67e22", width=2.0), yaxis="y2"))
     fig4.add_hline(y=0.3, line_dash="dot", line_color="#c0392b",
-                   annotation_text="Hoarding threshold (0.30)",
+                   annotation_text="Descriptive reference (0.30)",
                    annotation_font_size=9, annotation_position="bottom right")
     fig4 = _sf_crisis_band(fig4, cri_start, cri_end, days)
     fig4.update_layout(
         template="plotly_white", height=360,
         xaxis_title="Simulation Day",
         yaxis=dict(title="Panic Level (0–1)", range=[0, 1.05]),
-        yaxis2=dict(title="Stockpile Pressure (0–1)", overlaying="y",
-                    side="right", range=[0, 1.05]),
+        yaxis2=dict(title="Demand Ratio (1.0 = base)", overlaying="y",
+                    side="right", range=[0, max(1.1, sp_peak * 1.1)]),
         title="Consumer Panic Level and Stockpile Pressure — Behavioural Demand Amplification",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig4, use_container_width=True)
     if panic_threshold_day_val is not None:
-        panic_txt = (f"The reference panic level 0.30 was crossed on **Day {panic_threshold_day_val}**, "
-                     f"driving excess purchases that amplified supply depletion beyond the supply-side shock alone.")
+        panic_txt = (f"The descriptive reference level 0.30 was crossed on **Day {panic_threshold_day_val}**.")
     else:
         panic_txt = "Panic remained below the reference level 0.30 throughout the simulation."
     _sf_analysis_box(
         f"Consumer panic peaked at **{peak_panic:.2f}/1.0** (Day {panic_peak_day}). {panic_txt} "
-        f"Stockpile pressure (quasi-hyperbolic discounting, [O'Donoghue & Rabin 1999](https://www.jstor.org/stable/116981?seq=1)) peaked at "
-        f"**{sp_peak:.2f}**, indicating consumers were building home inventories in anticipation of "
-        f"further scarcity. For supply chain actors, this demand amplification — the 'bullwhip effect' "
-        f"([Lee et al., 1997](https://www.jstor.org/stable/2634565?seq=1)) — means true consumer demand was below store orders during the panic phase. "
-        f"Expect a demand trough post-crisis; reduce replenishment orders 10–15% during recovery."
+        f"The stockpiling-demand ratio peaked at **{sp_peak:.2f}** (1.0 = base requested demand). Both series are internal exploratory "
+        f"state variables driven partly by analyst assumptions; they are not measured panic or "
+        f"validated thresholds. Household amplification is scaled by cross-fitted propensity."
     )
 
     # ── Summary box ───────────────────────────────────────────────────────────
@@ -2226,17 +2253,15 @@ def _render_sf_sc_results(data: dict):
         [
             f"Constant-price revenue loss: <b>€{rev_loss:,.0f}</b> ({rev_loss_pct:.1f}% of baseline) — genuine volume shortfall",
             f"Nominal revenue <b>{'rose' if nom_gain > 0 else 'fell'}</b> by €{abs(nom_gain):,.0f} due to inflation — verify with constant-price reporting",
-            f"Stockout losses: <b>€{lost_total:,.0f}</b> of unrecoverable demand",
+            f"Unmet demand: <b>{lost_total:,.0f} units</b> after price, substitution, and stock constraints",
             f"Average retail price: <b>€{avg_p_c:.2f}</b> vs baseline <b>€{avg_p_b:.2f}</b> (+{price_delta_pct:.0f}% inflation pass-through)",
-            f"Peak consumer panic: <b>{peak_panic:.2f}/1.0</b> — {'severe' if peak_panic >= 0.5 else 'moderate'} disruption with {'significant' if sp_peak > 0.4 else 'limited'} hoarding pressure",
-            f"Waste delta: <b>{waste_delta:+,.0f} units</b> vs baseline — {waste_dir} ({'post-panic excess inventory decays' if waste_delta > 0 else 'stockouts prevent expiry'})",
+            f"Peak internal panic state: <b>{peak_panic:.2f}/1.0</b> (exploratory, not a validated severity scale)",
+            f"Waste delta: <b>{waste_delta:+,.0f} units</b> vs paired baseline — {waste_dir}",
             f"Supply recovery: {rec_str}",
         ],
-        f"To maintain a 95% service level under a {p['dis']}-day disruption at {p['inf']:.0f}% inflation: "
-        f"(1) Raise reorder point to ≥{min(60, int(p['reorder']*100 + p['dis']*2.5))}% to absorb lead-time extension; "
-        f"(2) Pre-position ~{p['dis']} days of additional safety stock for the most affected categories; "
-        f"(3) Pre-negotiate dual-sourcing contracts to cap single-supplier lead-time exposure; "
-        f"(4) Reduce replenishment orders 10–15% during post-crisis recovery to counteract the bullwhip demand trough.",
+        "Treat this run as a stress-test result. Before selecting reorder points or safety-stock "
+        "levels, run multiple paired seeds and global sensitivity analysis over the disruption, "
+        "lead-time, price, panic, and hoarding assumptions.",
     )
 
 
@@ -2249,6 +2274,7 @@ def _render_sf_pm_results(data: dict):
 
     df_b = df[df["Scenario"] == "Baseline"].copy().reset_index(drop=True)
     df_c = df[df["Scenario"] == "Crisis"].copy().reset_index(drop=True)
+    df_u = df[df["Scenario"] == "Crisis (No Policy)"].copy().reset_index(drop=True)
 
     cri_start = p["cri_start"]
     cri_dur   = p["cri_duration"]
@@ -2257,26 +2283,45 @@ def _render_sf_pm_results(data: dict):
     pc        = p.get("policy_cfg", {})
 
     # ── Pre-compute metrics ────────────────────────────────────────────────────
-    peak_stress    = float(df_c["FoodStressedPct"].max()) * 100
-    base_stress    = float(df_b["FoodStressedPct"].mean()) * 100
-    peak_budgexh_lo = float(df_c["BudgetExh_Low"].max()) * 100
-    peak_budgexh_hi = float(df_c["BudgetExh_High"].max()) * 100
-    mean_gini_c    = float(df_c["GiniAccess"].mean())
-    mean_gini_b    = float(df_b["GiniAccess"].mean())
-    import_dep_b   = float(df_b["ImportDepPct"].mean()) * 100
-    import_dep_c   = float(df_c["ImportDepPct"].mean()) * 100
-    fulfill_lo_c   = float(df_c["Fulfillment_Low"].mean()) * 100
-    fulfill_hi_c   = float(df_c["Fulfillment_High"].mean()) * 100
+    def _active_window(frame):
+        return frame[
+            (frame["Day"] >= cri_start) & (frame["Day"] < cri_end)
+        ].reset_index(drop=True)
+
+    b_win = _active_window(df_b)
+    c_win = _active_window(df_c)
+    u_win = _active_window(df_u) if not df_u.empty else pd.DataFrame()
+    comparison_win = u_win if not u_win.empty else b_win
+    comparison_label = "paired crisis without policy" if not u_win.empty else "baseline"
+
+    peak_stress    = float(c_win["FoodStressedPct"].max()) * 100
+    peak_stress_u  = float(comparison_win["FoodStressedPct"].max()) * 100
+    base_stress    = float(b_win["FoodStressedPct"].mean()) * 100
+    peak_budgexh_lo = float(c_win["BudgetExh_Low"].max()) * 100
+    peak_budgexh_hi = float(c_win["BudgetExh_High"].max()) * 100
+    peak_budgexh_lo_u = float(comparison_win["BudgetExh_Low"].max()) * 100
+    mean_gini_c    = float(c_win["GiniAccess"].mean())
+    mean_gini_b    = float(b_win["GiniAccess"].mean())
+    mean_gini_u    = float(comparison_win["GiniAccess"].mean())
+    import_dep_b   = float(b_win["ImportDepPct"].mean())
+    import_dep_c   = float(c_win["ImportDepPct"].mean())
+    import_dep_u   = float(comparison_win["ImportDepPct"].mean())
+    fulfill_lo_c   = float(c_win["Fulfillment_Low"].mean()) * 100
+    fulfill_hi_c   = float(c_win["Fulfillment_High"].mean()) * 100
+    fulfill_lo_u   = float(comparison_win["Fulfillment_Low"].mean()) * 100
     fulfill_gap    = fulfill_hi_c - fulfill_lo_c
-    fies_lo_peak   = float(df_c["FIESSevere_Low"].max()) * 100
-    fies_lo_base   = float(df_b["FIESSevere_Low"].mean()) * 100
-    fies_delta     = fies_lo_peak - fies_lo_base
-    dom_sum_b = df_b["DomesticSales"].sum() + df_b["ImportSales"].sum()
-    dom_sum_c = df_c["DomesticSales"].sum() + df_c["ImportSales"].sum()
-    dom_share_b    = df_b["DomesticSales"].sum() / max(dom_sum_b, 1) * 100
-    dom_share_c    = df_c["DomesticSales"].sum() / max(dom_sum_c, 1) * 100
-    dom_change     = dom_share_c - dom_share_b
-    low_below_80   = int((df_c["Fulfillment_Low"] < 0.80).sum())
+    fies_lo_peak   = float(c_win["FIESSevere_Low"].max()) * 100
+    fies_lo_base   = float(b_win["FIESSevere_Low"].mean()) * 100
+    fies_lo_u      = float(comparison_win["FIESSevere_Low"].max()) * 100
+    fies_delta     = fies_lo_peak - fies_lo_u
+    dom_sum_b = b_win["DomesticSales"].sum() + b_win["ImportSales"].sum()
+    dom_sum_c = c_win["DomesticSales"].sum() + c_win["ImportSales"].sum()
+    dom_sum_u = comparison_win["DomesticSales"].sum() + comparison_win["ImportSales"].sum()
+    dom_share_b    = b_win["DomesticSales"].sum() / max(dom_sum_b, 1) * 100
+    dom_share_c    = c_win["DomesticSales"].sum() / max(dom_sum_c, 1) * 100
+    dom_share_u    = comparison_win["DomesticSales"].sum() / max(dom_sum_u, 1) * 100
+    dom_change     = dom_share_c - dom_share_u
+    low_below_80   = int((c_win["Fulfillment_Low"] < 0.80).sum())
 
     active_policies = [k for k in ["subsidy_active","fat_tax_active","labelling_active"] if pc.get(k)]
     has_limit  = p.get("purchase_limit") is not None
@@ -2293,15 +2338,18 @@ def _render_sf_pm_results(data: dict):
     st.markdown("### 📊 Policy Simulation Results")
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Peak Food Stress Rate",           f"{peak_stress:.1f}%",
-              f"baseline {base_stress:.1f}%",    delta_color="inverse")
+    k1.metric("Peak Budget-Stressed Low-Income Share", f"{peak_stress:.1f}%",
+              f"{peak_stress - peak_stress_u:+.1f} pp vs no-policy crisis",
+              delta_color="inverse")
     k2.metric("Peak Budget Exhaustion (Low Income)", f"{peak_budgexh_lo:.1f}%",
-              "unable to complete basket",        delta_color="inverse")
+              f"{peak_budgexh_lo - peak_budgexh_lo_u:+.1f} pp vs no-policy crisis",
+              delta_color="inverse")
     k3.metric("Mean Gini Access Index",           f"{mean_gini_c:.3f}",
-              f"baseline {mean_gini_b:.3f}",      delta_color="inverse")
+              f"{mean_gini_c - mean_gini_u:+.3f} vs no-policy crisis",
+              delta_color="inverse")
     k4.metric("Import Dependency (Crisis)",       f"{import_dep_c:.1f}%",
-              f"baseline {import_dep_b:.1f}%",
-              delta_color="inverse" if import_dep_c > import_dep_b else "normal")
+              f"{import_dep_c - import_dep_u:+.1f} pp vs no-policy crisis",
+              delta_color="inverse" if import_dep_c > import_dep_u else "normal")
 
     # ── Chart 1: Fulfilment by income ─────────────────────────────────────────
     st.markdown("#### 1 · Consumer Basket Fulfilment Rate by Income Group")
@@ -2316,8 +2364,12 @@ def _render_sf_pm_results(data: dict):
     fig1.add_trace(go.Scatter(x=df_b["Day"], y=df_b["FulfillmentRate"]*100,
                               name="All income (baseline)",
                               line=dict(color="#95a5a6", width=1.5, dash="dash")))
+    if not df_u.empty:
+        fig1.add_trace(go.Scatter(x=df_u["Day"], y=df_u["Fulfillment_Low"]*100,
+                                  name="Low income (crisis, no policy)",
+                                  line=dict(color="#2c3e50", width=1.5, dash="dot")))
     fig1.add_hline(y=80, line_dash="dot", line_color="#c0392b",
-                   annotation_text="80% welfare threshold",
+                   annotation_text="80% descriptive reference",
                    annotation_font_size=9, annotation_position="bottom right")
     fig1 = _sf_crisis_band(fig1, cri_start, cri_end, days)
     fig1.update_layout(
@@ -2329,15 +2381,13 @@ def _render_sf_pm_results(data: dict):
         margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig1, use_container_width=True)
-    policy_hint = ("A purchase cap is active — check Chart 5 for its equity effect."
-                   if has_limit else "Consider a per-visit purchase cap or targeted subsidy to narrow this gap.")
     _sf_analysis_box(
-        f"During the crisis, low-income consumers fulfilled **{fulfill_lo_c:.1f}%** of their intended basket "
-        f"on average, versus **{fulfill_hi_c:.1f}%** for high-income — a **{fulfill_gap:.1f} pp equity gap**. "
-        f"Low-income households fell below the 80% welfare threshold on **{low_below_80} of {days} days**. "
-        f"This divergence arises because lower-income agents have less budget buffer to absorb inflation and "
-        f"are more likely to encounter stockouts as higher-income panic-buyers deplete shelves first "
-        f"([Darmon & Drewnowski, 2008](https://pubmed.ncbi.nlm.nih.gov/18469226/)). {policy_hint}"
+        f"During active-crisis days, low-income basket fulfilment averaged **{fulfill_lo_c:.1f}%** "
+        f"with the policy bundle and **{fulfill_lo_u:.1f}%** in the {comparison_label}; the "
+        f"paired difference is **{fulfill_lo_c - fulfill_lo_u:+.1f} pp**. High-income fulfilment "
+        f"was **{fulfill_hi_c:.1f}%** in the policy-crisis run. Low-income fulfilment fell below "
+        f"the descriptive 80% reference on **{low_below_80} of {len(c_win)} active-crisis days**. "
+        f"This is a single-seed model comparison, not a causal estimate."
     )
 
     # ── Chart 2: Food-Access Stress ───────────────────────────────────────────
@@ -2356,6 +2406,10 @@ def _render_sf_pm_results(data: dict):
         fig2.add_trace(go.Scatter(x=df_b["Day"], y=df_b[col_key]*100,
                                   name=f"{label} (baseline)",
                                   line=dict(color=color, width=1.0, dash="dot"), opacity=0.5))
+    if not df_u.empty:
+        fig2.add_trace(go.Scatter(x=df_u["Day"], y=df_u["FIESSevere_Low"]*100,
+                                  name="Low income (crisis, no policy)",
+                                  line=dict(color="#2c3e50", width=1.4, dash="dash")))
     fig2 = _sf_crisis_band(fig2, cri_start, cri_end, days)
     fig2.update_layout(
         template="plotly_white", height=400,
@@ -2367,11 +2421,11 @@ def _render_sf_pm_results(data: dict):
     st.plotly_chart(fig2, use_container_width=True)
     _sf_analysis_box(
         f"High modeled food-access stress among low-income households peaked at "
-        f"**{fies_lo_peak:.1f}%** during the crisis, vs a baseline of **{fies_lo_base:.1f}%** "
-        f"(+**{fies_delta:.1f} pp**). This exploratory diagnostic measures realised "
-        f"pantry-consumption shortfall across all represented households. Targeted subsidies for low-income consumers have "
-        f"the largest modeled reduction in access stress per euro spent. It is not comparable to survey-based FIES prevalence. "
-        f"Dotted lines = counterfactual baseline for each income group."
+        f"**{fies_lo_peak:.1f}%** in the policy-crisis run and **{fies_lo_u:.1f}%** in the "
+        f"{comparison_label} ({fies_delta:+.1f} pp). This exploratory diagnostic measures "
+        f"realised access and consumption shortfall across represented households. It is not "
+        f"comparable to survey-based FIES prevalence, and the bundled comparison cannot rank "
+        f"individual instruments."
     )
 
     # ── Chart 3: Budget Exhaustion & Gini ────────────────────────────────────
@@ -2391,6 +2445,10 @@ def _render_sf_pm_results(data: dict):
     fig3.add_trace(go.Scatter(x=df_c["Day"], y=df_c["GiniAccess"],
                               name="Gini Access Index (crisis)",
                               line=dict(color="#8e44ad", width=2.0, dash="dot"), yaxis="y2"))
+    if not df_u.empty:
+        fig3.add_trace(go.Scatter(x=df_u["Day"], y=df_u["GiniAccess"],
+                                  name="Gini (crisis, no policy)",
+                                  line=dict(color="#2c3e50", width=1.3, dash="dash"), yaxis="y2"))
     fig3 = _sf_crisis_band(fig3, cri_start, cri_end, days)
     fig3.update_layout(
         template="plotly_white", height=400,
@@ -2402,14 +2460,13 @@ def _render_sf_pm_results(data: dict):
         margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig3, use_container_width=True)
-    gini_action = "action required" if mean_gini_c > 0.3 else "within acceptable range"
     _sf_analysis_box(
         f"Budget exhaustion among low-income consumers peaked at **{peak_budgexh_lo:.1f}%**, "
         f"vs **{peak_budgexh_hi:.1f}%** for high-income. The Gini access index rose from "
-        f"**{mean_gini_b:.3f}** (baseline) to **{mean_gini_c:.3f}** during the crisis — "
-        f"{'a statistically meaningful increase in access inequality' if abs(mean_gini_c - mean_gini_b) > 0.02 else 'a marginal change'}. "
-        f"A Gini above 0.30 signals structurally unequal access and typically warrants "
-        f"rationing or targeted subsidy measures ({gini_action}, [Thaler & Sunstein 2008](https://psycnet.apa.org/record/2008-03730-000))."
+        f"**{mean_gini_b:.3f}** in the baseline to **{mean_gini_c:.3f}** in the policy-crisis run; "
+        f"the paired crisis-without-policy value was **{mean_gini_u:.3f}**. The policy-bundle "
+        f"difference is **{mean_gini_c - mean_gini_u:+.3f}**. No universal action threshold or "
+        f"statistical significance is inferred from this single seed."
     )
 
     # ── Chart 4: Import Dependency ────────────────────────────────────────────
@@ -2438,26 +2495,20 @@ def _render_sf_pm_results(data: dict):
         margin=dict(t=100, b=40, l=60, r=30),
     )
     st.plotly_chart(fig4, use_container_width=True)
-    dom_dir = "increased" if dom_change >= 0 else "decreased"
-    dom_interp = (
-        "reflecting consumer preference for Finnish-origin products under uncertainty — "
-        "consistent with DCE data showing mean Finnish preference of 0.65 (N=116)."
-        if dom_change >= 0 else
-        "indicating domestic supply was more disrupted than imports, raising food sovereignty risk."
-    )
     _sf_analysis_box(
-        f"Domestic sales share {dom_dir} from **{dom_share_b:.1f}%** (baseline) to "
-        f"**{dom_share_c:.1f}%** during the crisis — {dom_interp} "
-        f"Higher import reliance increases exposure to cross-border disruptions and exchange-rate "
-        f"volatility under climate stress ([EC Farm to Fork Strategy, 2030](https://food.ec.europa.eu/system/files/2020-05/f2f_action-plan_2020_strategy-info_en.pdf))."
+        f"Domestic sales share was **{dom_share_b:.1f}%** in the baseline, **{dom_share_u:.1f}%** "
+        f"in the {comparison_label}, and **{dom_share_c:.1f}%** in the policy-crisis run. The "
+        f"paired bundle difference is **{dom_change:+.1f} pp**. Because several policies change "
+        f"together, the shift cannot be attributed to the domestic subsidy alone."
     )
 
     # ── Chart 5: Policy Effectiveness (conditional) ───────────────────────────
     if active_policies or has_limit or has_media:
         st.markdown("#### 5 · Active Policy Instruments — Key Welfare Metrics")
-        metrics_names = ["Food Stress Peak %", "Budget Exhaustion\nLow Income %",
-                         "Gini ×100", "Import Dep. %"]
-        metrics_vals  = [peak_stress, peak_budgexh_lo, mean_gini_c * 100, import_dep_c]
+        metrics_names = ["Budget-stressed\nlow-income pp", "Low-income fulfilment pp",
+                         "Gini ×100 delta", "Import dependency pp"]
+        metrics_vals  = [peak_stress - peak_stress_u, fulfill_lo_c - fulfill_lo_u,
+                         (mean_gini_c - mean_gini_u) * 100, import_dep_c - import_dep_u]
         bar_colors    = ["#e74c3c", "#e67e22", "#8e44ad", "#2980b9"]
         fig5 = go.Figure(go.Bar(
             x=metrics_names, y=metrics_vals,
@@ -2467,38 +2518,31 @@ def _render_sf_pm_results(data: dict):
         fig5.update_layout(
             template="plotly_white", height=340,
             yaxis_title="Value",
-            title=f"Key Welfare Metrics — Active policies: {', '.join(policy_labels)}",
+            title=f"Policy Bundle Difference vs Paired No-Policy Crisis: {', '.join(policy_labels)}",
         )
         st.plotly_chart(fig5, use_container_width=True)
         _sf_analysis_box(
-            f"Active policy instruments: **{', '.join(policy_labels)}**. "
-            f"To quantify the isolated effect of each instrument, run the simulator twice — "
-            f"once with policies active and once with all policies off — and compare the welfare metrics. "
-            f"Candidate interventions for households with high modelled access stress during supply disruptions: "
-            f"targeted price subsidies and per-visit purchase caps (Dréze & Sen, 1989; Thaler & Sunstein, 2008)."
+            f"Active policy instruments: **{', '.join(policy_labels)}**. Bars show paired "
+            f"policy-crisis minus no-policy-crisis differences during active-crisis days. "
+            f"Run each lever separately and across multiple paired seeds before ranking instruments."
         )
 
     # ── Summary box ───────────────────────────────────────────────────────────
     policies_str = ', '.join(policy_labels) if policy_labels else "none active"
-    gini_status  = "⚠️ action required" if mean_gini_c > 0.3 else "✅ within range"
     _sf_summary_box(
         "Policy Impact Summary — SecureFood Climate Scenario",
         [
-            f"Peak food stress rate: <b>{peak_stress:.1f}%</b> vs baseline <b>{base_stress:.1f}%</b> (+{peak_stress-base_stress:.1f} pp during crisis)",
-            f"Equity gap: low-income fulfilment <b>{fulfill_lo_c:.1f}%</b> vs high-income <b>{fulfill_hi_c:.1f}%</b> — {fulfill_gap:.1f} pp divergence",
-            f"high food-access stress (low income): <b>+{fies_delta:.1f} pp</b> above baseline at peak",
+            f"Peak budget-stressed low-income share: <b>{peak_stress:.1f}%</b> ({peak_stress-peak_stress_u:+.1f} pp vs no-policy crisis)",
+            f"Low-income fulfilment: <b>{fulfill_lo_c:.1f}%</b> ({fulfill_lo_c-fulfill_lo_u:+.1f} pp vs no-policy crisis)",
+            f"High modeled access stress (low income): <b>{fies_delta:+.1f} pp</b> vs no-policy crisis at peak",
             f"Budget exhaustion (low income): peaked at <b>{peak_budgexh_lo:.1f}%</b> of households",
-            f"Access inequality (Gini): <b>{mean_gini_c:.3f}</b> vs baseline <b>{mean_gini_b:.3f}</b> — {gini_status}",
-            f"Food sovereignty: domestic sales share {'rose' if dom_change >= 0 else 'fell'} by <b>{abs(dom_change):.1f} pp</b> to <b>{dom_share_c:.1f}%</b>",
+            f"Access inequality (Gini): <b>{mean_gini_c:.3f}</b> ({mean_gini_c-mean_gini_u:+.3f} vs no-policy crisis)",
+            f"Domestic sales share: <b>{dom_share_c:.1f}%</b> ({dom_change:+.1f} pp vs no-policy crisis)",
             f"Policy instruments active: <b>{policies_str}</b>",
         ],
-        (
-            f"{'Maintain the purchase cap — it reduces hoarding and access inequality. ' if has_limit else 'Introduce a per-visit purchase cap (2–3 units) — most effective single instrument for access equity. '}"
-            f"{'Domestic subsidy is active — monitor fiscal cost against import dependency reduction. ' if pc.get('subsidy_active') else 'A 10–15% domestic product subsidy would support Finnish producers and reduce import dependency. '}"
-            f"Coordinate calming public communication via the national food authority to dampen panic. "
-            f"If food stress exceeds {peak_stress:.0f}%, activate targeted emergency food vouchers for high-access-stress households. "
-            f"These measures align with SecureFood WP3 policy recommendations for Northern European dairy markets."
-        ),
+        "Interpret these as bundled, single-seed scenario differences. Run individual-lever "
+        "comparisons, Monte Carlo uncertainty, and global sensitivity analysis before making "
+        "operational or policy recommendations.",
     )
 
 
@@ -2608,6 +2652,11 @@ class _SFReport(FPDF):
         self.set_text_color(*_SF_BODY)
 
     # helpers ----------------------------------------------------------------
+    def ensure_space(self, height: float):
+        """Start a continuation page before a report block would be orphaned."""
+        if self.get_y() + height > self.h - self.b_margin:
+            self.add_page()
+
     def chapter(self, num: str, title: str, label: str = ""):
         self._sec = label or title
         self.add_page()
@@ -2626,7 +2675,8 @@ class _SFReport(FPDF):
         self.set_y(30)
         self.set_text_color(*_SF_BODY)
 
-    def sub(self, title: str):
+    def sub(self, title: str, min_content_height: float = 12):
+        self.ensure_space(17 + min_content_height)
         self.ln(3)
         self.set_font("Ar", "B", 10)
         self.set_text_color(*_SF_DARK)
@@ -2640,6 +2690,9 @@ class _SFReport(FPDF):
         self.ln(4)
 
     def body(self, text: str):
+        import textwrap as _tw
+        estimated_lines = max(1, len(_tw.wrap(text, 108)))
+        self.ensure_space(estimated_lines * 5.2 + 4)
         self.set_font("Ar", "", 9.5)
         self.set_text_color(*_SF_BODY)
         self.set_x(15)
@@ -2648,6 +2701,9 @@ class _SFReport(FPDF):
 
     def bullet(self, items: list):
         for item in items:
+            import textwrap as _tw
+            estimated_lines = max(1, len(_tw.wrap(item, 100)))
+            self.ensure_space(estimated_lines * 5.2 + 2)
             bx = 18.5
             by = self.get_y() + 2.2
             self.set_fill_color(*_SF_AMBER)
@@ -2663,9 +2719,10 @@ class _SFReport(FPDF):
         for i, (k, v) in enumerate(rows):
             bg = _SF_CREAM2 if i % 2 == 0 else _SF_WHITE
             self.set_fill_color(*bg)
-            y0 = self.get_y()
             lines = max(1, len(_tw.wrap(v, 65)))
             rh = 5.5 * lines + 2
+            self.ensure_space(rh)
+            y0 = self.get_y()
             self.rect(15, y0, 180, rh, "F")
             self.set_draw_color(*_SF_RULE)
             self.set_line_width(0.15)
@@ -2687,6 +2744,7 @@ class _SFReport(FPDF):
         import textwrap as _tw
         lines = max(1, len(_tw.wrap(text, 90)))
         bh = lines * 5 + 8
+        self.ensure_space(bh + 3)
         y = self.get_y()
         self.set_fill_color(*_SF_AMBER_L)
         self.rect(15, y, 180, bh, "F")
@@ -2704,30 +2762,37 @@ class _SFReport(FPDF):
 
     def metric_row(self, metrics: list):
         """Display a row of (label, value, delta, positive) tuples as KPI boxes."""
+        self.ensure_space(26)
         n = len(metrics)
         w = 180 / n
         x0 = 15
+        y0 = self.get_y()
         for i, (lbl, val, dlt, good) in enumerate(metrics):
             x = x0 + i * w
             self.set_fill_color(*_SF_DARK2)
-            self.rect(x, self.get_y(), w - 1, 22, "F")
+            self.rect(x, y0, w - 1, 22, "F")
             self.set_fill_color(*(_SF_GREEN if good else _SF_RED))
-            self.rect(x, self.get_y(), w - 1, 1.5, "F")
+            self.rect(x, y0, w - 1, 1.5, "F")
             self.set_font("Ar", "", 7)
             self.set_text_color(*_SF_AMBER)
-            self.set_xy(x + 2, self.get_y() + 3)
+            self.set_xy(x + 2, y0 + 3)
             self.cell(w - 4, 4, lbl)
             self.set_font("Ar", "B", 11)
             self.set_text_color(*_SF_WHITE)
-            self.set_xy(x + 2, self.get_y())
+            self.set_xy(x + 2, y0 + 8)
             self.cell(w - 4, 7, val)
             self.set_font("Ar", "I", 7.5)
             self.set_text_color(160, 185, 180)
-            self.set_xy(x + 2, self.get_y())
+            self.set_xy(x + 2, y0 + 16)
             self.cell(w - 4, 5, dlt)
-        self.ln(26)
+        self.set_y(y0 + 26)
 
     def chart(self, path: str, w: float = 175, caption: str = ""):
+        from PIL import Image as _Img
+        with _Img.open(path) as _chart_img:
+            chart_h = w * _chart_img.height / max(1, _chart_img.width)
+        caption_h = 7 if caption else 0
+        self.ensure_space(chart_h + caption_h + 2)
         self.image(path, x=15 + (175 - w) / 2, w=w)
         if caption:
             self.set_font("Ar", "I", 7.5)
@@ -2737,53 +2802,115 @@ class _SFReport(FPDF):
         self.ln(2)
 
 
-@st.cache_data(show_spinner=False)
-def _generate_sf_pdf_report() -> bytes:
-    """
-    Generate a comprehensive SecureFood scenario PDF report using preset defaults.
-    Runs both Supply Chain Actor and Policy Maker simulations.
-    """
-    import textwrap as _tw
-    from fpdf.enums import XPos, YPos
-
-    # ── Preset parameters ─────────────────────────────────────────────────────
-    _no_pol = {
+def _sf_no_policy_config(crisis_start: int = 30) -> dict:
+    """Return a fresh, explicit no-policy configuration."""
+    return {
         "fat_tax_active": False, "fat_tax_threshold": 3.5, "fat_tax_rate": 0.0,
         "subsidy_active": False, "subsidy_target": "domestic", "subsidy_rate": 0.0,
-        "domestic_shock_active": False, "domestic_shock_day": 30,
+        "domestic_shock_active": False, "domestic_shock_day": int(crisis_start),
         "domestic_shock_duration": 30, "domestic_shock_severity": 0.5,
         "labelling_active": False, "labelling_day": 1,
         "labelling_health_boost": 0.0, "labelling_organic_boost": 0.0,
     }
-    _pol_pol = {
-        **_no_pol,
+
+
+def _sf_preset_report_params() -> tuple[dict, dict]:
+    """Return fresh Supply Chain and Policy Maker demonstration presets."""
+    no_policy = _sf_no_policy_config(30)
+    policy = {
+        **_sf_no_policy_config(30),
         "subsidy_active": True, "subsidy_target": "domestic", "subsidy_rate": 0.15,
         "labelling_active": True, "labelling_day": 1,
         "labelling_health_boost": 0.08, "labelling_organic_boost": 0.06,
     }
-    sc_p = {
+    sc_params = {
         "days": 90, "month": 1, "base_con": 200, "reorder": 0.30,
         "target": 0.90, "lead": 3, "cri_start": 30, "cri_duration": 30,
         "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
-        "mc_runs": 1, "policy_cfg": _no_pol,
+        "mc_runs": 1, "policy_cfg": no_policy,
         "purchase_limit": None, "media_intensity": 0.0,
         "communication_type": "neutral", "stockpile_days": None,
         "exploratory_behaviour": True,
     }
-    pm_p = {
+    pm_params = {
         "days": 120, "month": 1, "base_con": 200, "reorder": 0.30,
         "target": 0.90, "lead": 3, "cri_start": 30, "cri_duration": 45,
         "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
-        "mc_runs": 1, "policy_cfg": _pol_pol,
+        "mc_runs": 1, "policy_cfg": policy,
         "purchase_limit": 3, "media_intensity": 0.6,
         "communication_type": "calming", "stockpile_days": None,
         "exploratory_behaviour": True,
     }
+    return sc_params, pm_params
+
+
+@st.cache_data(show_spinner=False)
+def _generate_sf_report_artifacts(
+    sc_params: dict | None = None,
+    pm_params: dict | None = None,
+    report_mode: str = "Preset demonstration",
+) -> dict:
+    """
+    Generate a SecureFood PDF plus aggregate and product-level CSV exports.
+
+    When parameters are omitted, fresh demonstration presets are used. All
+    artifacts are generated from the same paired simulations so the PDF and CSV
+    downloads cannot silently describe different scenario configurations.
+    """
+    import textwrap as _tw
+    from fpdf.enums import XPos, YPos
+
+    # ── Report parameters ─────────────────────────────────────────────────────
+    preset_sc, preset_pm = _sf_preset_report_params()
+    sc_p = dict(sc_params) if sc_params is not None else preset_sc
+    pm_p = dict(pm_params) if pm_params is not None else preset_pm
+    sc_p["policy_cfg"] = dict(sc_p.get("policy_cfg", {}))
+    pm_p["policy_cfg"] = dict(pm_p.get("policy_cfg", {}))
+    report_mode = str(report_mode).strip() or "Custom"
+    _no_pol = _sf_no_policy_config(pm_p.get("cri_start", 30))
+    _sc_policy = sc_p.get("policy_cfg", {}) or {}
+    _pm_policy = pm_p.get("policy_cfg", {}) or {}
+    _has_sc_policy = any(
+        _sc_policy.get(key, False)
+        for key in (
+            "fat_tax_active", "subsidy_active",
+            "domestic_shock_active", "labelling_active",
+        )
+    )
+    _has_pm_policy = any([
+        _pm_policy.get("fat_tax_active", False),
+        _pm_policy.get("subsidy_active", False),
+        _pm_policy.get("domestic_shock_active", False),
+        _pm_policy.get("labelling_active", False),
+        pm_p.get("purchase_limit") is not None,
+        float(pm_p.get("media_intensity", 0.0)) > 0,
+    ])
+    _policy_labels = []
+    if _pm_policy.get("subsidy_active", False):
+        _policy_labels.append(
+            f"{float(_pm_policy.get('subsidy_rate', 0.0))*100:.0f}% domestic subsidy"
+        )
+    if _pm_policy.get("labelling_active", False):
+        _policy_labels.append("nutritional labelling")
+    if pm_p.get("purchase_limit") is not None:
+        _policy_labels.append(f"{int(pm_p['purchase_limit'])}-unit purchase cap")
+    if float(pm_p.get("media_intensity", 0.0)) > 0:
+        _policy_labels.append(
+            f"{pm_p.get('communication_type', 'neutral')} communications "
+            f"({float(pm_p['media_intensity']):.2f})"
+        )
+    _policy_summary = ", ".join(_policy_labels) if _policy_labels else "no active policy levers"
+    _comparison_name = (
+        "selected-policy crisis" if _has_pm_policy else "no-active-policy crisis"
+    )
 
     # ── Run simulations ───────────────────────────────────────────────────────
-    def _run(params):
-        m_b = _make_model(params, is_crisis=False, seed=42)
-        m_c = _make_model(params, is_crisis=True,  seed=42)
+    # Use a paired seed across all conditions.  Policy effects require a
+    # crisis-without-policy counterfactual; baseline-vs-selected-crisis alone
+    # cannot identify the incremental contribution of active policy levers.
+    def _run_pair(params, policy_cfg):
+        m_b = _make_model(params, is_crisis=False, seed=42, policy_cfg=policy_cfg)
+        m_c = _make_model(params, is_crisis=True,  seed=42, policy_cfg=policy_cfg)
         rows, prod = [], []
         for day in range(1, params["days"] + 1):
             m_b.step(); m_c.step()
@@ -2792,14 +2919,45 @@ def _generate_sf_pdf_report() -> bytes:
             rows += [ab, ac]; prod += pb + pc
         return {"df": pd.DataFrame(rows), "df_prod": pd.DataFrame(prod), "params": params}
 
-    sc_data = _run(sc_p)
-    pm_data = _run(pm_p)
+    def _run_crisis(params, policy_cfg):
+        model = _make_model(params, is_crisis=True, seed=42, policy_cfg=policy_cfg)
+        rows, prod = [], []
+        for day in range(1, params["days"] + 1):
+            model.step()
+            agg, product_rows = _collect_model_day(model, day, "Crisis")
+            rows.append(agg)
+            prod.extend(product_rows)
+        return {"df": pd.DataFrame(rows), "df_prod": pd.DataFrame(prod), "params": params}
 
-    sc_df = sc_data["df"]; pm_df = pm_data["df"]
+    pm_no_policy_p = {
+        **pm_p,
+        "policy_cfg": _no_pol,
+        "purchase_limit": None,
+        "media_intensity": 0.0,
+        "communication_type": "neutral",
+    }
+
+    sc_data = _run_pair(sc_p, _sc_policy)
+    pm_unpol_data = _run_pair(pm_no_policy_p, _no_pol)
+    pm_policy_data = (
+        _run_crisis(pm_p, _pm_policy)
+        if _has_pm_policy else {
+            "df": pm_unpol_data["df"][
+                pm_unpol_data["df"]["Scenario"] == "Crisis"
+            ].copy(),
+            "df_prod": pm_unpol_data["df_prod"][
+                pm_unpol_data["df_prod"]["Scenario"] == "Crisis"
+            ].copy(),
+            "params": pm_p,
+        }
+    )
+
+    sc_df = sc_data["df"]
     sc_b  = sc_df[sc_df["Scenario"] == "Baseline"].reset_index(drop=True)
     sc_c  = sc_df[sc_df["Scenario"] == "Crisis"].reset_index(drop=True)
-    pm_b  = pm_df[pm_df["Scenario"] == "Baseline"].reset_index(drop=True)
-    pm_c  = pm_df[pm_df["Scenario"] == "Crisis"].reset_index(drop=True)
+    pm_b  = pm_unpol_data["df"][pm_unpol_data["df"]["Scenario"] == "Baseline"].reset_index(drop=True)
+    pm_u  = pm_unpol_data["df"][pm_unpol_data["df"]["Scenario"] == "Crisis"].reset_index(drop=True)
+    pm_c  = pm_policy_data["df"].reset_index(drop=True)
 
     # ── SC metrics ────────────────────────────────────────────────────────────
     rev_b       = sc_b["Revenue"].sum()
@@ -2826,21 +2984,40 @@ def _generate_sf_pdf_report() -> bytes:
     panic_peak_d= int(sc_c.loc[sc_c["PanicLevel"].idxmax(), "Day"])
 
     # ── PM metrics ────────────────────────────────────────────────────────────
-    peak_stress = float(pm_c["FoodStressedPct"].max()) * 100
-    base_stress = float(pm_b["FoodStressedPct"].mean()) * 100
-    peak_bx_lo  = float(pm_c["BudgetExh_Low"].max()) * 100
-    peak_bx_hi  = float(pm_c["BudgetExh_High"].max()) * 100
-    mean_gini_c = float(pm_c["GiniAccess"].mean())
-    mean_gini_b = float(pm_b["GiniAccess"].mean())
-    imp_dep_b   = float(pm_b["ImportDepPct"].mean()) * 100
-    imp_dep_c   = float(pm_c["ImportDepPct"].mean()) * 100
-    ful_lo      = float(pm_c["Fulfillment_Low"].mean()) * 100
-    ful_hi      = float(pm_c["Fulfillment_High"].mean()) * 100
-    fies_peak   = float(pm_c["FIESSevere_Low"].max()) * 100
-    fies_base   = float(pm_b["FIESSevere_Low"].mean()) * 100
-    dom_b       = pm_b["DomesticSales"].sum() / max(pm_b["DomesticSales"].sum() + pm_b["ImportSales"].sum(), 1) * 100
-    dom_c       = pm_c["DomesticSales"].sum() / max(pm_c["DomesticSales"].sum() + pm_c["ImportSales"].sum(), 1) * 100
-    pm_cri_end  = pm_p["cri_start"] + pm_p["cri_duration"]
+    # Compare like-for-like days within the active crisis window. Averaging the
+    # full horizon would dilute the effect with pre-crisis and recovery days.
+    pm_cri_end = pm_p["cri_start"] + pm_p["cri_duration"]
+    def _pm_window(frame):
+        return frame[
+            (frame["Day"] >= pm_p["cri_start"]) & (frame["Day"] < pm_cri_end)
+        ].reset_index(drop=True)
+
+    pm_b_win = _pm_window(pm_b)
+    pm_u_win = _pm_window(pm_u)
+    pm_c_win = _pm_window(pm_c)
+
+    peak_stress = float(pm_c_win["FoodStressedPct"].max()) * 100
+    base_stress = float(pm_b_win["FoodStressedPct"].mean()) * 100
+    peak_bx_lo  = float(pm_c_win["BudgetExh_Low"].max()) * 100
+    peak_bx_hi  = float(pm_c_win["BudgetExh_High"].max()) * 100
+    mean_gini_c = float(pm_c_win["GiniAccess"].mean())
+    mean_gini_b = float(pm_b_win["GiniAccess"].mean())
+    imp_dep_b   = float(pm_b_win["ImportDepPct"].mean())
+    imp_dep_c   = float(pm_c_win["ImportDepPct"].mean())
+    ful_lo      = float(pm_c_win["Fulfillment_Low"].mean()) * 100
+    ful_hi      = float(pm_c_win["Fulfillment_High"].mean()) * 100
+    fies_peak   = float(pm_c_win["FIESSevere_Low"].max()) * 100
+    fies_base   = float(pm_b_win["FIESSevere_Low"].mean()) * 100
+    dom_b       = pm_b_win["DomesticSales"].sum() / max(pm_b_win["DomesticSales"].sum() + pm_b_win["ImportSales"].sum(), 1) * 100
+    dom_c       = pm_c_win["DomesticSales"].sum() / max(pm_c_win["DomesticSales"].sum() + pm_c_win["ImportSales"].sum(), 1) * 100
+    ful_lo_u    = float(pm_u_win["Fulfillment_Low"].mean()) * 100
+    ful_hi_u    = float(pm_u_win["Fulfillment_High"].mean()) * 100
+    fies_peak_u = float(pm_u_win["FIESSevere_Low"].max()) * 100
+    mean_gini_u = float(pm_u_win["GiniAccess"].mean())
+    imp_dep_u   = float(pm_u_win["ImportDepPct"].mean())
+    dom_u       = pm_u_win["DomesticSales"].sum() / max(pm_u_win["DomesticSales"].sum() + pm_u_win["ImportSales"].sum(), 1) * 100
+    peak_panic_u = float(pm_u_win["PanicLevel"].max())
+    peak_panic_c = float(pm_c_win["PanicLevel"].max())
 
     # ── Matplotlib style ──────────────────────────────────────────────────────
     _C = {"b": "#2980b9", "r": "#c0392b", "a": "#DBA159", "g": "#27ae60",
@@ -2882,9 +3059,9 @@ def _generate_sf_pdf_report() -> bytes:
     ax2.plot(sc_c2["Day"], sc_c2["CumLost"], color=_C["a"], lw=2, label="Cumulative lost sales")
     ax2.spines["right"].set_visible(True)
     _crisis_span(ax1, sc_p["cri_start"], sc_cri_end, sc_p["days"])
-    ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Lost Sales €/day")
-    ax2.set_ylabel("Cumulative (€)")
-    ax1.set_title("Stockout Revenue Loss — Daily Events and Cumulative Accumulation")
+    ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Unmet Demand Units/day")
+    ax2.set_ylabel("Cumulative Units")
+    ax1.set_title("Unmet Demand — Daily Events and Cumulative Accumulation")
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
     ax1.legend(h1 + h2, l1 + l2, fontsize=7.5, loc="upper left")
@@ -2901,7 +3078,7 @@ def _generate_sf_pdf_report() -> bytes:
     ax2.spines["right"].set_visible(True)
     _crisis_span(ax1, sc_p["cri_start"], sc_cri_end, sc_p["days"])
     ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Panic Level (0–1)")
-    ax2.set_ylabel("Stockpile Pressure (0–1)")
+    ax2.set_ylabel("Demand Ratio (1.0 = base)")
     ax1.set_title("Consumer Panic Level and Stockpile Pressure")
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
@@ -2941,10 +3118,12 @@ def _generate_sf_pdf_report() -> bytes:
         ("Fulfillment_Mid",  _C["mi"], "Mid income"),
         ("Fulfillment_High", _C["hi"], "High income"),
     ]:
-        ax.plot(pm_c["Day"], pm_c[col_k] * 100, color=col_c, lw=2, label=f"{lbl} (crisis)")
+        ax.plot(pm_c["Day"], pm_c[col_k] * 100, color=col_c, lw=2, label=f"{lbl} (policy crisis)")
+    ax.plot(pm_u["Day"], pm_u["Fulfillment_Low"] * 100, color=_C["lo"], lw=1.3,
+            ls=":", label="Low income (crisis, no policy)")
     ax.plot(pm_b["Day"], pm_b["FulfillmentRate"] * 100, color=_C["gr"], lw=1.2, ls="--",
             label="All income (baseline)")
-    ax.axhline(80, color="#c0392b", ls=":", lw=1, label="80% welfare threshold")
+    ax.axhline(80, color="#555555", ls="--", lw=1, label="80% reporting reference")
     _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
     ax.set_xlabel("Simulation Day"); ax.set_ylabel("Fulfilment Rate (%)")
     ax.set_ylim(0, 105)
@@ -2959,6 +3138,8 @@ def _generate_sf_pdf_report() -> bytes:
     ax.plot(pm_c["Day"], pm_c["FIESSevere_Mid"]  * 100, color=_C["mi"], lw=2, label="Mid income (crisis)")
     ax.plot(pm_c["Day"], pm_c["FIESSevere_High"] * 100, color=_C["hi"], lw=2, label="High income (crisis)")
     ax.plot(pm_b["Day"], pm_b["FIESSevere_Low"]  * 100, color=_C["lo"], lw=1, ls="--", alpha=0.5, label="Low (baseline)")
+    ax.plot(pm_u["Day"], pm_u["FIESSevere_Low"]  * 100, color="#2c3e50", lw=1.2,
+            ls=":", label="Low (crisis, no policy)")
     _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
     ax.set_xlabel("Simulation Day"); ax.set_ylabel("Access Stress High (%)")
     ax.set_title("High Food-Access Stress by Income Bracket — Crisis vs Baseline")
@@ -2973,6 +3154,7 @@ def _generate_sf_pdf_report() -> bytes:
     ax2 = ax1.twinx()
     ax2.plot(pm_c["Day"], pm_c["GiniAccess"], color=_C["a"], lw=1.8, ls="-.", label="Gini access index")
     ax2.plot(pm_b["Day"], pm_b["GiniAccess"], color=_C["a"], lw=1, ls=":", alpha=0.5, label="Gini (baseline)")
+    ax2.plot(pm_u["Day"], pm_u["GiniAccess"], color="#2c3e50", lw=1.1, ls="--", label="Gini (crisis, no policy)")
     ax2.spines["right"].set_visible(True)
     _crisis_span(ax1, pm_p["cri_start"], pm_cri_end, pm_p["days"])
     ax1.set_xlabel("Simulation Day"); ax1.set_ylabel("Budget Exhausted (%)")
@@ -2988,8 +3170,10 @@ def _generate_sf_pdf_report() -> bytes:
     fig, ax = plt.subplots(figsize=(7, 2.8))
     ax.stackplot(pm_c["Day"],
                  pm_c["DomesticSales"], pm_c["ImportSales"],
-                 labels=["Domestic (crisis)", "Import (crisis)"],
+                 labels=["Domestic (policy crisis)", "Import (policy crisis)"],
                  colors=[_C["g"], _C["b"]], alpha=0.65)
+    ax.plot(pm_u["Day"], pm_u["DomesticSales"] + pm_u["ImportSales"],
+            color="#2c3e50", lw=1.2, ls=":", label="Total crisis (no policy)")
     ax.plot(pm_b["Day"], pm_b["DomesticSales"] + pm_b["ImportSales"],
             color=_C["gr"], lw=1.5, ls="--", label="Total baseline")
     _crisis_span(ax, pm_p["cri_start"], pm_cri_end, pm_p["days"])
@@ -3001,7 +3185,7 @@ def _generate_sf_pdf_report() -> bytes:
 
     # ── BUILD PDF ─────────────────────────────────────────────────────────────
     pdf = _SFReport()
-    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.set_auto_page_break(auto=False)
     pdf._lf()
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3039,7 +3223,7 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.set_y(y_after_logos + 8)
     pdf.set_font("Ar", "B", 22)
     pdf.set_text_color(*_SF_WHITE)
-    pdf.cell(0, 10, "SecureFood Scenario Analysis Report", align="C",
+    pdf.cell(0, 10, f"SecureFood {report_mode} Report", align="C",
              new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Ar", "I", 12)
     pdf.set_text_color(*_SF_AMBER)
@@ -3056,11 +3240,13 @@ def _generate_sf_pdf_report() -> bytes:
     desc = (
         "This report presents a comprehensive agent-based simulation analysis of the impact "
         "of climate-driven disruptions on the Finnish dairy supply chain. The simulation "
-        "applies the GROCERYsim ABM v2.0 framework calibrated with data from the Horizon "
-        "Europe SecureFood Consortium (N = 116 Finnish consumers). Results are reported "
+        "applies the GROCERYsim ABM v2.0 framework informed by 116 collected Finnish "
+        "participant records, of which 108 provide usable matched baskets and linked DCE data. "
+        "Results are reported "
         "from two complementary perspectives: Supply Chain Actors (operational resilience) "
-        "and Policy Makers (consumer welfare and equity). Preset scenario parameters "
-        "reflect the IPCC AR6 central estimates for Northern European food systems."
+        f"and Policy Makers (consumer welfare and equity). This is a {report_mode.lower()} "
+        "report. Its displayed parameters are analyst-defined stress-test assumptions, not "
+        "forecasts or IPCC-calibrated effects."
     )
     pdf.set_x(25)
     pdf.multi_cell(160, 5.5, desc)
@@ -3119,12 +3305,16 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.set_font("Ar", "", 7)
     pdf.cell(0, 4.5, f"Report generated: {_dt.today().strftime('%d %B %Y')}", align="C")
 
+    # Re-enable automatic breaks for flowing report content. The cover uses
+    # fixed coordinates and must never create an overflow-only second page.
+    pdf.set_auto_page_break(auto=True, margin=16)
+
     # ─────────────────────────────────────────────────────────────────────────
     # PAGE 2: EXECUTIVE SUMMARY
     # ─────────────────────────────────────────────────────────────────────────
     pdf.chapter("1", "Executive Summary", "Executive Summary")
     pdf.body(
-        "This report analyses the impact of a climate-driven disruption on the Finnish dairy "
+        f"This {report_mode.lower()} report analyses the impact of a climate-driven disruption on the Finnish dairy "
         "supply chain using the GROCERYsim Agent-Based Model v2.0. The simulation runs for "
         f"{sc_p['days']} days (Supply Chain perspective) and {pm_p['days']} days (Policy Maker "
         "perspective), with a crisis beginning on Day 30 and featuring a "
@@ -3137,43 +3327,42 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.sub("Key Findings — Supply Chain Perspective")
     pdf.metric_row([
         ("Total Revenue Loss",    f"€{rev_loss:,.0f}",     f"−{rev_pct:.1f}% vs baseline",      False),
-        ("Stockout Revenue Lost", f"€{lost_total:,.0f}",   "unrecoverable demand",               False),
+        ("Unmet Demand",          f"{lost_total:,.0f} units", "stockout/price constrained",       False),
         ("Peak Panic Level",      f"{peak_panic:.2f}/1.0", f"mean {mean_panic:.2f}",             False),
         ("Recovery Time",         f"{recovery_sc} days" if recovery_sc else "Not in horizon",
          "after crisis end",                                                                       recovery_sc is not None),
     ])
     pdf.body(
         f"The crisis generated a constant-price revenue contraction of €{rev_loss:,.0f} "
-        f"({rev_pct:.1f}%) over the simulation horizon, with an additional €{lost_total:,.0f} "
-        f"in unrecovered stockout losses. Consumer panic peaked on Day {panic_peak_d} at a "
-        f"level of {peak_panic:.2f}/1.0, accompanied by a stockpile pressure index of "
+        f"({rev_pct:.1f}%) over the simulation horizon. The model also recorded {lost_total:,.0f} "
+        f"unmet demand units; this is a mechanism-level quantity and must not be added to the "
+        f"revenue gap. Consumer panic peaked on Day {panic_peak_d} at a "
+        f"level of {peak_panic:.2f}/1.0, accompanied by a stockpiling-demand ratio of "
         f"{sp_peak:.2f}. Nominal revenue (at inflated prices) "
         f"{'increased' if nom_gain > 0 else 'decreased'} by €{abs(nom_gain):,.0f}, "
         f"masking the underlying volume shortfall — a critical distinction for operational "
-        "planning. Food waste increased by "
-        f"{abs(waste_delta):.0f} units relative to baseline due to over-ordering and "
-        "demand collapse following the panic phase."
+        "planning. Food waste "
+        f"{'increased' if waste_delta >= 0 else 'decreased'} by {abs(waste_delta):.0f} units "
+        "relative to baseline in this paired deterministic run."
     )
 
     pdf.sub("Key Findings — Policy Maker Perspective")
     pdf.metric_row([
-        ("Peak Food Stress",     f"{peak_stress:.1f}%",   f"baseline {base_stress:.1f}%",         False),
-        ("Low-Income Basket Ful.", f"{ful_lo:.1f}%",      f"high-income: {ful_hi:.1f}%",          False),
-        ("Access Stress High (Low Inc.)", f"{fies_peak:.1f}%",   f"baseline {fies_base:.1f}%",           False),
-        ("Gini Access Index",    f"{mean_gini_c:.3f}",    f"baseline {mean_gini_b:.3f}",          False),
+        ("Budget-Stressed Low-Income", f"{peak_stress:.1f}%", f"baseline {base_stress:.1f}%",      False),
+        ("Low-Income Fulfilment", f"{ful_lo:.1f}%",      f"no-policy crisis {ful_lo_u:.1f}%",   ful_lo >= ful_lo_u),
+        ("High Access Stress (Low)", f"{fies_peak:.1f}%", f"no-policy crisis {fies_peak_u:.1f}%", fies_peak <= fies_peak_u),
+        ("Gini Access Index",    f"{mean_gini_c:.3f}",    f"no-policy crisis {mean_gini_u:.3f}", mean_gini_c <= mean_gini_u),
     ])
     pdf.body(
-        f"From a food security perspective, the crisis generated a peak food stress rate of "
-        f"{peak_stress:.1f}% among consumers (vs baseline {base_stress:.1f}%). Low-income "
-        f"households achieved only {ful_lo:.1f}% basket fulfilment on average during the crisis "
-        f"window, compared to {ful_hi:.1f}% for high-income households — a gap of "
-        f"{ful_hi - ful_lo:.1f} percentage points representing significant structural inequity. "
-        f"The high food-access stress rate among low-income consumers peaked at "
-        f"{fies_peak:.1f}% (baseline: {fies_base:.1f}%), a rise of {fies_peak - fies_base:.1f} pp. "
-        f"The Gini access index rose from {mean_gini_b:.3f} to {mean_gini_c:.3f}, confirming "
-        "a material deterioration in distributional equity. With policy interventions active "
-        "(domestic subsidy 15%, purchase rationing, nutritional labelling), the import "
-        f"dependency shifted from {imp_dep_b:.1f}% to {imp_dep_c:.1f}%."
+        f"The {_comparison_name} run produced a peak budget-stressed low-income shopper share of "
+        f"{peak_stress:.1f}% (baseline mean {base_stress:.1f}%). Low-income basket fulfilment "
+        f"averaged {ful_lo:.1f}%, compared with {ful_hi:.1f}% for high-income households. "
+        f"Against the paired crisis-without-policy counterfactual, low-income fulfilment changed "
+        f"by {ful_lo - ful_lo_u:+.1f} percentage points, peak high access stress changed by "
+        f"{fies_peak - fies_peak_u:+.1f} points, and the mean Gini access index changed by "
+        f"{mean_gini_c - mean_gini_u:+.3f}. Import dependency changed from "
+        f"{imp_dep_u:.1f}% without policy to {imp_dep_c:.1f}% in the selected configuration. These are paired, "
+        "single-seed scenario differences, not estimated causal effects."
     )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3181,51 +3370,56 @@ def _generate_sf_pdf_report() -> bytes:
     # ─────────────────────────────────────────────────────────────────────────
     pdf.chapter("2", "Scenario Configuration & Parameters", "Scenario Parameters")
     pdf.body(
-        "The following parameters were used for the preset scenario simulations. These values "
-        "are calibrated to represent a moderate-to-severe climate disruption event affecting "
-        "Finnish dairy supply chains, consistent with IPCC AR6 projections for Northern Europe."
+        f"The following parameters were used for this {report_mode.lower()} report. These values "
+        "define an illustrative moderate-to-severe disruption affecting Finnish dairy supply "
+        "chains. They are transparent analyst inputs and have not been calibrated to an observed event."
     )
-    pdf.sub("2.1  Supply Chain Actor Scenario")
+    pdf.sub("2.1  Supply Chain Actor Scenario", min_content_height=65)
     pdf.kv([
-        ("Simulation Horizon",   f"{sc_p['days']} days"),
-        ("Base Daily Consumers", f"{sc_p['base_con']} agents/day"),
-        ("Start Month",          "January (baseline demand level)"),
-        ("Crisis Start Day",     f"Day {sc_p['cri_start']}"),
-        ("Crisis Duration",      f"{sc_p['cri_duration']} days (ends Day {sc_cri_end})"),
-        ("Price Inflation",      f"{sc_p['inf']:.0f}% (IPCC AR6 central estimate, 2°C warming scenario)"),
-        ("Supply Disruption",    f"{sc_p['dis']}-day delivery delay (significant but recoverable shock)"),
-        ("Panic Sensitivity",    f"{sc_p['panic']:.2f} (scenario assumption; not estimated from the DCE)"),
-        ("Hoarding Factor",      f"{sc_p['hoard']:.1f}× maximum, scaled by cross-fitted household propensity"),
-        ("Lead Time",            f"{sc_p['lead']} days (standard Finnish grocery logistics)"),
-        ("Reorder Point",        f"{sc_p['reorder']} units"),
-        ("Target Stock",         f"{sc_p['target']} units"),
-        ("Policy Interventions", "None (no-intervention baseline for Supply Chain perspective)"),
+        ("Horizon & Traffic",    f"{sc_p['days']} days; {sc_p['base_con']} agents/day"),
+        ("Calendar & Crisis",    f"Month {sc_p['month']}; starts Day {sc_p['cri_start']}; "
+                                  f"lasts {sc_p['cri_duration']} days (ends Day {sc_cri_end})"),
+        ("Stress Inputs",        f"{sc_p['inf']:.0f}% price inflation; "
+                                  f"{sc_p['dis']}-day delivery interruption"),
+        ("Behaviour",            f"Panic {sc_p['panic']:.2f}; hoarding {sc_p['hoard']:.1f}× maximum "
+                                  "(exploratory assumptions)"),
+        ("Logistics",            f"{sc_p['lead']}-day lead time (engineering assumption)"),
+        ("Inventory Policy",     f"Reorder at {sc_p['reorder']*100:.0f}%; "
+                                  f"restock to {sc_p['target']*100:.0f}% of capacity"),
+        ("Policy Interventions", "None" if not _has_sc_policy else "Configured in supplied settings"),
     ])
-    pdf.sub("2.2  Policy Maker Scenario")
+    pdf.sub("2.2  Policy Maker Scenario", min_content_height=75)
     pdf.kv([
-        ("Simulation Horizon",   f"{pm_p['days']} days (extended to capture policy recovery arc)"),
-        ("Base Daily Consumers", f"{pm_p['base_con']} agents/day"),
-        ("Crisis Start Day",     f"Day {pm_p['cri_start']}"),
-        ("Crisis Duration",      f"{pm_p['cri_duration']} days (ends Day {pm_cri_end})"),
-        ("Price Inflation",      f"{pm_p['inf']:.0f}% (same climate shock as SC scenario)"),
-        ("Supply Disruption",    f"{pm_p['dis']}-day delivery delay"),
-        ("Panic Sensitivity",    f"{pm_p['panic']:.2f}"),
-        ("Hoarding Factor",      f"{pm_p['hoard']:.1f}×"),
-        ("Lead Time",            f"{pm_p['lead']} days"),
-        ("Domestic Subsidy",     "15% price reduction on Finnish-origin dairy products"),
-        ("Purchase Rationing",   "3-unit per-visit cap on dairy products"),
-        ("Nutritional Labelling","Active from Day 1 (health boost +8%, organic boost +6%)"),
-        ("Gov. Communications",  "Calming messaging intensity 0.6 (moderate-strong)"),
+        ("Horizon & Traffic",    f"{pm_p['days']} days; {pm_p['base_con']} agents/day"),
+        ("Calendar & Crisis",    f"Month {pm_p['month']}; starts Day {pm_p['cri_start']}; "
+                                  f"lasts {pm_p['cri_duration']} days (ends Day {pm_cri_end})"),
+        ("Stress Inputs",        f"{pm_p['inf']:.0f}% price inflation; "
+                                  f"{pm_p['dis']}-day delivery delay"),
+        ("Behaviour & Logistics", f"Panic {pm_p['panic']:.2f}; hoarding {pm_p['hoard']:.1f}×; "
+                                   f"{pm_p['lead']}-day lead time"),
+        ("Inventory Policy",     f"Reorder at {pm_p['reorder']*100:.0f}%; "
+                                  f"restock to {pm_p['target']*100:.0f}% of capacity"),
+        ("Domestic Subsidy",     (
+            f"{float(_pm_policy.get('subsidy_rate', 0.0))*100:.0f}% on "
+            f"{_pm_policy.get('subsidy_target', 'domestic')} products"
+            if _pm_policy.get("subsidy_active", False) else "Disabled"
+        )),
+        ("Purchase Rationing",   (
+            f"{int(pm_p['purchase_limit'])}-unit per-product cap"
+            if pm_p.get("purchase_limit") is not None else "Disabled"
+        )),
+        ("Nutritional Labelling", (
+            f"Active from Day {int(_pm_policy.get('labelling_day', 1))}; "
+            f"health +{float(_pm_policy.get('labelling_health_boost', 0.0))*100:.0f}%, "
+            f"organic +{float(_pm_policy.get('labelling_organic_boost', 0.0))*100:.0f}%"
+            if _pm_policy.get("labelling_active", False) else "Disabled"
+        )),
+        ("Gov. Communications",  (
+            f"{pm_p.get('communication_type', 'neutral').title()} at intensity "
+            f"{float(pm_p.get('media_intensity', 0.0)):.2f}"
+            if float(pm_p.get("media_intensity", 0.0)) > 0 else "Disabled / neutral"
+        )),
     ])
-    pdf.finding(
-        f"The Policy Maker scenario activates three complementary interventions simultaneously. "
-        f"The domestic subsidy (15%) targets food sovereignty and producer income stability. "
-        f"Purchase rationing (3 units/visit) directly limits hoarding behaviour. "
-        f"Calming public communications (intensity 0.6) dampen panic amplification. "
-        f"Together these represent the SecureFood WP3 recommended policy bundle for "
-        f"Northern European dairy market disruptions."
-    )
-
     # ─────────────────────────────────────────────────────────────────────────
     # PAGE 4: SUPPLY CHAIN ANALYSIS — Revenue
     # ─────────────────────────────────────────────────────────────────────────
@@ -3236,7 +3430,7 @@ def _generate_sf_pdf_report() -> bytes:
         "supply chain. The focus is on revenue integrity, stockout risk, inventory dynamics, "
         "and consumer panic propagation."
     )
-    pdf.sub("3.1  Revenue Impact — Inflation-Volume Decomposition")
+    pdf.sub("3.1  Revenue Impact — Inflation-Volume Decomposition", min_content_height=100)
     pdf.chart(p_revA,
         caption="Fig. 1 — Daily revenue: baseline vs crisis (constant-price) and crisis nominal (inflated). "
                 "Red shading = revenue gap. Dotted vertical = crisis onset.")
@@ -3248,55 +3442,48 @@ def _generate_sf_pdf_report() -> bytes:
         f"headline figures — masking the true operational deterioration. "
         f"Peak single-day volume loss occurred on Day {peak_vl_day}."
     )
-    pdf.sub("3.2  Stockout Events and Lost Sales")
+    pdf.sub("3.2  Unmet Demand Events", min_content_height=100)
     pdf.chart(p_lost,
-        caption="Fig. 2 — Daily lost sales revenue (bars) and cumulative total (amber line).")
+        caption="Fig. 2 — Daily unmet demand units (bars) and cumulative units (amber line).")
     pdf.finding(
-        f"Stockout losses totalled €{lost_total:,.0f} over the simulation horizon — "
-        f"revenue that is permanently unrecoverable as consumers either substituted or "
-        f"went without. Peak single-day loss of €{peak_lost_v:,.0f} occurred on "
-        f"Day {peak_lost_d}. Empirical studies indicate 21–43% of consumers affected by "
-        "stockouts do not return for that purchase, amplifying the effective demand destruction "
-        "beyond the immediate revenue figure."
+        f"The model recorded {lost_total:,.0f} unmet demand units over the simulation horizon. "
+        f"The peak single-day count was {peak_lost_v:,.0f} units on Day {peak_lost_d}. "
+        "This counter includes quantity not fulfilled after price rejection, substitution, or "
+        "stock constraints; it is not denominated in euros and is not evidence of permanent "
+        "customer loss."
     )
 
     # ─────────────────────────────────────────────────────────────────────────
     # PAGE 5: SC Analysis — Stock & Panic
     # ─────────────────────────────────────────────────────────────────────────
     pdf._sec = "SC Analysis — Stock & Panic"
-    pdf.sub("3.3  Shelf Stock Depletion by Product Category")
+    pdf.sub("3.3  Shelf Stock Depletion by Product Category", min_content_height=100)
     pdf.chart(p_stock,
         caption="Fig. 3 — Mean shelf stock by category: baseline (dashed) vs crisis (solid). "
                 "Each colour represents one product category.")
     pdf.body(
-        "Shelf stock depletion begins immediately at crisis onset on Day "
-        f"{sc_p['cri_start']}, as the {sc_p['dis']}-day supply delay prevents timely replenishment "
-        "while panic-buying drains existing inventory. Product categories with shorter shelf "
-        "life (fresh dairy) deplete fastest and are most exposed to waste after the panic "
-        "phase subsides. Categories with longer shelf life show secondary stockpiling dynamics "
-        "as consumers attempt to build home buffers."
+        "The solid lines show the realised crisis trajectory and the dashed lines the paired "
+        "baseline trajectory. Differences reflect the combined analyst-defined supply interruption, "
+        "price shock, and exploratory demand-amplification mechanisms. Category-specific effects "
+        "should be interpreted from the plotted trajectories rather than assumed from shelf life alone."
     )
-    pdf.sub("3.4  Consumer Panic Level and Stockpile Pressure")
+    pdf.sub("3.4  Consumer Panic Level and Stockpile Pressure", min_content_height=100)
     pdf.chart(p_panic,
-        caption="Fig. 4 — Panic level (left axis) and stockpile pressure index (right axis, amber dashes).")
+        caption="Fig. 4 — Internal panic state (left) and stockpiling-demand ratio (right; 1.0 = base demand).")
     pdf.finding(
         f"Consumer panic peaked at {peak_panic:.2f}/1.0 on Day {panic_peak_d}, "
-        f"with a simulation mean of {mean_panic:.2f}. Stockpile pressure reached "
-        f"{sp_peak:.2f}, indicating strong demand amplification beyond normal purchasing. "
-        f"Under the Theory of Planned Behaviour framework, this panic level corresponds "
-        f"to a significant negative shift in Perceived Behavioural Control — consumers "
-        f"lose confidence in their ability to meet food needs through normal channels, "
-        f"continuously amplifying propensity-weighted demand. At panic sensitivity {sc_p['panic']:.2f} and "
-        f"hoarding factor {sc_p['hoard']:.1f}×, the demand amplification is considerable "
-        f"but below the severe panic threshold (>0.7) observed in major disruption events."
+        f"with a simulation mean of {mean_panic:.2f}. The stockpiling-demand ratio reached "
+        f"{sp_peak:.2f} (1.0 = base requested demand). "
+        "Both are internal exploratory state variables generated by scenario assumptions; "
+        "they are not measured panic or validated behavioural thresholds. The household-level "
+        "hoarding multiplier is nevertheless scaled by the model's cross-fitted propensity, "
+        "preserving the evidence separation introduced in the revised model."
     )
     pdf.body(
-        "Supply chain actors should note that the panic dynamics create a 'double shock': "
-        "first, the genuine supply reduction from the delivery delay; second, the demand "
-        "surge from hoarding behaviour which further depletes available stock. Managing "
-        "consumer communications is therefore an operational tool, not just a public "
-        "relations function. Coordinating with government on calming messaging can "
-        "materially reduce the panic-driven demand amplification."
+        "The scenario combines a supply interruption with optional demand amplification. "
+        "The paired no-policy and selected-policy crisis comparison below isolates the simulated configuration "
+        "difference, while the methodology section identifies panic and communication dynamics "
+        "as unvalidated exploratory assumptions."
     )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3306,34 +3493,31 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.body(
         "This section analyses the food security and equity implications of the dairy supply "
         "disruption from the perspective of government agencies, regulators, and food system "
-        "authorities. Results include the effect of the preset policy intervention bundle: "
-        "15% domestic subsidy, 3-unit purchase cap, nutritional labelling, and calming "
-        "government communications at intensity 0.6."
+        "authorities. Results compare the selected policy configuration against a paired "
+        f"crisis-without-policy counterfactual. Selected levers: {_policy_summary}."
     )
-    pdf.sub("4.1  Basket Fulfilment Rate by Income Group")
+    pdf.sub("4.1  Basket Fulfilment Rate by Income Group", min_content_height=100)
     pdf.chart(p_ful,
-        caption="Fig. 5 — Crisis basket fulfilment by income bracket vs all-income baseline (grey dashed). "
-                "Red dotted line = 80% welfare threshold.")
+        caption="Fig. 5 — Policy-crisis fulfilment by income, paired no-policy crisis, and baseline. "
+                "The 80% line is a descriptive reporting reference, not a validated welfare threshold.")
     pdf.finding(
-        f"Low-income households achieved only {ful_lo:.1f}% mean basket fulfilment during the "
-        f"crisis window, vs {ful_hi:.1f}% for high-income — a {ful_hi - ful_lo:.1f} pp gap. "
-        f"Fulfilment fell below the 80% welfare threshold for low-income consumers for "
-        f"{int((pm_c['Fulfillment_Low'] < 0.80).sum())} simulation days. "
-        f"This structural disparity arises from the price inflation effect: at {pm_p['inf']:.0f}% "
-        f"inflation, low-income consumers exhaust their food budgets proportionally faster, "
-        f"even with the 15% domestic subsidy active. The subsidy partially offsets this "
-        f"effect but does not eliminate the equity gap, suggesting targeted income-based "
-        f"vouchers would be needed as a complementary instrument."
+        f"Low-income households achieved {ful_lo:.1f}% mean basket fulfilment in the {_comparison_name} "
+        f"run, vs {ful_hi:.1f}% for high-income — a {ful_hi - ful_lo:.1f} pp within-run gap. "
+        f"Low-income fulfilment changed by {ful_lo - ful_lo_u:+.1f} pp relative to the paired "
+        f"crisis-without-policy run. It fell below the descriptive 80% reference for "
+        f"{int((pm_c_win['Fulfillment_Low'] < 0.80).sum())} active-crisis days. "
+        "The model supports descriptive distributional comparison, but one paired seed does not "
+        "establish population uncertainty or a causal policy effect."
     )
-    pdf.sub("4.2  High Food-Access Stress by Income Bracket")
+    pdf.sub("4.2  High Food-Access Stress by Income Bracket", min_content_height=100)
     pdf.chart(p_fies,
-        caption="Fig. 6 — high food-access stress rate by income bracket. "
-                "Dotted line = low-income baseline. Exploratory model diagnostic.")
+        caption="Fig. 6 — high modeled access stress by income, including baseline and paired no-policy crisis. "
+                "Exploratory model diagnostic; not survey-based FIES prevalence.")
     pdf.finding(
         f"High modeled access stress among low-income households peaked "
-        f"at {fies_peak:.1f}% during the crisis, rising from a baseline of {fies_base:.1f}% "
-        f"(+{fies_peak - fies_base:.1f} pp). The unvalidated diagnostic combines budget "
-        f"exhaustion, basket shortfall, and panic. It supports comparisons among model "
+        f"at {fies_peak:.1f}% in the {_comparison_name} run, versus {fies_peak_u:.1f}% in the paired "
+        f"crisis-without-policy run and a baseline mean of {fies_base:.1f}%. The unvalidated "
+        f"diagnostic combines access and consumption shortfall signals. It supports comparisons among model "
         f"scenarios but is not a food-insecurity prevalence estimate."
     )
 
@@ -3341,7 +3525,7 @@ def _generate_sf_pdf_report() -> bytes:
     # PAGE 7: PM Analysis — Equity & Sovereignty
     # ─────────────────────────────────────────────────────────────────────────
     pdf._sec = "PM Analysis — Equity & Sovereignty"
-    pdf.sub("4.3  Budget Exhaustion and Access Inequality (Gini Index)")
+    pdf.sub("4.3  Budget Exhaustion and Access Inequality (Gini Index)", min_content_height=100)
     pdf.chart(p_gini,
         caption="Fig. 7 — Budget exhaustion rates by income (left axis) and Gini access index (right axis, amber).")
     pdf.body(
@@ -3351,27 +3535,22 @@ def _generate_sf_pdf_report() -> bytes:
         f"{peak_bx_lo - peak_bx_hi:.1f} pp differential directly reflects the regressive "
         f"impact of food price inflation: the same percentage increase costs low-income "
         f"households a much larger share of their available food budget. "
-        f"The Gini access index rose from {mean_gini_b:.3f} (baseline) to {mean_gini_c:.3f} "
-        f"(crisis mean), an increase of {mean_gini_c - mean_gini_b:.3f} points. "
-        f"A Gini value above 0.3 is generally considered to require active policy response; "
-        f"{'the crisis breaches this threshold, requiring immediate intervention.' if mean_gini_c > 0.3 else 'the crisis approaches but does not breach the 0.3 intervention threshold.'}"
+        f"The mean Gini access index was {mean_gini_b:.3f} in the baseline, {mean_gini_u:.3f} "
+        f"in the crisis-without-policy run, and {mean_gini_c:.3f} in the {_comparison_name} run. "
+        f"The simulated policy-bundle difference was {mean_gini_c - mean_gini_u:+.3f}. "
+        "No universal intervention threshold is imposed; the index is used only for relative "
+        "comparison within this model."
     )
-    pdf.sub("4.4  Domestic vs Import Sales Volume — Food Sovereignty")
+    pdf.sub("4.4  Domestic vs Import Sales Volume — Food Sovereignty", min_content_height=100)
     pdf.chart(p_dom,
-        caption="Fig. 8 — Stacked area: domestic (green) and import (blue) sales volume during crisis. "
-                "Grey dashed line = total baseline volume.")
+        caption="Fig. 8 — Policy-crisis domestic/import volume with paired no-policy crisis and baseline totals.")
     pdf.finding(
-        f"Domestic sales {'increased' if dom_c > dom_b else 'decreased'} from {dom_b:.1f}% "
-        f"to {dom_c:.1f}% of total sales volume during the crisis "
-        f"({'a positive indicator for Finnish food sovereignty' if dom_c > dom_b else 'an adverse signal for Finnish food sovereignty'}). "
-        f"The 15% domestic product subsidy {'amplified' if dom_c > dom_b else 'was insufficient to prevent'} "
-        f"the shift toward Finnish-origin products. Import dependency during the crisis "
-        f"{'rose to' if imp_dep_c > imp_dep_b else 'fell to'} {imp_dep_c:.1f}% "
-        f"(baseline: {imp_dep_b:.1f}%), "
-        f"{'increasing' if imp_dep_c > imp_dep_b else 'reducing'} exposure to geopolitical "
-        f"supply chain risk. DCE data show a mean Finnish-origin preference of 0.65 "
-        f"(N=116), which creates natural demand-side support for domestic products that "
-        f"policy can amplify."
+        f"Domestic products represented {dom_b:.1f}% of baseline sales, {dom_u:.1f}% of sales "
+        f"in the crisis-without-policy run, and {dom_c:.1f}% in the {_comparison_name} run. "
+        f"Corresponding import dependency was {imp_dep_b:.1f}%, {imp_dep_u:.1f}%, and "
+        f"{imp_dep_c:.1f}%. The difference between the two crisis runs is the appropriate "
+        "descriptive selected-configuration comparison. It should not be interpreted as a separately identified "
+        "subsidy effect because rationing, labelling, and communications also change simultaneously."
     )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3379,57 +3558,48 @@ def _generate_sf_pdf_report() -> bytes:
     # ─────────────────────────────────────────────────────────────────────────
     pdf.chapter("5", "Policy Effectiveness & Recommendations", "Policy & Recommendations")
 
-    pdf.sub("5.1  Policy Intervention Assessment")
+    pdf.sub("5.1  Policy Intervention Assessment", min_content_height=80)
     pdf.kv([
-        ("Domestic Subsidy (15%)",
-         f"Partially offsets the regressive price inflation impact. Estimated fiscal cost "
-         f"per consumer per day scales with subsidy rate and dairy consumption volume. "
-         f"Reduces import dependency. Supports Finnish producer income during the shock. "
-         f"Recommended minimum: 10–15% for price inflation above 20%."),
-        ("Purchase Rationing (3 units/visit)",
-         f"Most effective near-term instrument for access equity. Directly limits hoarding "
-         f"cascade at the point of sale. At a cap of 3 units, panic buyers are constrained "
-         f"while normal purchasers are unaffected (average dairy basket < 3 units). "
-         f"Trade-off: enforcement cost and potential consumer resistance (~15%)."),
+        ("Domestic Subsidy",
+         (f"Active at {float(_pm_policy.get('subsidy_rate', 0.0))*100:.0f}%. Policy-crisis "
+          f"import dependency was {imp_dep_c:.1f}% versus {imp_dep_u:.1f}% without policy. "
+          "The report does not estimate fiscal cost, producer income, or the subsidy-only effect."
+          if _pm_policy.get("subsidy_active", False) else "Disabled in this report configuration.")),
+        ("Purchase Rationing",
+         (f"Active at {int(pm_p['purchase_limit'])} units per product. It constrains requested "
+          "quantity before purchase, but a bundled design cannot separate its effect from other levers."
+          if pm_p.get("purchase_limit") is not None else "Disabled in this report configuration.")),
         ("Nutritional Labelling",
-         "Front-of-pack labelling shifts demand toward healthier product variants. Effective "
-         "in longer-horizon scenarios (>60 days) as behaviour change takes time to emerge. "
-         "In acute crisis contexts, labelling has limited short-run impact but maintains "
-         "healthy consumption norms that facilitate faster post-crisis recovery."),
-        ("Calming Communications (intensity 0.6)",
-         f"Government messaging at intensity 0.6 reduces panic sensitivity and hoarding. "
-         f"Empirically, calming communications can reduce hoarding by 15–30% in the first "
-         f"72 hours of a supply disruption (Sheffi, 2005; WFP, 2020). In this simulation, "
-         f"it contributes to keeping peak panic below 0.7 (severe threshold). "
-         f"Key message: 'Supply is sufficient; purchase normally.'"),
+         ("Active as an exploratory additive preference-score change. The effect size is an "
+          "analyst assumption, not estimated from the GROCERYsim experiment."
+          if _pm_policy.get("labelling_active", False) else "Disabled in this report configuration.")),
+        ("Government Communications",
+         (f"{pm_p.get('communication_type', 'neutral').title()} communication at intensity "
+          f"{float(pm_p.get('media_intensity', 0.0)):.2f}. Peak panic was {peak_panic_c:.2f} "
+          f"with selected policy versus {peak_panic_u:.2f} without policy. The response "
+          "magnitude is an unvalidated scenario assumption."
+          if float(pm_p.get("media_intensity", 0.0)) > 0 else "Disabled / neutral in this report configuration.")),
     ])
 
     pdf.sub("5.2  Priority Recommendations")
     pdf.bullet([
-        f"IMMEDIATE (Days 1–7): Activate calming government communications. Issue retailer "
-        f"guidance on voluntary purchase limits. Alert Finnish food authority to monitor "
-        f"high-access-stress households (current estimated rate: {fies_peak:.1f}% at peak).",
-        f"SHORT-TERM (Days 7–30): Implement 3-unit purchase cap at retail level. "
-        f"Activate domestic dairy subsidy (minimum 10–15%) funded from agricultural "
-        f"resilience reserve. Expedite import approvals to reduce the {pm_p['dis']}-day "
-        f"supply delay below 5 days where possible.",
-        f"MEDIUM-TERM (Days 30–{pm_p['days']}): Issue targeted emergency food vouchers "
-        f"for high-access-stress low-income households (estimated {fies_peak:.1f}% of population). "
-        f"Evaluate purchase cap removal once panic returns below threshold (0.3). "
-        f"Commission post-crisis FIES survey to identify persistent food insecurity.",
-        f"STRUCTURAL: Invest in domestic dairy supply chain resilience to reduce baseline "
-        f"import dependency (current: {imp_dep_b:.1f}%). Establish strategic dairy reserve "
-        f"equivalent to 14-day demand. Build stockpile of key inputs (livestock feed) "
-        f"at the national level to buffer against climate-driven feed production disruptions.",
+        "Treat the current output as a hypothesis-generating stress test. Do not present the "
+        "modeled access-stress percentage as Finnish population prevalence.",
+        "Run the subsidy, purchase cap, labelling, and communications levers individually and "
+        "in combinations across multiple paired seeds before ranking interventions.",
+        "Report Monte Carlo uncertainty intervals and sensitivity to the analyst-defined price, "
+        "delivery, panic, and hoarding assumptions before stakeholder use.",
+        "Use external retailer or administrative data for any future calibration of inventory, "
+        "delivery, waste, and policy-effect claims; until then, label results as scenario comparisons.",
     ])
     pdf.finding(
-        f"The combined policy bundle (subsidy + rationing + labelling + communications) "
-        f"reduces the equity gap between income groups and prevents the most severe "
-        f"welfare outcomes. However, no combination of demand-side policies fully "
-        f"compensates for a {sc_p['dis']}-day supply disruption at {sc_p['inf']:.0f}% "
-        f"inflation — supply-side resilience investment remains the primary long-term "
-        f"instrument. These recommendations align with SecureFood WP3 policy guidelines "
-        f"for Northern European dairy markets under climate stress scenarios."
+        f"In this paired single-seed comparison, the selected policy configuration ({_policy_summary}) "
+        "changed low-income "
+        f"fulfilment by {ful_lo - ful_lo_u:+.1f} pp, peak high access stress by "
+        f"{fies_peak - fies_peak_u:+.1f} pp, mean access Gini by "
+        f"{mean_gini_c - mean_gini_u:+.3f}, and import dependency by "
+        f"{imp_dep_c - imp_dep_u:+.1f} pp. These signs and magnitudes are model outputs, "
+        "not validated causal estimates or policy recommendations."
     )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -3446,6 +3616,14 @@ def _generate_sf_pdf_report() -> bytes:
         "objects persist across days. Execution uses explicit product, logistics, and "
         "shopping phases; only within-day shopper order is shuffled."
     )
+    pdf.body(
+        "Report design: Supply Chain results compare paired baseline and crisis runs. Policy "
+        "results compare paired conditions using seed 42: no-shock/no-policy baseline, "
+        "crisis without policy, and the selected crisis configuration (which is identical to "
+        "no-policy when no levers are active). Summary policy "
+        "metrics use only active-crisis days. A single seed is used for reproducibility, so this "
+        "report does not quantify Monte Carlo or participant-resampling uncertainty."
+    )
     pdf.sub("6.2  Consumer Behavioural Model")
     pdf.bullet([
         "This illustrative walkthrough explicitly enables exploratory behavioural "
@@ -3458,6 +3636,9 @@ def _generate_sf_pdf_report() -> bytes:
         "cleaned experiment (108 linked participants) and audited on a participant "
         "holdout. The pooled price coefficient supports milk-candidate choice, not "
         "household-specific willingness-to-pay claims.",
+        "Observed phase-one/phase-two basket changes inform cross-fitted substitution and "
+        "retention propensities. Phase-two baskets remain validation targets and are not replayed "
+        "as simulated crisis demand.",
         "Income stratification: Low (<€1,500/mo), Mid (€1,500–€3,000), High (≥€3,000), "
         "used for descriptive outcome disaggregation.",
     ])
@@ -3469,7 +3650,7 @@ def _generate_sf_pdf_report() -> bytes:
         "Exploratory food-access stress diagnostic, aggregated by income bracket; "
         "not comparable to survey-based FIES prevalence.",
     ])
-    pdf.sub("6.4  Key References")
+    pdf.sub("6.4  Key References", min_content_height=85)
     pdf.kv([
         ("Ajzen (1991)",           "The Theory of Planned Behaviour. Organizational Behavior and Human Decision Processes, 50(2), 179–211."),
         ("FAO (2016)",             "Methods for estimating comparable rates of food insecurity globally. FAO, Rome."),
@@ -3479,7 +3660,7 @@ def _generate_sf_pdf_report() -> bytes:
         ("Thaler & Sunstein (2008)", "Nudge: Improving Decisions about Health, Wealth, and Happiness. Yale University Press."),
         ("Grashuis et al. (2020)", "Grocery Purchasing Behavior during COVID-19. Agribusiness, 36(3), 497–508."),
     ])
-    pdf.sub("6.5  Citation")
+    pdf.sub("6.5  Citation", min_content_height=35)
     pdf.set_fill_color(*_SF_CREAM2)
     cy = pdf.get_y()
     pdf.rect(15, cy, 180, 24, "F")
@@ -3498,15 +3679,128 @@ def _generate_sf_pdf_report() -> bytes:
     pdf.set_x(15)
     pdf.cell(0, 5, "Software: https://github.com/IvanDuric/Finland_ABM")
 
-    # ── Write to bytes ────────────────────────────────────────────────────────
-    out = bytes(pdf.output())
+    # ── Write PDF and tidy CSV artifacts from the same model runs ─────────────
+    pdf_bytes = bytes(pdf.output())
+
+    def _export_frame(frame, perspective, params, policy_summary):
+        exported = frame.copy()
+        metadata = [
+            ("ReportMode", report_mode),
+            ("Perspective", perspective),
+            ("RandomSeed", 42),
+            ("SimulationDays", int(params["days"])),
+            ("StartMonth", int(params["month"])),
+            ("BaseDailyConsumers", int(params["base_con"])),
+            ("CrisisStartDay", int(params["cri_start"])),
+            ("CrisisDurationDays", int(params["cri_duration"])),
+            ("PriceInflationPct", float(params["inf"])),
+            ("SupplyDisruptionDays", int(params["dis"])),
+            ("LeadTimeDays", int(params["lead"])),
+            ("ReorderPointPct", float(params["reorder"]) * 100),
+            ("RestockTargetPct", float(params["target"]) * 100),
+            ("PanicSensitivity", float(params["panic"])),
+            ("HoardingFactor", float(params["hoard"])),
+            ("ExploratoryBehaviour", bool(params.get("exploratory_behaviour", False))),
+            ("SelectedPolicy", policy_summary),
+        ]
+        for position, (column, value) in reversed(list(enumerate(metadata))):
+            exported.insert(0, column, value)
+        return exported
+
+    sc_policy_summary = "configured supply-chain policy" if _has_sc_policy else "no active policy levers"
+    sc_aggregate = _export_frame(sc_data["df"], "Supply Chain Actor", sc_p, sc_policy_summary)
+    sc_products = _export_frame(sc_data["df_prod"], "Supply Chain Actor", sc_p, sc_policy_summary)
+
+    pm_base_aggregate = pm_b.copy(); pm_base_aggregate["Scenario"] = "Baseline"
+    pm_no_policy_aggregate = pm_u.copy(); pm_no_policy_aggregate["Scenario"] = "Crisis (No Policy)"
+    pm_selected_aggregate = pm_c.copy()
+    pm_selected_aggregate["Scenario"] = (
+        "Crisis (Selected Policy)" if _has_pm_policy else "Crisis (No Active Policy)"
+    )
+    pm_aggregate = _export_frame(
+        pd.concat(
+            [pm_base_aggregate, pm_no_policy_aggregate, pm_selected_aggregate],
+            ignore_index=True,
+        ),
+        "Policy Maker",
+        pm_p,
+        _policy_summary,
+    )
+
+    pm_product_source = pm_unpol_data["df_prod"]
+    pm_base_products = pm_product_source[
+        pm_product_source["Scenario"] == "Baseline"
+    ].copy()
+    pm_base_products["Scenario"] = "Baseline"
+    pm_no_policy_products = pm_product_source[
+        pm_product_source["Scenario"] == "Crisis"
+    ].copy()
+    pm_no_policy_products["Scenario"] = "Crisis (No Policy)"
+    pm_selected_products = pm_policy_data["df_prod"].copy()
+    pm_selected_products["Scenario"] = (
+        "Crisis (Selected Policy)" if _has_pm_policy else "Crisis (No Active Policy)"
+    )
+    pm_products = _export_frame(
+        pd.concat(
+            [pm_base_products, pm_no_policy_products, pm_selected_products],
+            ignore_index=True,
+        ),
+        "Policy Maker",
+        pm_p,
+        _policy_summary,
+    )
+
+    aggregate_csv = pd.concat([sc_aggregate, pm_aggregate], ignore_index=True, sort=False)
+    product_csv = pd.concat([sc_products, pm_products], ignore_index=True, sort=False)
 
     # Clean up temp files
     for f in temp_imgs:
         try: os.unlink(f)
         except: pass
 
-    return out
+    return {
+        "pdf": pdf_bytes,
+        "aggregate_csv": aggregate_csv.to_csv(index=False).encode("utf-8-sig"),
+        "product_csv": product_csv.to_csv(index=False).encode("utf-8-sig"),
+    }
+
+
+def _generate_sf_pdf_report(
+    sc_params: dict | None = None,
+    pm_params: dict | None = None,
+    report_mode: str = "Preset demonstration",
+) -> bytes:
+    """Backward-compatible PDF-only entry point used by tests and callers."""
+    return _generate_sf_report_artifacts(sc_params, pm_params, report_mode)["pdf"]
+
+
+def _render_sf_artifact_downloads(artifacts: dict, filename_stem: str, key_prefix: str):
+    """Render aligned PDF and CSV download actions for one generated report."""
+    pdf_col, daily_col, product_col = st.columns(3)
+    pdf_col.download_button(
+        "📄 Download PDF Report",
+        data=artifacts["pdf"],
+        file_name=f"{filename_stem}_Report.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+        key=f"{key_prefix}_pdf",
+    )
+    daily_col.download_button(
+        "⬇️ Download Daily Results (CSV)",
+        data=artifacts["aggregate_csv"],
+        file_name=f"{filename_stem}_Daily_Results.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key=f"{key_prefix}_daily_csv",
+    )
+    product_col.download_button(
+        "⬇️ Download Product Results (CSV)",
+        data=artifacts["product_csv"],
+        file_name=f"{filename_stem}_Product_Results.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key=f"{key_prefix}_product_csv",
+    )
 
 
 # ── Main SecureFood page ───────────────────────────────────────────────────────
@@ -3577,31 +3871,44 @@ def render_securefood_page():
 </div>
 """, unsafe_allow_html=True)
 
-    # ── Scenario Report download ───────────────────────────────────────────────
-    _rpt_col, _rpt_spacer = st.columns([1, 2])
+    # ── Preset report and data downloads ──────────────────────────────────────
+    st.markdown("### 📄 Preset demonstration report")
+    st.info(
+        "This button uses the fixed SecureFood demonstration preset shown below. "
+        "Changing the controls in the two tabs does not change this preset report."
+    )
+    with st.expander("View preset parameters", expanded=False):
+        st.markdown(
+            "**Supply Chain Actor preset:** 90 days; 200 consumers/day; crisis starts Day 30 "
+            "for 30 days; 25% price inflation; 7-day supply disruption; 3-day lead time; "
+            "30% reorder point; 90% restock target; panic sensitivity 0.50; hoarding factor 1.5; "
+            "no policy levers.\n\n"
+            "**Policy Maker preset:** 120 days; 200 consumers/day; crisis starts Day 30 "
+            "for 45 days; the same price, disruption, lead-time, inventory, panic, and hoarding "
+            "settings; 15% domestic subsidy; 3-unit purchase cap; nutritional labelling; "
+            "calming communication at intensity 0.60. Both reports use paired seed 42."
+        )
+    _rpt_col, _rpt_spacer = st.columns([1.4, 1.6])
     with _rpt_col:
         if st.button(
-            "📊 Generate Scenario Report",
+            "📊 Generate Preset Demonstration Report",
             type="primary",
             use_container_width=True,
-            key="sf_report_gen_btn",
+            key="sf_preset_report_gen_btn",
         ):
             with st.spinner("Running simulations and building report — this may take ~15 s…"):
                 try:
-                    _pdf_bytes = _generate_sf_pdf_report()
-                    st.session_state["sf_report_bytes"] = _pdf_bytes
+                    st.session_state["sf_preset_report_artifacts"] = (
+                        _generate_sf_report_artifacts(report_mode="Preset demonstration")
+                    )
                 except Exception as _e:
                     st.error(f"Report generation failed: {_e}")
-    if st.session_state.get("sf_report_bytes"):
-        with _rpt_col:
-            st.download_button(
-                label="📄 Download PDF Report",
-                data=st.session_state["sf_report_bytes"],
-                file_name="GROCERYsim_SecureFood_Scenario_Report.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-                key="sf_report_dl_btn",
-            )
+    if st.session_state.get("sf_preset_report_artifacts"):
+        _render_sf_artifact_downloads(
+            st.session_state["sf_preset_report_artifacts"],
+            "GROCERYsim_SecureFood_Preset",
+            "sf_preset_download",
+        )
 
     sc_tab, pm_tab = st.tabs(["🏭 Supply Chain Actor", "🏛️ Policy Maker"])
 
@@ -3663,27 +3970,21 @@ def render_securefood_page():
                 key="sf_sc_hoard",
                 help="Maximum purchase multiplier during panic, scaled by each household's cross-fitted phase-transition propensity. Treat the maximum as a scenario assumption.")
 
+        sc_params = {
+            "days": sc_days, "month": sc_month, "base_con": int(sc_consumers),
+            "reorder": sc_reorder, "target": sc_target, "lead": sc_lead,
+            "cri_start": sc_cri_start, "cri_duration": int(sc_cri_dur),
+            "inf": float(sc_inflation), "dis": int(sc_disruption),
+            "panic": sc_panic, "hoard": sc_hoard, "mc_runs": 1,
+            "policy_cfg": _sf_no_policy_config(sc_cri_start),
+            "purchase_limit": None, "media_intensity": 0.0,
+            "communication_type": "neutral", "stockpile_days": None,
+            "exploratory_behaviour": True,
+        }
+
         col_run, _ = st.columns([2, 6])
         if col_run.button("▶ Run Supply Chain Simulation", type="primary",
                           key="sf_sc_run", use_container_width=True):
-            _no_policy = {
-                "fat_tax_active": False, "fat_tax_threshold": 3.5, "fat_tax_rate": 0.0,
-                "subsidy_active": False, "subsidy_target": "domestic", "subsidy_rate": 0.0,
-                "domestic_shock_active": False, "domestic_shock_day": sc_cri_start,
-                "domestic_shock_duration": 30, "domestic_shock_severity": 0.5,
-                "labelling_active": False, "labelling_day": 1,
-                "labelling_health_boost": 0.0, "labelling_organic_boost": 0.0,
-            }
-            sc_params = {
-                "days": sc_days, "month": sc_month, "base_con": int(sc_consumers),
-                "reorder": sc_reorder, "target": sc_target, "lead": sc_lead,
-                "cri_start": sc_cri_start, "cri_duration": int(sc_cri_dur),
-                "inf": float(sc_inflation), "dis": int(sc_disruption),
-                "panic": sc_panic, "hoard": sc_hoard, "mc_runs": 1,
-                "policy_cfg": _no_policy,
-                "purchase_limit": None, "media_intensity": 0.0,
-                "communication_type": "neutral", "stockpile_days": None,
-            }
             with st.spinner("Running baseline and crisis simulations…"):
                 result = _sf_run_simulation(sc_params)
                 if result:
@@ -3706,7 +4007,7 @@ def render_securefood_page():
         with p1:
             st.markdown("**🔴 Crisis Severity**")
             pm_days = st.slider("Duration (Days)", 60, 365, 120, 10, key="sf_pm_days",
-                help="Longer horizons capture recovery and long-run policy effects. 120 days recommended for policy assessment (crisis + early recovery). Extend to 365 for structural impact.")
+                help="Longer horizons capture recovery. The 120-day default is an analyst-selected demonstration horizon, not an empirically validated policy window.")
             pm_consumers = st.number_input("Base Daily Consumers", 50, 2000, 200, 50,
                 key="sf_pm_consumers",
                 help="Store traffic level. Policy simulations are robust across store sizes, but larger stores show more pronounced income-stratified effects due to greater product diversity.")
@@ -3718,7 +4019,7 @@ def render_securefood_page():
                 help="Supply-side shock severity. 7 days = significant but recoverable. 14+ days = severe climate event or geopolitical supply cut. Tests the resilience of food assistance programmes.")
             pm_inflation = st.slider("Price Inflation (%)", 0, 100, 25, 5,
                 key="sf_pm_inflation",
-                help="+25% is the IPCC AR6 central estimate for Northern European food under 2°C warming. Higher values test the effectiveness of price-stabilisation and subsidy policies.")
+                help="Analyst-defined stress input. The 25% default is illustrative and is not an IPCC forecast or a calibrated Finnish estimate.")
             pm_cri_dur = st.slider("Crisis Duration (Days)", 0,
                                    max(1, pm_days - pm_cri_start), 45, 5,
                 key="sf_pm_cri_dur",
@@ -3764,30 +4065,32 @@ def render_securefood_page():
                 help="Strength of daily communication effect on consumer panic. 0.3 = moderate coordinated government campaign. Set to 0 to isolate the crisis without communication intervention.") \
                 if pm_comm != "neutral" else 0.0
 
+        pm_policy_cfg = {
+            "fat_tax_active": False, "fat_tax_threshold": 3.5, "fat_tax_rate": 0.0,
+            "subsidy_active": pm_sub_on, "subsidy_target": "domestic",
+            "subsidy_rate": pm_sub_rate,
+            "domestic_shock_active": False, "domestic_shock_day": pm_cri_start,
+            "domestic_shock_duration": 30, "domestic_shock_severity": 0.5,
+            "labelling_active": pm_lab_on, "labelling_day": pm_cri_start,
+            "labelling_health_boost": 0.10, "labelling_organic_boost": 0.05,
+        }
+        pm_params = {
+            "days": pm_days, "month": pm_month, "base_con": int(pm_consumers),
+            "reorder": 0.30, "target": 0.90, "lead": pm_lead,
+            "cri_start": pm_cri_start, "cri_duration": int(pm_cri_dur),
+            "inf": float(pm_inflation), "dis": int(pm_disruption),
+            "panic": pm_panic, "hoard": pm_hoard, "mc_runs": 1,
+            "policy_cfg": pm_policy_cfg,
+            "purchase_limit": pm_purchase_limit,
+            "media_intensity": pm_media,
+            "communication_type": pm_comm,
+            "stockpile_days": None,
+            "exploratory_behaviour": True,
+        }
+
         col_run2, _ = st.columns([2, 6])
         if col_run2.button("▶ Run Policy Simulation", type="primary",
                            key="sf_pm_run", use_container_width=True):
-            pm_policy_cfg = {
-                "fat_tax_active": False, "fat_tax_threshold": 3.5, "fat_tax_rate": 0.0,
-                "subsidy_active": pm_sub_on, "subsidy_target": "domestic",
-                "subsidy_rate": pm_sub_rate,
-                "domestic_shock_active": False, "domestic_shock_day": pm_cri_start,
-                "domestic_shock_duration": 30, "domestic_shock_severity": 0.5,
-                "labelling_active": pm_lab_on, "labelling_day": pm_cri_start,
-                "labelling_health_boost": 0.10, "labelling_organic_boost": 0.05,
-            }
-            pm_params = {
-                "days": pm_days, "month": pm_month, "base_con": int(pm_consumers),
-                "reorder": 0.30, "target": 0.90, "lead": pm_lead,
-                "cri_start": pm_cri_start, "cri_duration": int(pm_cri_dur),
-                "inf": float(pm_inflation), "dis": int(pm_disruption),
-                "panic": pm_panic, "hoard": pm_hoard, "mc_runs": 1,
-                "policy_cfg": pm_policy_cfg,
-                "purchase_limit": pm_purchase_limit,
-                "media_intensity": pm_media,
-                "communication_type": pm_comm,
-                "stockpile_days": None,
-            }
             with st.spinner("Running policy simulation…"):
                 result = _sf_run_simulation(pm_params)
                 if result:
@@ -3795,6 +4098,53 @@ def render_securefood_page():
 
         if st.session_state.get("sf_results_pm"):
             _render_sf_pm_results(st.session_state["sf_results_pm"])
+
+    st.divider()
+    st.markdown("### 📄 Custom report from current settings")
+    st.caption(
+        "This report uses the current values in both tabs. It runs fresh paired simulations, "
+        "so you do not need to press the individual simulation buttons first."
+    )
+    with st.expander("Review current report parameters", expanded=False):
+        st.markdown(
+            f"**Supply Chain Actor:** {sc_days} days; {int(sc_consumers)} consumers/day; "
+            f"crisis Day {sc_cri_start} for {int(sc_cri_dur)} days; {sc_inflation}% inflation; "
+            f"{sc_disruption}-day disruption; {sc_lead}-day lead time; "
+            f"{sc_reorder*100:.0f}% reorder point; {sc_target*100:.0f}% restock target; "
+            f"panic {sc_panic:.2f}; hoarding {sc_hoard:.1f}.\n\n"
+            f"**Policy Maker:** {pm_days} days; {int(pm_consumers)} consumers/day; "
+            f"crisis Day {pm_cri_start} for {int(pm_cri_dur)} days; {pm_inflation}% inflation; "
+            f"{pm_disruption}-day disruption; purchase cap "
+            f"{'disabled' if pm_purchase_limit is None else str(pm_purchase_limit) + ' units'}; "
+            f"domestic subsidy {'disabled' if not pm_sub_on else f'{pm_sub_rate*100:.0f}%'}; "
+            f"labelling {'enabled' if pm_lab_on else 'disabled'}; communication "
+            f"{pm_comm} at intensity {pm_media:.2f}."
+        )
+    _custom_col, _ = st.columns([1.4, 1.6])
+    with _custom_col:
+        if st.button(
+            "📊 Generate Report from Current Settings",
+            type="primary",
+            use_container_width=True,
+            key="sf_custom_report_gen_btn",
+        ):
+            with st.spinner("Running current settings and building report — this may take ~15 s…"):
+                try:
+                    st.session_state["sf_custom_report_artifacts"] = (
+                        _generate_sf_report_artifacts(
+                            sc_params=sc_params,
+                            pm_params=pm_params,
+                            report_mode="Custom scenario",
+                        )
+                    )
+                except Exception as _e:
+                    st.error(f"Custom report generation failed: {_e}")
+    if st.session_state.get("sf_custom_report_artifacts"):
+        _render_sf_artifact_downloads(
+            st.session_state["sf_custom_report_artifacts"],
+            "GROCERYsim_SecureFood_Custom",
+            "sf_custom_download",
+        )
 
 
 # ===========================================================================
@@ -3808,6 +4158,8 @@ defaults = {
     # SecureFood Scenario results
     "sf_results_sc":   None,
     "sf_results_pm":   None,
+    "sf_preset_report_artifacts": None,
+    "sf_custom_report_artifacts": None,
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
