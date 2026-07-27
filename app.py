@@ -4300,13 +4300,46 @@ def _load_bundled_data():
 
     return firebase_dict, products_dict, dce_rows
 
+
+@st.cache_data(
+    show_spinner=False,
+    ttl=24 * 60 * 60,
+    max_entries=8,
+)
+def _cached_run_pipeline_from_data(
+    firebase_dict: dict,
+    products_dict: dict,
+    pool_size: int,
+    n_archetypes: int,
+    dce_rows: list[dict] | None,
+) -> dict:
+    """Cache the deterministic evidence pipeline across sessions.
+
+    Streamlit executes the app once per session and reruns it after every
+    interaction.  The pipeline includes bootstrap clustering, cross-fitting,
+    DCE estimation, and substitution validation, so rebuilding it for every
+    visitor wastes Community Cloud CPU.  Streamlit hashes every input here;
+    changing the Firebase export, catalogue, DCE rows, or configuration creates
+    a new cache entry rather than reusing stale scientific results.
+
+    ``st.cache_data`` returns an isolated copy to each caller, avoiding shared
+    mutable state between simultaneous stakeholder sessions.  The TTL and
+    entry bound prevent old cohort variants from accumulating indefinitely.
+    """
+    return run_pipeline_from_data(
+        firebase_dict,
+        products_dict,
+        pool_size=int(pool_size),
+        n_archetypes=int(n_archetypes),
+        dce_rows=dce_rows,
+    )
+
 if st.session_state.config_data is None:
     try:
         _firebase_dict, _products_dict, _dce_rows = _load_bundled_data()
         if _firebase_dict is not None and _products_dict is not None:
-            st.session_state.config_data = run_pipeline_from_data(
-                _firebase_dict, _products_dict, pool_size=2000, n_archetypes=4,
-                dce_rows=_dce_rows,
+            st.session_state.config_data = _cached_run_pipeline_from_data(
+                _firebase_dict, _products_dict, 2000, 4, _dce_rows,
             )
     except Exception:
         pass   # silently skip — user can still upload manually in Data & Population tab
@@ -5189,10 +5222,9 @@ def render_data_tab():
                     dce_rows = list(csv.DictReader(io.StringIO(
                         dce_file.getvalue().decode("utf-8-sig")
                     )))
-                    config         = run_pipeline_from_data(
+                    config         = _cached_run_pipeline_from_data(
                         firebase_dict, products_dict,
-                        pool_size=int(pool_size), n_archetypes=int(n_archetypes),
-                        dce_rows=dce_rows,
+                        int(pool_size), int(n_archetypes), dce_rows,
                     )
                     st.session_state.config_data = config
                     for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
@@ -5211,10 +5243,9 @@ def render_data_tab():
                 if _firebase_dict is None or _products_dict is None:
                     st.error("Bundled data not available. Firebase secret or product catalogue missing.")
                 else:
-                    st.session_state.config_data = run_pipeline_from_data(
+                    st.session_state.config_data = _cached_run_pipeline_from_data(
                         _firebase_dict, _products_dict,
-                        pool_size=int(pool_size), n_archetypes=int(n_archetypes),
-                        dce_rows=_dce_rows,
+                        int(pool_size), int(n_archetypes), _dce_rows,
                     )
                     for k in ["sim_results","sim_stock","sim_scm_log","sim_waste",
                               "sim_product_recs","sim_model_crisis",
