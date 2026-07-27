@@ -345,10 +345,11 @@ _TOUR_STEPS = [
         "title": "🌿 SecureFood Scenario Simulator",
         "body": (
             "Dedicated tool for the Horizon Europe SecureFood project (grant No. 101136583). "
-            "Choose Supply Chain Actor or Policy Maker perspective, configure a climate "
-            "disruption scenario for Finnish dairy, and receive a structured 9-chart "
-            "analysis with downloadable PDF scenario walkthrough. "
-            "Access it via the 🌿 Scenario Simulator button at the top of the page."
+            "After launching the Finland — Dairy Supply Chain case study, the main GROCERYsim "
+            "workspace opens. At the top of that page, find the SecureFood panel and click the "
+            "dedicated 🌿 Scenario Simulator button. Only then choose the Supply Chain Actor or "
+            "Policy Maker perspective, configure the Finnish dairy disruption, and generate "
+            "preset or custom PDF and CSV results."
         ),
     },
     {
@@ -15471,6 +15472,13 @@ def main():
                 f"<div style='text-align:center; padding:4px 0 8px 0;'>"
                 f"<img src='{_sf_logo_uri}' style='height:48px; width:auto; object-fit:contain;'>"
                 f"</div>"
+                f"<div style='background:#edf7f7; border-left:4px solid #44A1A0; "
+                f"border-radius:4px; padding:8px 10px; margin:0 0 10px 0; "
+                f"font-size:12px; line-height:1.4; color:#16383d;'>"
+                f"<strong>SecureFood users:</strong> After launching the "
+                f"<strong>Finland — Dairy Supply Chain</strong> case study, click "
+                f"<strong>Scenario Simulator</strong> below to enter the dedicated SecureFood workspace."
+                f"</div>"
                 f"<style>"
                 f"[data-testid='stVerticalBlockBorderWrapper'] [data-testid='stButton'] > button,"
                 f"[data-testid='stVerticalBlockBorderWrapper'] [data-testid='stDownloadButton'] > button {{"
@@ -15485,7 +15493,12 @@ def main():
             )
             _btn_a, _btn_b = st.columns(2)
             with _btn_a:
-                if st.button("🌿 Scenario Simulator", use_container_width=True, key="sf_launch_btn"):
+                if st.button(
+                    "🌿 Scenario Simulator",
+                    use_container_width=True,
+                    key="sf_launch_btn",
+                    help="Open the dedicated SecureFood scenario workspace.",
+                ):
                     st.session_state["page"] = "securefood"
                     st.rerun()
             with _btn_b:
@@ -15496,10 +15509,11 @@ def main():
                     st.download_button(
                         label=_t("securefood_btn"),
                         data=_pdf_bytes,
-                        file_name="GROCERYsim_SecureFood_Scenario_Walkthrough_ClimateChange_Dairy.pdf",
+                        file_name="GROCERYsim_SecureFood_Quick_User_Manual.pdf",
                         mime="application/pdf",
                         use_container_width=True,
                         key="securefood_pdf_btn",
+                        help="Download the SecureFood-only navigation, reporting, and CSV guide.",
                     )
                 except FileNotFoundError:
                     pass
