@@ -158,6 +158,22 @@ def test_securefood_without_policy_disables_every_supported_policy_lever():
     assert params["policy_cfg"]["subsidy_active"] is True
 
 
+def test_securefood_parameter_signature_detects_changed_analysis_inputs():
+    params = _minimal_params()
+    same_values = _minimal_params()
+    reordered = dict(reversed(list(params.items())))
+
+    assert app._sf_param_signature(params) == app._sf_param_signature(same_values)
+    assert app._sf_param_signature(params) == app._sf_param_signature(reordered)
+
+    same_values["inf"] = 55.0
+    assert app._sf_param_signature(params) != app._sf_param_signature(same_values)
+
+    same_values = _minimal_params()
+    same_values["policy_cfg"]["subsidy_rate"] = 0.30
+    assert app._sf_param_signature(params) != app._sf_param_signature(same_values)
+
+
 def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch):
     def fake_make_model(_params, is_crisis, seed, policy_cfg=None, **_kwargs):
         model = _DummyModel()
