@@ -250,7 +250,6 @@ def page_two(c: canvas.Canvas) -> None:
         ["Default scenario report", "Fixed, policy-free climate-disruption preset with parameters shown in an expandable panel."],
         ["Default Scenario Analysis", "Editable operational shock settings and a policy-free supply-chain simulation."],
         ["Additional Policy Analysis", "Separate counterfactual module. It is off and hidden by default until explicitly enabled."],
-        ["Default report from current settings", "Uses the edited default-scenario controls only. Policy controls are always excluded."],
     ], [51 * mm, CONTENT_W - 51 * mm], y)
 
     y = para(c, "Fastest workflow: use the default preset", MARGIN_X + 3 * mm, y, CONTENT_W - 3 * mm, H3) - 3 * mm
@@ -258,7 +257,7 @@ def page_two(c: canvas.Canvas) -> None:
     y = step_box(c, "2", "Generate", "Select <b>Generate Default Scenario Report</b>. The app runs the paired default conditions.", y)
     y = step_box(c, "3", "Download", "Choose the PDF report, Daily Results CSV, or Product Results CSV.", y)
 
-    info_box(c, "Key separation rule", "The default report never includes a policy intervention. Enabling or editing the optional policy module does not alter either default-report button.", y, 22 * mm)
+    info_box(c, "Key separation rule", "The default report never includes a policy intervention. Enabling or editing the optional policy module does not alter the fixed default report.", y, 22 * mm)
 
 
 def page_three(c: canvas.Canvas) -> None:
@@ -270,7 +269,7 @@ def page_three(c: canvas.Canvas) -> None:
     y = step_box(c, "2", "Enable the module", "Tick <b>Enable additional policy analysis</b>. This reveals the counterfactual controls.", y)
     y = step_box(c, "3", "Define the shared crisis", "Set crisis severity, logistics and inventory, and behavioural assumptions for the paired comparison.", y)
     y = step_box(c, "4", "Select at least one policy lever", "The run and report buttons stay disabled until an intervention is active.", y)
-    y = step_box(c, "5", "Generate policy outputs", "Use <b>Run Policy Simulation</b> for charts or <b>Generate Additional Policy Report</b> for the PDF and CSV package.", y)
+    y = step_box(c, "5", "Generate policy outputs", "Select <b>Run Policy Simulation</b>, review the results, then select <b>Generate Report from This Analysis</b> for the matching PDF and CSV package.", y)
 
     y -= 2 * mm
     y = para(c, "Available policy controls", MARGIN_X + 3 * mm, y, CONTENT_W - 3 * mm, H3) - 3 * mm
@@ -311,8 +310,7 @@ def page_four(c: canvas.Canvas) -> None:
     y = draw_table(c, [
         ["Question", "Button to use"],
         ["Use the fixed stakeholder preset", "Generate Default Scenario Report"],
-        ["Use edited operational/crisis settings without policy", "Generate Default Report from Current Settings"],
-        ["Evaluate a selected policy against no policy", "Generate Additional Policy Report (inside the enabled policy module)"],
+        ["Evaluate a selected policy against no policy", "Run Policy Simulation, then Generate Report from This Analysis"],
     ], [70 * mm, CONTENT_W - 70 * mm], y)
 
     y = info_box(c, "Five-point live demo checklist", "1. State whether the run is default or optional policy. &nbsp;&nbsp; 2. Show the included parameters. &nbsp;&nbsp; 3. Name the comparison conditions. &nbsp;&nbsp; 4. Keep unmet demand in units and check CSV column definitions. &nbsp;&nbsp; 5. Download the CSVs for reproducibility.", y, 29 * mm)

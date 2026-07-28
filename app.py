@@ -2829,6 +2829,11 @@ def _sf_without_policy(params: dict) -> dict:
     }
 
 
+def _sf_param_signature(params: dict) -> str:
+    """Stable signature used to prevent stale SecureFood results and reports."""
+    return json.dumps(params, sort_keys=True, separators=(",", ":"), default=str)
+
+
 def _sf_preset_report_params() -> tuple[dict, dict]:
     """Return fresh default scenario presets with no policy interventions."""
     no_policy = _sf_no_policy_config(30)
@@ -3958,6 +3963,21 @@ def render_securefood_page():
 </div>
 """, unsafe_allow_html=True)
 
+    st.markdown("### Choose one of two report workflows")
+    _flow_default, _flow_policy = st.columns(2)
+    with _flow_default:
+        st.info(
+            "**1. Default preset**\n\n"
+            "Review the fixed parameters and select **Generate Default Scenario Report**. "
+            "This workflow contains no policy intervention."
+        )
+    with _flow_policy:
+        st.warning(
+            "**2. Optional policy analysis**\n\n"
+            "Open **Additional Policy Analysis**, enable it, set the scenario and policy, "
+            "run the analysis, then generate the report from that analysis."
+        )
+
     # ── Preset report and data downloads ──────────────────────────────────────
     st.markdown("### 📄 Default food-security scenario report")
     st.info(
@@ -4258,8 +4278,17 @@ def render_securefood_page():
                 "exploratory_behaviour": True,
             }
             pm_has_policy = _sf_has_active_policy(pm_params)
+            pm_signature = _sf_param_signature(pm_params)
+            pm_result_is_current = (
+                st.session_state.get("sf_results_pm_signature") == pm_signature
+            )
             if not pm_has_policy:
                 st.info("Select at least one policy lever to create a policy counterfactual.")
+            elif st.session_state.get("sf_results_pm") is not None and not pm_result_is_current:
+                st.warning(
+                    "The policy settings have changed since the last run. Run the policy "
+                    "analysis again before generating or downloading its report."
+                )
 
             run_col, report_col, _ = st.columns([1.6, 2.0, 3.4])
             if run_col.button(
@@ -4270,27 +4299,37 @@ def render_securefood_page():
                     result = _sf_run_simulation(pm_params)
                     if result:
                         st.session_state["sf_results_pm"] = result
+                        st.session_state["sf_results_pm_signature"] = pm_signature
+                        st.session_state["sf_policy_report_artifacts"] = None
+                        st.session_state["sf_policy_report_signature"] = None
+                        pm_result_is_current = True
 
             if report_col.button(
-                "📊 Generate Additional Policy Report", key="sf_pm_report_gen_btn",
-                use_container_width=True, disabled=not pm_has_policy
+                "📊 Generate Report from This Analysis", key="sf_pm_report_gen_btn",
+                use_container_width=True,
+                disabled=not (pm_has_policy and pm_result_is_current),
             ):
                 with st.spinner("Building the additional policy report…"):
                     try:
                         st.session_state["sf_policy_report_artifacts"] = (
                             _generate_sf_report_artifacts(
-                                sc_params=sc_params,
+                                sc_params=_sf_without_policy(pm_params),
                                 pm_params=pm_params,
                                 report_mode="Additional policy analysis",
                                 include_policy_analysis=True,
                             )
                         )
+                        st.session_state["sf_policy_report_signature"] = pm_signature
                     except Exception as _e:
                         st.error(f"Policy report generation failed: {_e}")
 
-            if st.session_state.get("sf_results_pm"):
+            if st.session_state.get("sf_results_pm") and pm_result_is_current:
                 _render_sf_pm_results(st.session_state["sf_results_pm"])
-            if st.session_state.get("sf_policy_report_artifacts"):
+            if (
+                st.session_state.get("sf_policy_report_artifacts")
+                and st.session_state.get("sf_policy_report_signature") == pm_signature
+                and pm_result_is_current
+            ):
                 _render_sf_artifact_downloads(
                     st.session_state["sf_policy_report_artifacts"],
                     "GROCERYsim_SecureFood_Additional_Policy",
@@ -4302,47 +4341,6 @@ def render_securefood_page():
                 "crisis, inventory, behaviour, rationing, subsidy, surcharge, labelling, and "
                 "communication controls."
             )
-
-    st.divider()
-    st.markdown("### 📄 Default report from current scenario settings")
-    st.caption(
-        "This report uses only the Default Scenario Analysis settings. Policy controls are "
-        "excluded, even when the optional policy module has been configured."
-    )
-    with st.expander("Review current report parameters", expanded=False):
-        st.markdown(
-            f"**Supply Chain Actor:** {sc_days} days; {int(sc_consumers)} consumers/day; "
-            f"crisis Day {sc_cri_start} for {int(sc_cri_dur)} days; {sc_inflation}% inflation; "
-            f"{sc_disruption}-day disruption; {sc_lead}-day lead time; "
-            f"{sc_reorder*100:.0f}% reorder point; {sc_target*100:.0f}% restock target; "
-            f"panic {sc_panic:.2f}; hoarding {sc_hoard:.1f}; **no policy levers**."
-        )
-    _custom_col, _ = st.columns([1.4, 1.6])
-    with _custom_col:
-        if st.button(
-            "📊 Generate Default Report from Current Settings",
-            type="primary",
-            use_container_width=True,
-            key="sf_custom_report_gen_btn",
-        ):
-            with st.spinner("Running current settings and building report — this may take ~15 s…"):
-                try:
-                    st.session_state["sf_custom_report_artifacts"] = (
-                        _generate_sf_report_artifacts(
-                            sc_params=sc_params,
-                            pm_params=_sf_without_policy(sc_params),
-                            report_mode="Custom default scenario",
-                            include_policy_analysis=False,
-                        )
-                    )
-                except Exception as _e:
-                    st.error(f"Custom report generation failed: {_e}")
-    if st.session_state.get("sf_custom_report_artifacts"):
-        _render_sf_artifact_downloads(
-            st.session_state["sf_custom_report_artifacts"],
-            "GROCERYsim_SecureFood_Custom_Default",
-            "sf_custom_download",
-        )
 
 
 # ===========================================================================
@@ -4356,9 +4354,10 @@ defaults = {
     # SecureFood Scenario results
     "sf_results_sc":   None,
     "sf_results_pm":   None,
+    "sf_results_pm_signature": None,
     "sf_preset_report_artifacts": None,
-    "sf_custom_report_artifacts": None,
     "sf_policy_report_artifacts": None,
+    "sf_policy_report_signature": None,
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
