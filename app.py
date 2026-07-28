@@ -2287,6 +2287,8 @@ def _render_sf_pm_results(data: dict):
     peak_stress    = float(c_win["FoodStressedPct"].max()) * 100
     peak_stress_u  = float(comparison_win["FoodStressedPct"].max()) * 100
     base_stress    = float(b_win["FoodStressedPct"].mean()) * 100
+    peak_panic_c   = float(c_win["PanicLevel"].max())
+    peak_panic_u   = float(comparison_win["PanicLevel"].max())
     peak_budgexh_lo = float(c_win["BudgetExh_Low"].max()) * 100
     peak_budgexh_hi = float(c_win["BudgetExh_High"].max()) * 100
     peak_budgexh_lo_u = float(comparison_win["BudgetExh_Low"].max()) * 100
@@ -2328,7 +2330,7 @@ def _render_sf_pm_results(data: dict):
     st.markdown("### 📊 Policy Simulation Results")
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Peak Budget-Stressed Low-Income Share", f"{peak_stress:.1f}%",
+    k1.metric("Peak Shoppers in Low-Income Access Stress", f"{peak_stress:.1f}%",
               f"{peak_stress - peak_stress_u:+.1f} pp vs no-policy crisis",
               delta_color="inverse")
     k2.metric("Peak Budget Exhaustion (Low Income)", f"{peak_budgexh_lo:.1f}%",
@@ -2495,11 +2497,12 @@ def _render_sf_pm_results(data: dict):
     # ── Chart 5: Policy Effectiveness (conditional) ───────────────────────────
     if active_policies or has_limit or has_media:
         st.markdown("#### 5 · Active Policy Instruments — Key Welfare Metrics")
-        metrics_names = ["Budget-stressed\nlow-income pp", "Low-income fulfilment pp",
-                         "Gini ×100 delta", "Import dependency pp"]
+        metrics_names = ["Low-income access\nstress pp", "Low-income fulfilment pp",
+                         "Gini ×100 delta", "Import dependency pp", "Peak panic delta"]
         metrics_vals  = [peak_stress - peak_stress_u, fulfill_lo_c - fulfill_lo_u,
-                         (mean_gini_c - mean_gini_u) * 100, import_dep_c - import_dep_u]
-        bar_colors    = ["#e74c3c", "#e67e22", "#8e44ad", "#2980b9"]
+                         (mean_gini_c - mean_gini_u) * 100, import_dep_c - import_dep_u,
+                         peak_panic_c - peak_panic_u]
+        bar_colors    = ["#e74c3c", "#e67e22", "#8e44ad", "#2980b9", "#16a085"]
         fig5 = go.Figure(go.Bar(
             x=metrics_names, y=metrics_vals,
             marker_color=bar_colors,
@@ -2522,12 +2525,13 @@ def _render_sf_pm_results(data: dict):
     _sf_summary_box(
         "Policy Impact Summary — SecureFood Climate Scenario",
         [
-            f"Peak budget-stressed low-income share: <b>{peak_stress:.1f}%</b> ({peak_stress-peak_stress_u:+.1f} pp vs no-policy crisis)",
+            f"Peak share of all shoppers in low-income access stress: <b>{peak_stress:.1f}%</b> ({peak_stress-peak_stress_u:+.1f} pp vs no-policy crisis)",
             f"Low-income fulfilment: <b>{fulfill_lo_c:.1f}%</b> ({fulfill_lo_c-fulfill_lo_u:+.1f} pp vs no-policy crisis)",
             f"High modeled access stress (low income): <b>{fies_delta:+.1f} pp</b> vs no-policy crisis at peak",
             f"Budget exhaustion (low income): peaked at <b>{peak_budgexh_lo:.1f}%</b> of households",
             f"Access inequality (Gini): <b>{mean_gini_c:.3f}</b> ({mean_gini_c-mean_gini_u:+.3f} vs no-policy crisis)",
             f"Domestic sales share: <b>{dom_share_c:.1f}%</b> ({dom_change:+.1f} pp vs no-policy crisis)",
+            f"Peak panic: <b>{peak_panic_c:.2f}</b> ({peak_panic_c-peak_panic_u:+.2f} vs no-policy crisis)",
             f"Policy instruments active: <b>{policies_str}</b>",
         ],
         "Interpret these as bundled, single-seed scenario differences. Run individual-lever "
@@ -3358,7 +3362,7 @@ def _generate_sf_report_artifacts(
         f"This {report_mode.lower()} report analyses the impact of a climate-driven disruption on the Finnish dairy "
         "supply chain using the GROCERYsim Agent-Based Model v2.0. The simulation runs for "
         f"{sc_p['days']} days (Supply Chain perspective) and {pm_p['days']} days (food-security "
-        "perspective), with a crisis beginning on Day 30 and featuring a "
+        f"perspective), with a crisis beginning on Day {sc_p['cri_start']} and featuring a "
         f"{sc_p['inf']:.0f}% retail price inflation, a {sc_p['dis']}-day supply delivery delay, "
         f"and a {sc_p['cri_duration']}-day disruption window. Consumer panic sensitivity is set "
         f"at {sc_p['panic']:.2f} and the maximum hoarding multiplier at {sc_p['hoard']:.1f}. "
@@ -3392,20 +3396,22 @@ def _generate_sf_report_artifacts(
         if include_policy_analysis else "Key Findings — Food Security & Equity"
     )
     pdf.metric_row([
-        ("Budget-Stressed Low-Income", f"{peak_stress:.1f}%", f"baseline {base_stress:.1f}%",      False),
+        ("Low-Income Access Stress", f"{peak_stress:.1f}%", f"baseline {base_stress:.1f}%",      False),
         ("Low-Income Fulfilment", f"{ful_lo:.1f}%", f"{_reference_name} {_ref_ful_lo:.1f}%", ful_lo >= _ref_ful_lo),
         ("High Access Stress (Low)", f"{fies_peak:.1f}%", f"{_reference_name} {_ref_fies_peak:.1f}%", fies_peak <= _ref_fies_peak),
         ("Gini Access Index", f"{mean_gini_c:.3f}", f"{_reference_name} {_ref_gini:.3f}", mean_gini_c <= _ref_gini),
     ])
     pdf.body(
-        f"The {_comparison_name} run produced a peak budget-stressed low-income shopper share of "
-        f"{peak_stress:.1f}% (baseline mean {base_stress:.1f}%). Low-income basket fulfilment "
+        f"The {_comparison_name} run produced a peak {peak_stress:.1f}% share of all shoppers "
+        f"who were both low-income and access-stressed (baseline mean {base_stress:.1f}%). "
+        f"Low-income basket fulfilment "
         f"averaged {ful_lo:.1f}%, compared with {ful_hi:.1f}% for high-income households. "
         f"Against the {_reference_name}, low-income fulfilment changed by "
         f"{ful_lo - _ref_ful_lo:+.1f} percentage points, peak high access stress changed by "
         f"{fies_peak - _ref_fies_peak:+.1f} points, and the mean Gini access index changed by "
         f"{mean_gini_c - _ref_gini:+.3f}. Import dependency changed from "
-        f"{_ref_import_dep:.1f}% in the reference to {imp_dep_c:.1f}% in the analysed crisis. These are paired, "
+        f"{_ref_import_dep:.1f}% in the reference to {imp_dep_c:.1f}% in the analysed crisis, "
+        f"and peak panic changed from {_ref_panic:.2f} to {peak_panic_c:.2f}. These are paired, "
         "single-seed scenario differences, not estimated causal effects."
     )
 
@@ -3677,8 +3683,9 @@ def _generate_sf_report_artifacts(
         "changed low-income "
         f"fulfilment by {ful_lo - ful_lo_u:+.1f} pp, peak high access stress by "
         f"{fies_peak - fies_peak_u:+.1f} pp, mean access Gini by "
-        f"{mean_gini_c - mean_gini_u:+.3f}, and import dependency by "
-        f"{imp_dep_c - imp_dep_u:+.1f} pp. These signs and magnitudes are model outputs, "
+        f"{mean_gini_c - mean_gini_u:+.3f}, import dependency by "
+        f"{imp_dep_c - imp_dep_u:+.1f} pp, and peak panic by "
+        f"{peak_panic_c - peak_panic_u:+.2f}. These signs and magnitudes are model outputs, "
         "not validated causal estimates or policy recommendations."
     )
 
@@ -4953,7 +4960,9 @@ def _collect_model_day(model, day: int, scenario_label: str,
         "ArchetypeModifiersEnabled": last_rec.get("ArchetypeModifiersEnabled", 0),
         "PolicyChoiceEffectsEnabled": last_rec.get("PolicyChoiceEffectsEnabled", 0),
         "DCEAttributeRankingEnabled": last_rec.get("DCEAttributeRankingEnabled", 0),
-        "DCEAttributeRankingCategories": last_rec.get("DCEAttributeRankingCategories", ""),
+        "DCEAttributeRankingCategories": last_rec.get(
+            "DCEAttributeRankingCategories", "none"
+        ),
         "ChoicePriceScaleIdentified": last_rec.get("ChoicePriceScaleIdentified", 0),
         "SubstitutionPriceGateEnabled": last_rec.get("SubstitutionPriceGateEnabled", 0),
         "SubstitutionRankingMethod": last_rec.get(
