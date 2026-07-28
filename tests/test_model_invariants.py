@@ -1,4 +1,7 @@
 import unittest
+import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from data_processor import (
     _clean_basket,
@@ -9,7 +12,7 @@ from data_processor import (
     summarize_baseline_observations,
     substitution_choice_diagnostics,
 )
-from model import ConsumerAgent, SupermarketModel
+from model import ConsumerAgent, SupermarketModel, is_low_income_access_stressed
 
 
 def product(*, product_id="sku-1", name="Milk", price=2.0, organic=False):
@@ -43,6 +46,47 @@ def profile(*, quantity=1, budget=20.0, product_id="sku-1", name="Milk"):
         "preferred_fat": 1.5,
         "stockpile_days": 1.0,
     }
+
+
+class AccessStressDiagnosticTests(unittest.TestCase):
+    def test_low_income_stockout_is_stress_even_without_budget_exhaustion(self):
+        shopper = SimpleNamespace(
+            income_midpoint=1200.0,
+            items_wanted=10,
+            items_purchased=2,
+            budget_exhausted=False,
+        )
+        self.assertTrue(is_low_income_access_stressed(shopper))
+
+    def test_no_requested_demand_is_not_automatically_stress(self):
+        shopper = SimpleNamespace(
+            income_midpoint=1200.0,
+            items_wanted=0,
+            items_purchased=0,
+            budget_exhausted=False,
+        )
+        self.assertFalse(is_low_income_access_stressed(shopper))
+
+    def test_high_income_shopper_is_outside_low_income_diagnostic(self):
+        shopper = SimpleNamespace(
+            income_midpoint=3000.0,
+            items_wanted=10,
+            items_purchased=0,
+            budget_exhausted=True,
+        )
+        self.assertFalse(is_low_income_access_stressed(shopper))
+
+
+class CatalogueCompletenessTests(unittest.TestCase):
+    def test_bundled_catalogues_have_analysis_ready_category_and_origin(self):
+        project_root = Path(__file__).resolve().parents[1]
+        for relative_path in ("data/master_products.json", "data/product_catalogue.json"):
+            payload = json.loads((project_root / relative_path).read_text(encoding="utf-8"))
+            products = payload["products"]
+            for product_row in products:
+                with self.subTest(catalogue=relative_path, product=product_row.get("id")):
+                    self.assertTrue(str(product_row.get("category", "")).strip())
+                    self.assertTrue(str(product_row.get("origin", "")).strip())
 
 
 class CatalogueIdentityTests(unittest.TestCase):
@@ -726,6 +770,17 @@ class ModelInvariantTests(unittest.TestCase):
 
         self.assertGreater(model.panic_signals, 0)
         self.assertEqual(model.global_panic_level, 0.0)
+
+    def test_fully_empty_shelf_emits_scarcity_signal(self):
+        model = self.make_model(quantity=3)
+        sku = model.get_product_by_id("sku-1")
+        sku.shelf_batches = []
+        sku.stock_storage = 0
+
+        model.step()
+
+        self.assertGreater(model.panic_signals, 0)
+        self.assertGreater(model.daily_records[-1]["LostSales"], 0)
 
     def test_currency_rounding_does_not_reject_affordable_final_item(self):
         cfg = {

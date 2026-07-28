@@ -71,6 +71,23 @@ CO2_PRODUCTION: dict[tuple, float] = {
 CO2_WASTE_FACTOR = 3.5      # kg CO2-eq per wasted unit (methane from decomposition)
 
 
+def is_low_income_access_stressed(consumer, fulfillment_threshold: float = 0.80) -> bool:
+    """Return whether a low-income shopper faces affordability or access stress.
+
+    Budget exhaustion alone is not sufficient: during a severe stockout a shopper
+    may be unable to find enough products to spend their budget. The diagnostic
+    therefore also flags a materially unfulfilled requested basket.
+    """
+    if float(consumer.income_midpoint) >= 2000.0:
+        return False
+    wanted = int(consumer.items_wanted)
+    access_shortfall = (
+        wanted > 0
+        and float(consumer.items_purchased) / wanted < float(fulfillment_threshold)
+    )
+    return bool(consumer.budget_exhausted or access_shortfall)
+
+
 # ---------------------------------------------------------------------------
 # Policy Configuration
 # ---------------------------------------------------------------------------
@@ -1336,6 +1353,13 @@ class ConsumerAgent(Agent):
                 continue
 
             # --- Buy available stock, then seek a substitute for any remainder ---
+            # A fully empty shelf is the strongest scarcity signal. Previously
+            # only shoppers who bought the final units could emit a signal, so a
+            # prolonged stockout paradoxically produced less panic than a nearly
+            # empty shelf. Keep the one-signal-per-visit guard.
+            if product.stock_shelf < 3 and not self._panic_signal_sent:
+                self.model.add_panic_signal()
+                self._panic_signal_sent = True
             direct_target = min(allowed_qty, product.stock_shelf)
             direct_bought = 0
             if direct_target > 0:
@@ -2128,10 +2152,11 @@ class SupermarketModel(Model):
         # ---- Collect consumer welfare metrics BEFORE removing agents ----
         n_consumers  = len(daily_agents)
         n_exhausted  = sum(1 for c in daily_agents if c.budget_exhausted)
-        # Food-stressed = budget exhausted AND income below median proxy (€2000/mo)
-        n_stressed   = sum(
-            1 for c in daily_agents
-            if c.budget_exhausted and c.income_midpoint < 2000.0
+        # Low-income access stress combines affordability and physical access.
+        # Budget exhaustion alone is downward-biased during stockouts because
+        # unavailable products prevent shoppers from spending their budget.
+        n_stressed = sum(
+            1 for c in daily_agents if is_low_income_access_stressed(c)
         )
         total_fat    = sum(c.total_fat_bought   for c in daily_agents)
         total_items  = sum(c.items_purchased    for c in daily_agents)
@@ -2343,8 +2368,8 @@ class SupermarketModel(Model):
             "DCEAttributeRankingEnabled": int(
                 bool(self.substitution_ranking_categories)
             ),
-            "DCEAttributeRankingCategories": ",".join(
-                sorted(self.substitution_ranking_categories)
+            "DCEAttributeRankingCategories": (
+                ",".join(sorted(self.substitution_ranking_categories)) or "none"
             ),
             "ChoicePriceScaleIdentified": 0,
             "SubstitutionPriceGateEnabled": int(
