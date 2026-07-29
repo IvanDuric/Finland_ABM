@@ -2839,27 +2839,19 @@ def _sf_param_signature(params: dict) -> str:
 
 
 def _sf_preset_report_params() -> tuple[dict, dict]:
-    """Return fresh default scenario presets with no policy interventions."""
-    no_policy = _sf_no_policy_config(30)
-    sc_params = {
-        "days": 90, "month": 1, "base_con": 200, "reorder": 0.30,
-        "target": 0.90, "lead": 3, "cri_start": 30, "cri_duration": 30,
-        "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
-        "mc_runs": 1, "policy_cfg": no_policy,
-        "purchase_limit": None, "media_intensity": 0.0,
-        "communication_type": "neutral", "stockpile_days": None,
-        "exploratory_behaviour": True,
-    }
-    pm_params = {
+    """Return independent copies of one shared, policy-free default scenario."""
+    shared = {
         "days": 120, "month": 1, "base_con": 200, "reorder": 0.30,
         "target": 0.90, "lead": 3, "cri_start": 30, "cri_duration": 45,
         "inf": 25.0, "dis": 7, "panic": 0.50, "hoard": 1.5,
-        "mc_runs": 1, "policy_cfg": _sf_no_policy_config(30),
         "purchase_limit": None, "media_intensity": 0.0,
         "communication_type": "neutral", "stockpile_days": None,
-        "exploratory_behaviour": True,
+        "exploratory_behaviour": True, "mc_runs": 1,
     }
-    return sc_params, pm_params
+    return (
+        {**shared, "policy_cfg": _sf_no_policy_config(30)},
+        {**shared, "policy_cfg": _sf_no_policy_config(30)},
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -2886,7 +2878,14 @@ def _generate_sf_report_artifacts(
     pm_p = dict(pm_params) if pm_params is not None else preset_pm
     include_policy_analysis = bool(include_policy_analysis)
     if not include_policy_analysis:
-        pm_p = _sf_without_policy(pm_p)
+        # The fixed report has one scenario definition and two outcome lenses.
+        # Force both sections to use the same policy-free inputs so operational
+        # and household outcomes can be interpreted as one causal sequence.
+        sc_p = _sf_without_policy(sc_p)
+        pm_p = {
+            **sc_p,
+            "policy_cfg": dict(sc_p["policy_cfg"]),
+        }
     sc_p["policy_cfg"] = dict(sc_p.get("policy_cfg", {}))
     pm_p["policy_cfg"] = dict(pm_p.get("policy_cfg", {}))
     report_mode = str(report_mode).strip() or "Custom"
@@ -2962,7 +2961,22 @@ def _generate_sf_report_artifacts(
     }
 
     sc_data = _run_pair(sc_p, _sc_policy)
-    pm_unpol_data = _run_pair(pm_no_policy_p, _no_pol)
+    shared_reference_run = (
+        not _has_sc_policy
+        and _sf_param_signature(_sf_without_policy(sc_p))
+        == _sf_param_signature(pm_no_policy_p)
+    )
+    if shared_reference_run:
+        # Reuse the exact paired run rather than independently recreating an
+        # equivalent simulation. This guarantees cross-perspective consistency
+        # and halves the default report's model CPU cost.
+        pm_unpol_data = {
+            "df": sc_data["df"].copy(),
+            "df_prod": sc_data["df_prod"].copy(),
+            "params": pm_no_policy_p,
+        }
+    else:
+        pm_unpol_data = _run_pair(pm_no_policy_p, _no_pol)
     pm_policy_data = (
         _run_crisis(pm_p, _pm_policy)
         if _has_pm_policy else {
@@ -3361,11 +3375,12 @@ def _generate_sf_report_artifacts(
     pdf.body(
         f"This {report_mode.lower()} report analyses the impact of a climate-driven disruption on the Finnish dairy "
         "supply chain using the GROCERYsim Agent-Based Model v2.0. The simulation runs for "
-        f"{sc_p['days']} days (Supply Chain perspective) and {pm_p['days']} days (food-security "
-        f"perspective), with a crisis beginning on Day {sc_p['cri_start']} and featuring a "
+        f"{sc_p['days']} days, with a crisis beginning on Day {sc_p['cri_start']} and featuring a "
         f"{sc_p['inf']:.0f}% retail price inflation, a {sc_p['dis']}-day supply delivery delay, "
         f"and a {sc_p['cri_duration']}-day disruption window. Consumer panic sensitivity is set "
         f"at {sc_p['panic']:.2f} and the maximum hoarding multiplier at {sc_p['hoard']:.1f}. "
+        "The supply-chain and food-security sections use the exact same paired baseline/crisis "
+        "run and seed; they differ only in the outcomes reported. "
         "These are scenario assumptions: the current export has no direct panic-belief measure."
     )
 
@@ -3424,7 +3439,7 @@ def _generate_sf_report_artifacts(
         "define an illustrative moderate-to-severe disruption affecting Finnish dairy supply "
         "chains. They are transparent analyst inputs and have not been calibrated to an observed event."
     )
-    pdf.sub("2.1  Supply Chain Actor Scenario", min_content_height=65)
+    pdf.sub("2.1  Shared Scenario Definition", min_content_height=65)
     pdf.kv([
         ("Horizon & Traffic",    f"{sc_p['days']} days; {sc_p['base_con']} agents/day"),
         ("Calendar & Crisis",    f"Month {sc_p['month']}; starts Day {sc_p['cri_start']}; "
@@ -3438,47 +3453,43 @@ def _generate_sf_report_artifacts(
                                   f"restock to {sc_p['target']*100:.0f}% of capacity"),
         ("Policy Interventions", "None" if not _has_sc_policy else "Configured in supplied settings"),
     ])
-    pdf.sub(
-        "2.2  Additional Policy Scenario"
-        if include_policy_analysis else "2.2  Food Security Outcome Scenario",
-        min_content_height=75,
-    )
-    pdf.kv([
-        ("Horizon & Traffic",    f"{pm_p['days']} days; {pm_p['base_con']} agents/day"),
-        ("Calendar & Crisis",    f"Month {pm_p['month']}; starts Day {pm_p['cri_start']}; "
-                                  f"lasts {pm_p['cri_duration']} days (ends Day {pm_cri_end})"),
-        ("Stress Inputs",        f"{pm_p['inf']:.0f}% price inflation; "
-                                  f"{pm_p['dis']}-day delivery delay"),
-        ("Behaviour & Logistics", f"Panic {pm_p['panic']:.2f}; hoarding {pm_p['hoard']:.1f}×; "
-                                   f"{pm_p['lead']}-day lead time"),
-        ("Inventory Policy",     f"Reorder at {pm_p['reorder']*100:.0f}%; "
-                                  f"restock to {pm_p['target']*100:.0f}% of capacity"),
-        ("Fat-Content Surcharge", (
-            f"{float(_pm_policy.get('fat_tax_rate', 0.0))*100:.0f}% above "
-            f"{float(_pm_policy.get('fat_tax_threshold', 3.5)):.1f}% fat"
-            if _pm_policy.get("fat_tax_active", False) else "Disabled"
-        )),
-        ("Product Subsidy",     (
-            f"{float(_pm_policy.get('subsidy_rate', 0.0))*100:.0f}% on "
-            f"{_pm_policy.get('subsidy_target', 'domestic')} products"
-            if _pm_policy.get("subsidy_active", False) else "Disabled"
-        )),
-        ("Purchase Rationing",   (
-            f"{int(pm_p['purchase_limit'])}-unit per-product cap"
-            if pm_p.get("purchase_limit") is not None else "Disabled"
-        )),
-        ("Nutritional Labelling", (
-            f"Active from Day {int(_pm_policy.get('labelling_day', 1))}; "
-            f"health +{float(_pm_policy.get('labelling_health_boost', 0.0))*100:.0f}%, "
-            f"organic +{float(_pm_policy.get('labelling_organic_boost', 0.0))*100:.0f}%"
-            if _pm_policy.get("labelling_active", False) else "Disabled"
-        )),
-        ("Gov. Communications",  (
-            f"{pm_p.get('communication_type', 'neutral').title()} at intensity "
-            f"{float(pm_p.get('media_intensity', 0.0)):.2f}"
-            if float(pm_p.get("media_intensity", 0.0)) > 0 else "Disabled / neutral"
-        )),
-    ])
+    if include_policy_analysis:
+        pdf.sub("2.2  Additional Policy Counterfactual", min_content_height=75)
+        pdf.kv([
+            ("Shared Scenario", "Same horizon, crisis, logistics, behaviour, and seed as Section 2.1"),
+            ("Fat-Content Surcharge", (
+                f"{float(_pm_policy.get('fat_tax_rate', 0.0))*100:.0f}% above "
+                f"{float(_pm_policy.get('fat_tax_threshold', 3.5)):.1f}% fat"
+                if _pm_policy.get("fat_tax_active", False) else "Disabled"
+            )),
+            ("Product Subsidy",     (
+                f"{float(_pm_policy.get('subsidy_rate', 0.0))*100:.0f}% on "
+                f"{_pm_policy.get('subsidy_target', 'domestic')} products"
+                if _pm_policy.get("subsidy_active", False) else "Disabled"
+            )),
+            ("Purchase Rationing",   (
+                f"{int(pm_p['purchase_limit'])}-unit per-product cap"
+                if pm_p.get("purchase_limit") is not None else "Disabled"
+            )),
+            ("Nutritional Labelling", (
+                f"Active from Day {int(_pm_policy.get('labelling_day', 1))}; "
+                f"health +{float(_pm_policy.get('labelling_health_boost', 0.0))*100:.0f}%, "
+                f"organic +{float(_pm_policy.get('labelling_organic_boost', 0.0))*100:.0f}%"
+                if _pm_policy.get("labelling_active", False) else "Disabled"
+            )),
+            ("Gov. Communications",  (
+                f"{pm_p.get('communication_type', 'neutral').title()} at intensity "
+                f"{float(pm_p.get('media_intensity', 0.0)):.2f}"
+                if float(pm_p.get("media_intensity", 0.0)) > 0 else "Disabled / neutral"
+            )),
+        ])
+    else:
+        pdf.sub("2.2  Outcome Perspectives", min_content_height=45)
+        pdf.kv([
+            ("Supply-Chain Lens", "Revenue, sales, inventory, deliveries, waste, and recovery"),
+            ("Food-Security Lens", "Basket fulfilment, access stress, inequality, and import dependency"),
+            ("Consistency Rule", "Both lenses use the exact same paired baseline/crisis run with seed 42"),
+        ])
     # ─────────────────────────────────────────────────────────────────────────
     # PAGE 4: SUPPLY CHAIN ANALYSIS — Revenue
     # ─────────────────────────────────────────────────────────────────────────
@@ -3843,8 +3854,19 @@ def _generate_sf_report_artifacts(
         _policy_summary,
     )
 
-    aggregate_csv = pd.concat([sc_aggregate, pm_aggregate], ignore_index=True, sort=False)
-    product_csv = pd.concat([sc_products, pm_products], ignore_index=True, sort=False)
+    if include_policy_analysis:
+        aggregate_csv = pd.concat([sc_aggregate, pm_aggregate], ignore_index=True, sort=False)
+        product_csv = pd.concat([sc_products, pm_products], ignore_index=True, sort=False)
+    else:
+        # Every daily record already contains operational and household welfare
+        # measures. Export the shared run once instead of duplicating identical
+        # rows under two perspective labels.
+        aggregate_csv = _export_frame(
+            sc_data["df"], "Shared Default Scenario", sc_p, "no active policy levers"
+        )
+        product_csv = _export_frame(
+            sc_data["df_prod"], "Shared Default Scenario", sc_p, "no active policy levers"
+        )
 
     # Clean up temp files
     for f in temp_imgs:
@@ -4016,21 +4038,21 @@ def render_securefood_page():
         )
 
     # ── Preset report and data downloads ──────────────────────────────────────
-    st.markdown("### 📄 Default food-security scenario report")
+    st.markdown("### 📄 Default SecureFood scenario report")
     st.info(
-        "This fixed preset analyses the climate disruption without any policy intervention. "
-        "The optional policy module below is deliberately excluded from this default report."
+        "This fixed preset analyses one climate disruption without any policy intervention. "
+        "Supply-chain and food-security findings come from the same paired simulation; only "
+        "the outcome perspective changes."
     )
     with st.expander("View preset parameters", expanded=False):
         st.markdown(
-            "**Supply Chain Actor preset:** 90 days; 200 consumers/day; crisis starts Day 30 "
-            "for 30 days; 25% price inflation; 7-day supply disruption; 3-day lead time; "
+            "**Shared no-policy preset:** 120 days; 200 consumers/day; crisis starts Day 30 "
+            "for 45 days; 25% price inflation; 7-day supply disruption; 3-day lead time; "
             "30% reorder point; 90% restock target; panic sensitivity 0.50; hoarding factor 1.5; "
-            "no policy levers.\n\n"
-            "**Food security and equity preset:** 120 days; 200 consumers/day; crisis starts Day 30 "
-            "for 45 days; the same price, disruption, lead-time, inventory, panic, and hoarding "
-            "settings; no subsidy, rationing, tax, labelling, or communication intervention. "
-            "Both perspectives use paired seed 42."
+            "no subsidy, rationing, surcharge, labelling, or communication intervention.\n\n"
+            "**Two outcome perspectives, one run:** the supply-chain section reports operational "
+            "outcomes, while the food-security and equity section reports household outcomes. "
+            "Both use the exact same baseline/crisis pair and seed 42."
         )
     _rpt_col, _rpt_spacer = st.columns([1.4, 1.6])
     with _rpt_col:
@@ -4076,8 +4098,8 @@ def render_securefood_page():
 
         with c1:
             st.markdown("**📅 General**")
-            sc_days = st.slider("Duration (Days)", 30, 365, 90, 5, key="sf_sc_days",
-                help="Simulation length in days. 90 days captures the full shock-and-recovery arc of a typical supply chain disruption (Sheffi, 2005). Extend to 180+ to model seasonal recovery.")
+            sc_days = st.slider("Duration (Days)", 30, 365, 120, 5, key="sf_sc_days",
+                help="Simulation length in days. The shared default report uses 120 days so both operational and household recovery outcomes are observed on the same horizon.")
             sc_consumers = st.number_input("Base Daily Consumers", 50, 2000, 200, 50,
                 key="sf_sc_consumers",
                 help="Average shoppers per day. Finnish supermarkets: 800–1,200/day (PTY, 2023). Use 50–200 for neighbourhood stores, 500+ for hypermarkets. Scales shelf capacity automatically.")
@@ -4108,7 +4130,7 @@ def render_securefood_page():
                 key="sf_sc_inflation",
                 help="Retail price increase driven by production cost rises under climate stress. +25% aligns with IPCC AR6 projections for Northern European food systems by 2040 (IPCC, 2022).")
             sc_cri_dur = st.slider("Crisis Duration (Days)", 0,
-                                   max(1, sc_days - sc_cri_start), 30, 5,
+                                   max(1, sc_days - sc_cri_start), 45, 5,
                 key="sf_sc_cri_dur",
                 help="How long the disruption persists before recovery. 0 = runs to end of simulation. 30–60 days models a temporary weather event; 0 models structural climate change impact.")
 
