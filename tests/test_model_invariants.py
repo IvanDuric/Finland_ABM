@@ -273,6 +273,54 @@ class ModelInvariantTests(unittest.TestCase):
             sku.stock_storage, calibrated["initial_stock_storage"]
         )
 
+    def test_initial_shelf_inventory_uses_staggered_age_cohorts(self):
+        model = self.make_model()
+        sku = model.get_product_by_id("sku-1")
+        calibrated_initial = model.store_calibration["sku-1"]["initial_stock_shelf"]
+
+        self.assertEqual(sum(batch["qty"] for batch in sku.shelf_batches), calibrated_initial)
+        self.assertGreater(len({batch["age"] for batch in sku.shelf_batches}), 1)
+        self.assertTrue(all(0 <= batch["age"] < sku.max_shelf_life for batch in sku.shelf_batches))
+
+    def test_snapshot_excludes_stock_expired_before_shopping(self):
+        model = self.make_model()
+        sku = model.get_product_by_id("sku-1")
+        sku.shelf_batches = [{"qty": 4, "age": sku.max_shelf_life - 1}]
+        sku.stock_storage = 0
+        model.current_day = 1
+
+        sku.step()
+
+        self.assertEqual(sku.daily_waste, 4)
+        self.assertEqual(sku.stock_shelf, 0)
+        self.assertEqual(sku.snap_shelf, 0)
+
+    def test_unobserved_product_does_not_receive_large_generic_demand(self):
+        observed = product(product_id="milk-observed", name="Observed Milk")
+        unobserved = {
+            **product(product_id="cream-unobserved", name="Unobserved Cream"),
+            "category": "Cream",
+            "shelf_life_days": 20,
+        }
+        observed_profile = profile(
+            product_id="milk-observed", name="Observed Milk", quantity=1
+        )
+        model = SupermarketModel(
+            config_data={
+                "products": [observed, unobserved],
+                "population": [observed_profile],
+            },
+            base_consumers=200,
+            fixed_seed=7,
+        )
+        calibration = model.store_calibration["cream-unobserved"]
+
+        self.assertEqual(calibration["estimated_daily_demand"], 1.0)
+        self.assertEqual(calibration["max_shelf_capacity"], 10)
+        self.assertEqual(
+            calibration["demand_basis"], "minimum_floor_no_product_evidence"
+        )
+
     def test_crisis_budget_is_a_maximum_not_a_spending_target(self):
         p = {
             **profile(quantity=10, budget=20.0),

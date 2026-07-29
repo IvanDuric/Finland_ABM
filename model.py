@@ -208,10 +208,23 @@ class ProductAgent(Agent):
         self.origin = "Suomi" if str(_raw_origin).strip().lower() in _FINNISH else _raw_origin
         self.is_plant_based = bool(product_data.get("is_plant_based", False))
 
+        # Shelf life is needed when constructing the initial FIFO age profile.
+        self.max_shelf_life = int(product_data.get("shelf_life_days", 14))
+
         # --- Shelf (FIFO batches) ---
-        initial_shelf         = int(product_data.get("initial_stock_shelf", 10))
+        initial_shelf = int(product_data.get("initial_stock_shelf", 10))
         self.max_shelf_capacity = int(product_data.get("max_shelf_capacity", 20))
-        self.shelf_batches    = [{"qty": initial_shelf, "age": 0}]
+        # A running shop does not open with every unit delivered simultaneously.
+        # Spread opening stock across deterministic age cohorts so identical
+        # shelf-life products do not all expire on the same artificial day.
+        cohort_count = min(max(1, initial_shelf), max(1, self.max_shelf_life))
+        cohort_base, cohort_remainder = divmod(initial_shelf, cohort_count)
+        self.shelf_batches = []
+        for cohort in range(cohort_count):
+            quantity = cohort_base + (1 if cohort < cohort_remainder else 0)
+            age = int(cohort * self.max_shelf_life / cohort_count)
+            if quantity > 0:
+                self.shelf_batches.append({"qty": quantity, "age": age})
 
         # --- Storage (scalar) ---
         default_storage            = int(product_data.get("initial_stock_storage", 20))
@@ -226,9 +239,6 @@ class ProductAgent(Agent):
         self.stock_storage = min(
             self.stock_storage, self.max_storage_capacity
         )
-
-        # Shelf life
-        self.max_shelf_life = int(product_data.get("shelf_life_days", 14))
 
         # Daily counters (reset each step)
         self.daily_sales            = 0
@@ -288,11 +298,10 @@ class ProductAgent(Agent):
         Executed once per simulation day BEFORE consumers shop.
         Order of operations:
           1. Reset daily counters
-          2. Refill shelf from storage if below 30 %
-          3. Take snapshots
-          4. Apply inflation if scenario is active
-          5. Age all shelf batches by one day
-          6. Remove expired batches (waste) and apply near-expiry discount
+          2. Refill shelf from storage if below 50 %
+          3. Apply inflation and policy prices
+          4. Age shelf batches and remove expired units
+          5. Snapshot the post-expiry stock available to shoppers
         """
         # 1. Reset counters
         self.daily_sales            = 0
@@ -322,12 +331,7 @@ class ProductAgent(Agent):
                 self.shelf_batches.append({"qty": to_move, "age": 0})
                 self.stock_storage -= to_move
 
-        # 3. Snapshots
-        self.snap_shelf   = self.stock_shelf
-        self.snap_storage = self.stock_storage
-        self.snap_pending = self.model.truck.get_pending_stock(self.prod_id)
-
-        # 4. Price update — crisis inflation first, then policy modifiers
+        # 3. Price update — crisis inflation first, then policy modifiers
         if (
             self.model.is_scenario_active
             and self.prod_id in self.model.scenario_price_overrides
@@ -349,7 +353,7 @@ class ProductAgent(Agent):
             inflated, self.fat_content, is_finnish, self.is_bio
         )
 
-        # 5 & 6. Age batches, apply near-expiry discount, remove expired
+        # 4. Age batches, apply near-expiry discount, remove expired
         for b in self.shelf_batches:
             b["age"] += 1
 
@@ -377,6 +381,13 @@ class ProductAgent(Agent):
 
         # Store whether we have near-expiry stock (used during purchase)
         self._has_near_expiry = has_near_expiry
+
+        # 5. Snapshot the state consumers can actually access. Previously this
+        # happened before expiry removal, so charts showed inventory that was no
+        # longer available during the shopping phase.
+        self.snap_shelf = self.stock_shelf
+        self.snap_storage = self.stock_storage
+        self.snap_pending = self.model.truck.get_pending_stock(self.prod_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1498,14 +1509,40 @@ class SupermarketModel(Model):
         """
         # ── 1. Average basket quantity per product across population ─────────
         basket_totals: dict[str, float] = {}
+        category_totals: dict[str, float] = defaultdict(float)
         for profile in population:
             for item in profile.get("baseline_basket", []):
                 product_key = str(item.get("product_id") or item.get("product_name", ""))
-                qty  = float(item.get("quantity", 1))
+                qty = float(item.get("quantity", 1))
                 basket_totals[product_key] = basket_totals.get(product_key, 0.0) + qty
+                category = str(item.get("category", "")).strip().casefold()
+                if category:
+                    category_totals[category] += qty
 
         n_pop = max(1, len(population))
         avg_qty: dict[str, float] = {n: v / n_pop for n, v in basket_totals.items()}
+        category_avg_qty = {
+            category: total / n_pop for category, total in category_totals.items()
+        }
+
+        # Identify catalogue products with direct basket evidence. Category
+        # demand is used only for the unallocated remainder; it is never added
+        # on top of already observed SKU demand.
+        product_demand: dict[str, float | None] = {}
+        observed_by_category: dict[str, float] = defaultdict(float)
+        unobserved_count_by_category: dict[str, int] = defaultdict(int)
+        for prod in products:
+            product_id = str(prod.get("id") or prod.get("name", ""))
+            product_name = str(prod.get("name", ""))
+            category = str(prod.get("category", "")).strip().casefold()
+            observed = avg_qty.get(product_id)
+            if observed is None:
+                observed = avg_qty.get(product_name)
+            product_demand[product_id] = observed
+            if observed is None:
+                unobserved_count_by_category[category] += 1
+            else:
+                observed_by_category[category] += observed
 
         # ── 2. Per-product calibration ───────────────────────────────────────
         result: dict[str, dict] = {}
@@ -1521,9 +1558,30 @@ class SupermarketModel(Model):
             else:
                 shelf_cover = 4.0    # dry / canned goods
 
-            # Expected daily demand for this product
-            demand_key = product_id if product_id in avg_qty else prod.get("name", "")
-            daily_demand = max(1.0, base_consumers * avg_qty.get(demand_key, 0.5))
+            # Expected daily demand for this product. The former generic
+            # fallback of 0.5 units per household assigned 100 daily units to
+            # every unobserved SKU in a 200-visitor store, creating extreme
+            # capacities and synchronized refill spikes. Allocate only the
+            # category demand not already attributed to observed products.
+            category = str(prod.get("category", "")).strip().casefold()
+            observed = product_demand[product_id]
+            if observed is not None:
+                per_household_demand = observed
+                demand_basis = "observed_product"
+            else:
+                unallocated_category_demand = max(
+                    0.0,
+                    category_avg_qty.get(category, 0.0)
+                    - observed_by_category.get(category, 0.0),
+                )
+                missing_count = max(1, unobserved_count_by_category.get(category, 1))
+                per_household_demand = unallocated_category_demand / missing_count
+                demand_basis = (
+                    "unallocated_category_share"
+                    if per_household_demand > 0
+                    else "minimum_floor_no_product_evidence"
+                )
+            daily_demand = max(1.0, base_consumers * per_household_demand)
 
             max_shelf   = max(10, int(math.ceil(daily_demand * shelf_cover)))
             storage_days = lead_time + 4   # lead-time + safety buffer
@@ -1534,6 +1592,8 @@ class SupermarketModel(Model):
                 "max_storage_capacity": max_storage,
                 "initial_stock_shelf":  int(max_shelf   * 0.75),
                 "initial_stock_storage": int(max_storage * 0.60),
+                "estimated_daily_demand": round(daily_demand, 6),
+                "demand_basis": demand_basis,
             }
 
         return result
