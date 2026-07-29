@@ -3904,6 +3904,36 @@ def _render_sf_artifact_downloads(artifacts: dict, filename_stem: str, key_prefi
 
 # ── Main SecureFood page ───────────────────────────────────────────────────────
 
+_SF_PARAMETER_HELP = {
+    "days": "Total simulated calendar days. Use a horizon long enough to include the pre-crisis period, disruption, and recovery. This changes runtime and export length, not the empirical sample size.",
+    "consumers": "Target household shopping visits per day. Higher values increase demand pressure and runtime. Profiles are resampled from the same empirical population; this is store traffic, not a new survey sample.",
+    "crisis_start": "First day on which the configured price and delivery shocks become active. Leave enough pre-crisis days to establish a meaningful reference period.",
+    "crisis_duration": "Number of days the disruption remains active. After this window, prices and supply conditions begin recovery. Zero means the shock continues through the simulation.",
+    "inflation": "Percentage increase applied to crisis retail prices before policy effects. This is an analyst-defined stress assumption, not a calibrated forecast.",
+    "disruption": "Additional crisis delivery delay in days. Larger values postpone replenishment and normally increase stockout risk. Zero represents a price-only shock.",
+    "month": "Calendar month on simulation Day 1. It selects the model's seasonal store-traffic multiplier and therefore affects demand volume.",
+    "lead": "Normal time from placing an inventory order to delivery. The crisis delivery delay is added while the disruption is active.",
+    "reorder": "Storage level, as a percentage of capacity, that triggers a new order. A higher threshold orders earlier but can increase holding and perishable-waste risk.",
+    "target": "Storage level the replenishment order attempts to restore. A higher target builds a larger buffer but can increase waste for short-life products.",
+    "panic": "Strength of population panic growth after shoppers observe scarcity or price shocks. Zero disables contagion; one is the strongest configured response. This is exploratory, not directly estimated from the DCE.",
+    "hoard": "Maximum multiplier on precautionary purchasing when panic is present. Each household's observed phase-transition propensity scales the effect, so not every shopper receives the maximum.",
+    "rationing_on": "Activates a per-product quantity limit for every shopping visit. Use it to test whether rationing distributes scarce stock more evenly.",
+    "rationing_limit": "Maximum units of one product a shopper may buy during a visit. It applies separately to each product, not to the entire basket.",
+    "communication": "Daily government communication effect on panic. Calming reduces panic, panic-oriented communication increases it, and neutral has no direct effect. Communication does not create inventory or directly change prices.",
+    "communication_intensity": "Strength of the selected communication effect from 0 (none) to 1 (maximum configured effect). Treat this as a scenario assumption, not a measured coefficient.",
+    "subsidy_on": "Activates a consumer price subsidy for the selected product group. It lowers eligible retail prices but does not directly increase supply capacity.",
+    "subsidy_target": "Products eligible for the subsidy: Finnish-origin products, organic products, or products satisfying either condition.",
+    "subsidy_rate": "Percentage reduction in eligible crisis retail prices. For example, 25% changes an eligible €4.00 price to €3.00 before near-expiry discounts.",
+    "surcharge_on": "Activates a price surcharge on products whose recorded fat content exceeds the selected threshold.",
+    "fat_threshold": "Minimum recorded fat percentage above which the surcharge applies. Products at or below the threshold are unaffected.",
+    "surcharge_rate": "Percentage price increase applied above the fat threshold. It can alter affordability and choice; it does not represent tax-revenue accounting.",
+    "labelling_on": "Activates an exploratory information intervention that shifts health and organic preferences from the chosen start day.",
+    "labelling_day": "First simulation day on which nutritional labelling affects eligible consumer preference weights.",
+    "health_boost": "Additive increase in the health-preference weight after labelling begins. This is a scenario assumption and should be sensitivity-tested.",
+    "organic_boost": "Additive increase in the organic-preference weight after labelling begins. This is a scenario assumption and should be sensitivity-tested.",
+}
+
+
 def render_securefood_page():
     """Full-screen SecureFood Scenario Simulator — Supply Chain & Policy Maker profiles."""
     st.markdown("""<style>
@@ -4041,6 +4071,7 @@ def render_securefood_page():
             "under climate-driven disruption. Focus: operational resilience, revenue, and inventory._"
         )
         st.markdown("### ⚙️ Scenario Parameters")
+        st.caption("Select the small ? icon beside any parameter to see what it changes and how to interpret it.")
         c1, c2, c3 = st.columns(3)
 
         with c1:
@@ -4135,44 +4166,55 @@ def render_securefood_page():
 
         if pm_policy_enabled:
             st.markdown("### ⚙️ Counterfactual scenario settings")
+            st.caption("Select the small ? icon beside any parameter to see what it changes and how to interpret it.")
             p1, p2, p3 = st.columns(3)
 
             with p1:
                 st.markdown("**🔴 Crisis severity**")
-                pm_days = st.slider("Duration (Days)", 60, 365, 120, 10, key="sf_pm_days")
+                pm_days = st.slider(
+                    "Duration (Days)", 60, 365, 120, 10, key="sf_pm_days",
+                    help=_SF_PARAMETER_HELP["days"],
+                )
                 pm_consumers = st.number_input(
-                    "Base Daily Consumers", 50, 2000, 200, 50, key="sf_pm_consumers"
+                    "Base Daily Consumers", 50, 2000, 200, 50, key="sf_pm_consumers",
+                    help=_SF_PARAMETER_HELP["consumers"],
                 )
                 pm_cri_start = st.slider(
                     "Crisis Start Day", 5, max(6, pm_days - 20),
-                    min(30, pm_days - 20), key="sf_pm_cri_start"
+                    min(30, pm_days - 20), key="sf_pm_cri_start",
+                    help=_SF_PARAMETER_HELP["crisis_start"],
                 )
                 pm_cri_dur = st.slider(
                     "Crisis Duration (Days)", 0, max(1, pm_days - pm_cri_start),
-                    min(45, max(1, pm_days - pm_cri_start)), 5, key="sf_pm_cri_dur"
+                    min(45, max(1, pm_days - pm_cri_start)), 5, key="sf_pm_cri_dur",
+                    help=_SF_PARAMETER_HELP["crisis_duration"],
                 )
                 pm_inflation = st.slider(
                     "Price Inflation (%)", 0, 100, 25, 5, key="sf_pm_inflation",
-                    help="Analyst-defined stress input, not a calibrated Finnish forecast."
+                    help=_SF_PARAMETER_HELP["inflation"],
                 )
                 pm_disruption = st.slider(
                     "Supply Disruption (Days delay)", 0, 30, 7, 1,
-                    key="sf_pm_disruption"
+                    key="sf_pm_disruption", help=_SF_PARAMETER_HELP["disruption"],
                 )
 
             with p2:
                 st.markdown("**🚚 Logistics & inventory**")
                 pm_month = st.selectbox(
-                    "Start Month", list(range(1, 13)), index=0, key="sf_pm_month"
+                    "Start Month", list(range(1, 13)), index=0, key="sf_pm_month",
+                    help=_SF_PARAMETER_HELP["month"],
                 )
-                pm_lead = st.slider("Lead Time (Days)", 1, 14, 3, 1, key="sf_pm_lead")
+                pm_lead = st.slider(
+                    "Lead Time (Days)", 1, 14, 3, 1, key="sf_pm_lead",
+                    help=_SF_PARAMETER_HELP["lead"],
+                )
                 pm_reorder = st.slider(
                     "Reorder Point (% of storage)", 10, 60, 30, 5,
-                    key="sf_pm_reorder"
+                    key="sf_pm_reorder", help=_SF_PARAMETER_HELP["reorder"],
                 ) / 100.0
                 pm_target = st.slider(
                     "Restock Target (% of storage)", 70, 100, 90, 5,
-                    key="sf_pm_target"
+                    key="sf_pm_target", help=_SF_PARAMETER_HELP["target"],
                 ) / 100.0
 
             with p3:
@@ -4180,12 +4222,12 @@ def render_securefood_page():
                 pm_panic = st.slider(
                     "Panic Sensitivity", 0.0, 1.0, 0.50, 0.05,
                     key="sf_pm_panic",
-                    help="Exploratory scenario assumption; not estimated from the DCE."
+                    help=_SF_PARAMETER_HELP["panic"],
                 )
                 pm_hoard = st.slider(
                     "Hoarding Factor", 1.0, 3.0, 1.5, 0.1,
                     key="sf_pm_hoard",
-                    help="Exploratory maximum multiplier, scaled by household propensity."
+                    help=_SF_PARAMETER_HELP["hoard"],
                 )
 
             st.markdown("### 🏛️ Policy levers")
@@ -4194,64 +4236,75 @@ def render_securefood_page():
             with pol1:
                 st.markdown("**Access and communication**")
                 pm_pl_on = st.checkbox(
-                    "Enable Purchase Rationing", False, key="sf_pm_pl_on"
+                    "Enable Purchase Rationing", False, key="sf_pm_pl_on",
+                    help=_SF_PARAMETER_HELP["rationing_on"],
                 )
                 pm_pl_val = st.slider(
                     "Max Units per Product per Visit", 1, 10, 3,
-                    key="sf_pm_pl_val", disabled=not pm_pl_on
+                    key="sf_pm_pl_val", disabled=not pm_pl_on,
+                    help=_SF_PARAMETER_HELP["rationing_limit"],
                 )
                 pm_purchase_limit = pm_pl_val if pm_pl_on else None
                 pm_comm = st.selectbox(
                     "Government Communication Strategy",
-                    ["neutral", "calming", "panic"], key="sf_pm_comm"
+                    ["neutral", "calming", "panic"], key="sf_pm_comm",
+                    help=_SF_PARAMETER_HELP["communication"],
                 )
                 pm_media = st.slider(
                     "Communication Intensity", 0.0, 1.0, 0.30, 0.05,
-                    key="sf_pm_media", disabled=pm_comm == "neutral"
+                    key="sf_pm_media", disabled=pm_comm == "neutral",
+                    help=_SF_PARAMETER_HELP["communication_intensity"],
                 ) if pm_comm != "neutral" else 0.0
 
             with pol2:
                 st.markdown("**Prices and affordability**")
                 pm_sub_on = st.checkbox(
-                    "Enable Product Subsidy", False, key="sf_pm_sub_on"
+                    "Enable Product Subsidy", False, key="sf_pm_sub_on",
+                    help=_SF_PARAMETER_HELP["subsidy_on"],
                 )
                 pm_sub_target = st.selectbox(
                     "Subsidy Target", ["domestic", "organic", "both"],
-                    key="sf_pm_sub_target", disabled=not pm_sub_on
+                    key="sf_pm_sub_target", disabled=not pm_sub_on,
+                    help=_SF_PARAMETER_HELP["subsidy_target"],
                 )
                 pm_sub_rate = st.slider(
                     "Subsidy Rate (%)", 5, 40, 15, 5, key="sf_pm_sub_rate",
-                    disabled=not pm_sub_on
+                    disabled=not pm_sub_on, help=_SF_PARAMETER_HELP["subsidy_rate"],
                 ) / 100.0 if pm_sub_on else 0.0
                 pm_fat_on = st.checkbox(
-                    "Enable Fat-Content Surcharge", False, key="sf_pm_fat_on"
+                    "Enable Fat-Content Surcharge", False, key="sf_pm_fat_on",
+                    help=_SF_PARAMETER_HELP["surcharge_on"],
                 )
                 pm_fat_threshold = st.slider(
                     "Fat Threshold (%)", 0.5, 5.0, 3.5, 0.5,
-                    key="sf_pm_fat_threshold", disabled=not pm_fat_on
+                    key="sf_pm_fat_threshold", disabled=not pm_fat_on,
+                    help=_SF_PARAMETER_HELP["fat_threshold"],
                 )
                 pm_fat_rate = st.slider(
                     "Surcharge Rate (%)", 5, 50, 20, 5, key="sf_pm_fat_rate",
-                    disabled=not pm_fat_on
+                    disabled=not pm_fat_on, help=_SF_PARAMETER_HELP["surcharge_rate"],
                 ) / 100.0 if pm_fat_on else 0.0
 
             with pol3:
                 st.markdown("**Information and preferences**")
                 pm_lab_on = st.checkbox(
-                    "Enable Nutritional Labelling", False, key="sf_pm_lab_on"
+                    "Enable Nutritional Labelling", False, key="sf_pm_lab_on",
+                    help=_SF_PARAMETER_HELP["labelling_on"],
                 )
                 pm_lab_day = st.slider(
                     "Labelling Start Day", 1, pm_days,
                     min(pm_cri_start, pm_days), key="sf_pm_lab_day",
-                    disabled=not pm_lab_on
+                    disabled=not pm_lab_on, help=_SF_PARAMETER_HELP["labelling_day"],
                 )
                 pm_lab_health = st.slider(
                     "Health Preference Boost", 0.0, 0.40, 0.10, 0.05,
-                    key="sf_pm_lab_health", disabled=not pm_lab_on
+                    key="sf_pm_lab_health", disabled=not pm_lab_on,
+                    help=_SF_PARAMETER_HELP["health_boost"],
                 ) if pm_lab_on else 0.0
                 pm_lab_organic = st.slider(
                     "Organic Preference Boost", 0.0, 0.30, 0.05, 0.05,
-                    key="sf_pm_lab_organic", disabled=not pm_lab_on
+                    key="sf_pm_lab_organic", disabled=not pm_lab_on,
+                    help=_SF_PARAMETER_HELP["organic_boost"],
                 ) if pm_lab_on else 0.0
 
             pm_policy_cfg = {
