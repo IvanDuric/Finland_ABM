@@ -117,7 +117,12 @@ def test_securefood_default_report_presets_are_no_policy_and_independent():
     sc_first, pm_first = app._sf_preset_report_params()
     sc_second, pm_second = app._sf_preset_report_params()
 
-    assert sc_first["days"] == 90
+    assert sc_first == pm_first
+    assert sc_first is not pm_first
+    assert sc_first["policy_cfg"] is not pm_first["policy_cfg"]
+    assert sc_first["days"] == 120
+    assert sc_first["cri_start"] == 30
+    assert sc_first["cri_duration"] == 45
     assert sc_first["policy_cfg"]["subsidy_active"] is False
     assert pm_first["days"] == 120
     assert pm_first["policy_cfg"]["subsidy_active"] is False
@@ -175,7 +180,10 @@ def test_securefood_parameter_signature_detects_changed_analysis_inputs():
 
 
 def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch):
+    model_calls = []
+
     def fake_make_model(_params, is_crisis, seed, policy_cfg=None, **_kwargs):
+        model_calls.append((is_crisis, dict(policy_cfg or {})))
         model = _DummyModel()
         model.is_crisis = is_crisis
         model.has_policy = bool(policy_cfg and policy_cfg.get("subsidy_active"))
@@ -233,8 +241,14 @@ def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch)
     assert "Policy Effectiveness & Recommendations" not in default_text
     assert not default_csv["PolicyAnalysisIncluded"].astype(bool).any()
     assert "Crisis (Selected Policy)" not in set(default_csv["Scenario"])
+    assert set(default_csv["Perspective"]) == {"Shared Default Scenario"}
+    assert len(default_csv) == 4
+    assert "Shared Scenario Definition" in default_text
+    assert "Both lenses use the exact same paired baseline/crisis run" in default_text
+    assert len(model_calls) == 2
 
     app._generate_sf_report_artifacts.clear()
+    model_calls.clear()
     policy_artifacts = app._generate_sf_report_artifacts(
         sc_params=sc_params,
         pm_params=pm_params,
@@ -248,3 +262,4 @@ def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch)
     assert "Policy Effectiveness & Recommendations" in policy_text
     assert policy_csv["PolicyAnalysisIncluded"].astype(bool).all()
     assert "Crisis (Selected Policy)" in set(policy_csv["Scenario"])
+    assert len(model_calls) == 3
