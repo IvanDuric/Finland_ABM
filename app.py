@@ -78,6 +78,12 @@ plt.switch_backend("Agg")
 
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+# Included explicitly in the SecureFood report cache key. Streamlit hashes the
+# report function itself, but changes in imported ABM logic (model.py) do not
+# necessarily invalidate an already-cached report. Bump this identifier whenever
+# a scientific model change can alter report outputs.
+SF_REPORT_MODEL_REVISION = "inventory-age-cohorts-v2"
+
 def _logo_uri(filename: str) -> str:
     """Read a file from static/ and return a base64 data URI, or '' if missing."""
     path = os.path.join(_STATIC_DIR, filename)
@@ -2860,6 +2866,7 @@ def _generate_sf_report_artifacts(
     pm_params: dict | None = None,
     report_mode: str = "Preset demonstration",
     include_policy_analysis: bool = False,
+    report_model_revision: str = SF_REPORT_MODEL_REVISION,
 ) -> dict:
     """
     Generate a SecureFood PDF plus aggregate and product-level CSV exports.
@@ -2871,6 +2878,11 @@ def _generate_sf_report_artifacts(
     """
     import textwrap as _tw
     from fpdf.enums import XPos, YPos
+
+    # This value is deliberately a function argument so it participates in the
+    # Streamlit cache key. It also travels with the artifacts, allowing stale
+    # session-state reports to be detected after a deployment.
+    report_model_revision = str(report_model_revision)
 
     # ── Report parameters ─────────────────────────────────────────────────────
     preset_sc, preset_pm = _sf_preset_report_params()
@@ -3877,6 +3889,7 @@ def _generate_sf_report_artifacts(
         "pdf": pdf_bytes,
         "aggregate_csv": aggregate_csv.to_csv(index=False).encode("utf-8-sig"),
         "product_csv": product_csv.to_csv(index=False).encode("utf-8-sig"),
+        "model_revision": report_model_revision,
     }
 
 
@@ -3892,6 +3905,7 @@ def _generate_sf_pdf_report(
         pm_params,
         report_mode,
         include_policy_analysis,
+        SF_REPORT_MODEL_REVISION,
     )["pdf"]
 
 
@@ -3987,6 +4001,22 @@ def render_securefood_page():
         )
         return
 
+    # Reports are stored in session state after generation. A browser session
+    # can survive an app redeployment, so discard artifacts made by an older
+    # scientific model instead of continuing to offer a stale PDF and CSVs.
+    for _artifact_key, _signature_key in (
+        ("sf_preset_report_artifacts", None),
+        ("sf_policy_report_artifacts", "sf_policy_report_signature"),
+    ):
+        _artifacts = st.session_state.get(_artifact_key)
+        if (
+            _artifacts
+            and _artifacts.get("model_revision") != SF_REPORT_MODEL_REVISION
+        ):
+            st.session_state[_artifact_key] = None
+            if _signature_key:
+                st.session_state[_signature_key] = None
+
     st.divider()
 
     # ── Scenario background card ───────────────────────────────────────────────
@@ -4068,6 +4098,7 @@ def render_securefood_page():
                         _generate_sf_report_artifacts(
                             report_mode="Default scenario",
                             include_policy_analysis=False,
+                            report_model_revision=SF_REPORT_MODEL_REVISION,
                         )
                     )
                 except Exception as _e:
@@ -4399,6 +4430,7 @@ def render_securefood_page():
                                 pm_params=pm_params,
                                 report_mode="Additional policy analysis",
                                 include_policy_analysis=True,
+                                report_model_revision=SF_REPORT_MODEL_REVISION,
                             )
                         )
                         st.session_state["sf_policy_report_signature"] = pm_signature

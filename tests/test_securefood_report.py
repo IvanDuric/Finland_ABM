@@ -237,6 +237,7 @@ def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch)
         page.extract_text() or "" for page in PdfReader(BytesIO(default_artifacts["pdf"])).pages
     )
     default_csv = pd.read_csv(BytesIO(default_artifacts["aggregate_csv"]))
+    assert default_artifacts["model_revision"] == app.SF_REPORT_MODEL_REVISION
     assert "Food Security & Equity Analysis" in default_text
     assert "Policy Effectiveness & Recommendations" not in default_text
     assert not default_csv["PolicyAnalysisIncluded"].astype(bool).any()
@@ -259,6 +260,7 @@ def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch)
         page.extract_text() or "" for page in PdfReader(BytesIO(policy_artifacts["pdf"])).pages
     )
     policy_csv = pd.read_csv(BytesIO(policy_artifacts["aggregate_csv"]))
+    assert policy_artifacts["model_revision"] == app.SF_REPORT_MODEL_REVISION
     assert "Policy Effectiveness & Recommendations" in policy_text
     assert policy_csv["PolicyAnalysisIncluded"].astype(bool).all()
     assert "Crisis (Selected Policy)" in set(policy_csv["Scenario"])
