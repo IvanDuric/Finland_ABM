@@ -1,9 +1,18 @@
 from io import BytesIO
+import inspect
 
 import pandas as pd
 from pypdf import PdfReader
 
 import app
+
+
+def test_policy_downloads_are_rendered_before_detailed_results():
+    """Keep policy downloads beside report generation, above long results."""
+    source = inspect.getsource(app.render_securefood_page)
+    policy_downloads = source.rindex("_render_sf_artifact_downloads(")
+    policy_results = source.rindex("_render_sf_pm_results(")
+    assert policy_downloads < policy_results
 
 
 class _DummyModel:
