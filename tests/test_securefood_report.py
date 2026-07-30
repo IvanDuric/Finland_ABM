@@ -221,8 +221,6 @@ def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch)
 
     monkeypatch.setattr(app, "_make_model", fake_make_model)
     monkeypatch.setattr(app, "_collect_model_day", fake_collect)
-    app._generate_sf_report_artifacts.clear()
-
     sc_params = _minimal_params()
     sc_params.update({"policy_cfg": {}, "purchase_limit": None, "media_intensity": 0.0})
     pm_params = _minimal_params()
@@ -247,8 +245,20 @@ def test_securefood_default_report_excludes_optional_policy_chapter(monkeypatch)
     assert "Shared Scenario Definition" in default_text
     assert "Both lenses use the exact same paired baseline/crisis run" in default_text
     assert len(model_calls) == 2
+    assert app.SF_REPORT_MODEL_REVISION in default_text
+    assert default_artifacts["generated_at"]
 
-    app._generate_sf_report_artifacts.clear()
+    # A second request must execute a new paired simulation. Report results are
+    # deliberately uncached so an old scientific artifact cannot survive a
+    # model deployment or be returned immediately on a new button click.
+    app._generate_sf_report_artifacts(
+        sc_params=sc_params,
+        pm_params=pm_params,
+        report_mode="Test default rerun",
+        include_policy_analysis=False,
+    )
+    assert len(model_calls) == 4
+
     model_calls.clear()
     policy_artifacts = app._generate_sf_report_artifacts(
         sc_params=sc_params,
