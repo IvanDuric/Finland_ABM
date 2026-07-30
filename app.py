@@ -4450,8 +4450,10 @@ def render_securefood_page():
                     except Exception as _e:
                         st.error(f"Policy report generation failed: {_e}")
 
-            if st.session_state.get("sf_results_pm") and pm_result_is_current:
-                _render_sf_pm_results(st.session_state["sf_results_pm"])
+            # Keep generated files beside the action that creates them. The
+            # detailed policy results are intentionally rendered afterwards so
+            # users do not have to scroll through the full analysis to find the
+            # PDF and CSV download controls.
             if (
                 st.session_state.get("sf_policy_report_artifacts")
                 and st.session_state.get("sf_policy_report_signature") == pm_signature
@@ -4462,6 +4464,9 @@ def render_securefood_page():
                     "GROCERYsim_SecureFood_Additional_Policy",
                     "sf_policy_download",
                 )
+
+            if st.session_state.get("sf_results_pm") and pm_result_is_current:
+                _render_sf_pm_results(st.session_state["sf_results_pm"])
         else:
             st.caption(
                 "The default scenario remains unmitigated. Turn on the module above to reveal "
