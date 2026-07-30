@@ -3917,37 +3917,50 @@ def _generate_sf_pdf_report(
     )["pdf"]
 
 
-def _render_sf_artifact_downloads(artifacts: dict, filename_stem: str, key_prefix: str):
+def _render_sf_artifact_downloads(
+    artifacts: dict | None,
+    filename_stem: str,
+    key_prefix: str,
+    columns=None,
+    disabled: bool = False,
+    show_status: bool = True,
+):
     """Render aligned PDF and CSV download actions for one generated report."""
-    st.success(
-        "Fresh simulation completed · "
-        f"model `{artifacts.get('model_revision', 'unknown')}` · "
-        f"generated `{artifacts.get('generated_at', 'unknown time')}`"
-    )
-    pdf_col, daily_col, product_col = st.columns(3)
+    artifacts = artifacts or {}
+    disabled = bool(disabled or not artifacts)
+    if show_status and artifacts:
+        st.success(
+            "Fresh simulation completed · "
+            f"model `{artifacts.get('model_revision', 'unknown')}` · "
+            f"generated `{artifacts.get('generated_at', 'unknown time')}`"
+        )
+    pdf_col, daily_col, product_col = columns or st.columns(3)
     pdf_col.download_button(
-        "📄 Download PDF Report",
-        data=artifacts["pdf"],
+        "📄 PDF Report" if columns else "📄 Download PDF Report",
+        data=artifacts.get("pdf", b""),
         file_name=f"{filename_stem}_Report.pdf",
         mime="application/pdf",
         use_container_width=True,
         key=f"{key_prefix}_pdf",
+        disabled=disabled,
     )
     daily_col.download_button(
-        "⬇️ Download Daily Results (CSV)",
-        data=artifacts["aggregate_csv"],
+        "⬇️ Daily CSV" if columns else "⬇️ Download Daily Results (CSV)",
+        data=artifacts.get("aggregate_csv", b""),
         file_name=f"{filename_stem}_Daily_Results.csv",
         mime="text/csv",
         use_container_width=True,
         key=f"{key_prefix}_daily_csv",
+        disabled=disabled,
     )
     product_col.download_button(
-        "⬇️ Download Product Results (CSV)",
-        data=artifacts["product_csv"],
+        "⬇️ Product CSV" if columns else "⬇️ Download Product Results (CSV)",
+        data=artifacts.get("product_csv", b""),
         file_name=f"{filename_stem}_Product_Results.csv",
         mime="text/csv",
         use_container_width=True,
         key=f"{key_prefix}_product_csv",
+        disabled=disabled,
     )
 
 
@@ -4416,7 +4429,9 @@ def render_securefood_page():
                     "analysis again before generating or downloading its report."
                 )
 
-            run_col, report_col, _ = st.columns([1.6, 2.0, 3.4])
+            run_col, report_col, pdf_col, daily_col, product_col = st.columns(
+                [1.55, 2.05, 1.15, 1.15, 1.25]
+            )
             if run_col.button(
                 "▶ Run Policy Simulation", type="primary", key="sf_pm_run",
                 use_container_width=True, disabled=not pm_has_policy
@@ -4450,19 +4465,37 @@ def render_securefood_page():
                     except Exception as _e:
                         st.error(f"Policy report generation failed: {_e}")
 
-            # Keep generated files beside the action that creates them. The
-            # detailed policy results are intentionally rendered afterwards so
-            # users do not have to scroll through the full analysis to find the
-            # PDF and CSV download controls.
-            if (
+            policy_artifacts_are_current = bool(
                 st.session_state.get("sf_policy_report_artifacts")
                 and st.session_state.get("sf_policy_report_signature") == pm_signature
                 and pm_result_is_current
-            ):
+            )
+            if policy_artifacts_are_current:
                 _render_sf_artifact_downloads(
                     st.session_state["sf_policy_report_artifacts"],
                     "GROCERYsim_SecureFood_Additional_Policy",
                     "sf_policy_download",
+                    columns=(pdf_col, daily_col, product_col),
+                    show_status=False,
+                )
+                _artifacts = st.session_state["sf_policy_report_artifacts"]
+                st.success(
+                    "Fresh simulation completed · "
+                    f"model `{_artifacts.get('model_revision', 'unknown')}` · "
+                    f"generated `{_artifacts.get('generated_at', 'unknown time')}`"
+                )
+            else:
+                pdf_col.button(
+                    "📄 PDF Report", key="sf_policy_pdf_disabled",
+                    disabled=True, use_container_width=True,
+                )
+                daily_col.button(
+                    "⬇️ Daily CSV", key="sf_policy_daily_csv_disabled",
+                    disabled=True, use_container_width=True,
+                )
+                product_col.button(
+                    "⬇️ Product CSV", key="sf_policy_product_csv_disabled",
+                    disabled=True, use_container_width=True,
                 )
 
             if st.session_state.get("sf_results_pm") and pm_result_is_current:
