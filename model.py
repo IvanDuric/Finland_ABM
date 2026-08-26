@@ -114,6 +114,10 @@ class PolicyConfig:
         # target: "domestic", "organic", or "both"
         self.subsidy_target = str(cfg.get("subsidy_target", "domestic"))
         self.subsidy_rate   = float(cfg.get("subsidy_rate",  0.15))         # 15 % discount
+        self.subsidy_categories = {
+            str(category).strip().casefold()
+            for category in (cfg.get("subsidy_categories", []) or [])
+        }
 
         # --- Domestic supply shock (animal disease, drought, …) ---
         self.domestic_shock_active   = bool(cfg.get("domestic_shock_active",   False))
@@ -143,7 +147,7 @@ class PolicyConfig:
 
     def apply_price_policy(
         self, base_price: float, fat_content: float,
-        is_finnish: bool, is_organic: bool,
+        is_finnish: bool, is_organic: bool, category: str = "",
     ) -> float:
         """Return the post-policy shelf price for one product unit."""
         price = base_price
@@ -158,6 +162,10 @@ class PolicyConfig:
                 (self.subsidy_target == "domestic" and is_finnish) or
                 (self.subsidy_target == "organic"  and is_organic) or
                 (self.subsidy_target == "both"     and (is_finnish or is_organic))
+                or (
+                    self.subsidy_target == "category"
+                    and str(category).strip().casefold() in self.subsidy_categories
+                )
             )
             if applies:
                 price *= (1.0 - self.subsidy_rate)
@@ -360,7 +368,7 @@ class ProductAgent(Agent):
         policy: PolicyConfig = self.model.policy_config
         is_finnish = self.is_domestic
         self.current_price = policy.apply_price_policy(
-            inflated, self.fat_content, is_finnish, self.is_bio
+            inflated, self.fat_content, is_finnish, self.is_bio, self.category
         )
 
         # 4. Age batches, apply near-expiry discount, remove expired

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from model import SupermarketModel
+from model import PolicyConfig, SupermarketModel
 from portugal_fruits import (
     _count_carrot_material,
     build_portugal_fruit_config,
@@ -80,3 +80,14 @@ def test_fruit_model_runs_and_activates_generic_orange_choice(portugal_config):
     assert latest["ChoicePriceScaleIdentified"] == 1
     assert latest["DCEAttributeRankingCategories"] == "orange"
     assert model.dce_generic_feature_coefficients["price"] < 0
+
+
+def test_orange_subsidy_does_not_subsidize_other_fruit():
+    policy = PolicyConfig({
+        "subsidy_active": True,
+        "subsidy_target": "category",
+        "subsidy_categories": ["Orange"],
+        "subsidy_rate": 0.15,
+    })
+    assert policy.apply_price_policy(2.0, 0.0, True, False, "Orange") == 1.7
+    assert policy.apply_price_policy(2.0, 0.0, True, False, "Other fruit") == 2.0

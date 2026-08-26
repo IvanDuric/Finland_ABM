@@ -4829,19 +4829,7 @@ def render_portugal_fruits_page() -> None:
         "**Preliminary model:** data collection is ongoing. This local case study is not part "
         "of the deployed website and its outputs are directional, not population estimates."
     )
-    with st.expander("Preliminary source data", expanded=False):
-        upload = st.file_uploader(
-            "Upload Portugal GROCERYsim Firebase export", type=["json"], key="pt_export_upload"
-        )
-        st.caption(
-            "For this local test, the attached export is loaded automatically from Downloads. "
-            "A newly uploaded file overrides it. Raw participant data are not copied into the repository."
-        )
-    if upload is not None:
-        st.session_state["pt_config"] = _pt_load_config(upload)
-        st.session_state["pt_results_default"] = None
-        st.session_state["pt_results_policy"] = None
-    elif st.session_state.get("pt_config") is None:
+    if st.session_state.get("pt_config") is None:
         with st.spinner("Processing the preliminary Portugal cohort..."):
             st.session_state["pt_config"] = _pt_load_config()
     config = st.session_state.get("pt_config")
@@ -4853,17 +4841,25 @@ def render_portugal_fruits_page() -> None:
     sample = summary["sample"]
     dce = summary["orange_dce"]
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Eligible participants", sample["eligible_profiles"])
-    s2.metric("Halle excluded", sample["halle_finished_excluded"])
-    s3.metric("Fruit SKUs", summary["catalogue"]["skus"])
-    s4.metric("Orange DCE participants", dce.get("n_participants", 0))
-    with st.expander("Calibration and exclusion audit", expanded=False):
-        st.json(summary, expanded=False)
+    s1.metric("Participants analysed", sample["eligible_profiles"])
+    s2.metric("Participants excluded (Halle)", sample["halle_finished_excluded"])
+    s3.metric("Distinct fruit products", summary["catalogue"]["skus"])
+    s4.metric("Participants in Discrete Choice Experiment", dce.get("n_participants", 0))
+    st.caption(
+        "**Distinct fruit products (18)** means 18 different product names appeared in the "
+        "eligible participants' normal or disrupted shopping baskets—for example bananas, "
+        "apples, kiwis and four orange products. It is a product count, not the number of "
+        "fruit categories or participants. **The orange Discrete Choice Experiment uses 71 "
+        "participants** with complete recorded-price choices; two eligible shopping participants "
+        "had an earlier choice format without the full price/attribute data and are not used to "
+        "estimate the DCE coefficients."
+    )
 
     st.markdown("### Scenario: climate pressure on Portuguese fruit supply")
     st.markdown(
-        "A heat-and-water-stress episode reduces harvest reliability and interrupts fruit "
-        "deliveries. Retail prices rise while selected products become unavailable. Households "
+        "A heat-and-water-stress episode reduces Portuguese fruit yields and marketable orange "
+        "quality while interrupting temperature-sensitive deliveries. Retail prices rise and "
+        "selected fruits become unavailable. Households "
         "start from their observed normal fruit baskets; price retention and substitution "
         "propensities are estimated from the repeated higher-price/missing-product shopping task. "
         "The orange DCE contributes pooled price, Portuguese/Algarve origin, size and appearance "
@@ -4878,18 +4874,19 @@ def render_portugal_fruits_page() -> None:
         "days": 120, "month": 7, "base_con": 200,
         "reorder": 0.35, "target": 0.85, "lead": 3,
         "cri_start": 30, "cri_duration": 45, "inf": 20.0, "dis": 7,
-        "panic": 0.40, "hoard": 1.35, "mc_runs": 1,
+        "panic": 0.0, "hoard": 1.0, "mc_runs": 1,
         "policy_cfg": _sf_no_policy_config(30), "purchase_limit": None,
         "media_intensity": 0.0, "communication_type": "neutral",
-        "stockpile_days": None, "exploratory_behaviour": True,
+        "stockpile_days": None, "exploratory_behaviour": False,
     }
     st.markdown("### 1. Run the no-policy preset")
     with st.expander("View preset parameters", expanded=False):
         st.markdown(
             "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% fruit-price "
             "increase; 7-day delivery interruption; 3-day normal lead time; 35% reorder point; "
-            "85% restock target; behavioural-pressure sensitivity 0.40; precautionary-purchase "
-            "factor 1.35; no policy intervention; paired seed 42."
+            "85% restock target; no assumed panic or hoarding multiplier; no policy intervention; "
+            "paired seed 42. Price retention and substitution come from the two observed fruit "
+            "shopping stages."
         )
     if st.button("Run Portugal fruit preset", type="primary", key="pt_run_default"):
         with st.spinner("Running paired no-crisis and fruit-crisis simulations..."):
@@ -4928,15 +4925,17 @@ def render_portugal_fruits_page() -> None:
         lead = st.slider("Normal lead time (days)", 1, 10, 3, key="pt_lead")
         reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="pt_reorder") / 100
         target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="pt_target") / 100
-        panic = st.slider("Scarcity-response sensitivity", 0.0, 1.0, 0.40, 0.05, key="pt_panic",
-                          help="Exploratory response to observed scarcity; it is not a questionnaire scale.")
-        hoard = st.slider("Precautionary-purchase factor", 1.0, 2.5, 1.35, 0.05, key="pt_hoard")
+        panic = st.slider("Exploratory scarcity-response sensitivity", 0.0, 0.6, 0.20, 0.05, key="pt_panic",
+                          help="Optional fruit-specific scenario assumption. The questionnaire does not measure panic.")
+        hoard = st.slider("Exploratory extra-purchase factor", 1.0, 1.5, 1.10, 0.05, key="pt_hoard",
+                          help="Kept low for perishable fruit. Only 4.1% of eligible participants increased basket quantity in stage two.")
     with c:
         st.markdown("**Policy levers**")
         rationing = st.checkbox("Per-fruit quantity limit", key="pt_rationing")
         limit = st.slider("Maximum units per fruit SKU", 1, 8, 3, key="pt_limit", disabled=not rationing)
-        subsidy = st.checkbox("Portuguese fruit price subsidy", key="pt_subsidy")
-        subsidy_rate = st.slider("Subsidy rate (%)", 5, 40, 15, 5, key="pt_subsidy_rate", disabled=not subsidy) / 100
+        subsidy = st.checkbox("Orange affordability subsidy", key="pt_subsidy",
+                              help="Reduces prices only for the four observed orange products, not all fruit.")
+        subsidy_rate = st.slider("Orange subsidy rate (%)", 5, 40, 15, 5, key="pt_subsidy_rate", disabled=not subsidy) / 100
         comm = st.selectbox("Public communication", ["neutral", "calming", "panic"], key="pt_comm",
                             help="Calming communication reduces the exploratory scarcity-response state; neutral has no effect.")
         intensity = st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05,
@@ -4944,7 +4943,8 @@ def render_portugal_fruits_page() -> None:
 
     policy_cfg = _sf_no_policy_config(start)
     policy_cfg.update({
-        "subsidy_active": subsidy, "subsidy_target": "domestic",
+        "subsidy_active": subsidy, "subsidy_target": "category",
+        "subsidy_categories": ["Orange"],
         "subsidy_rate": subsidy_rate if subsidy else 0.0,
     })
     params = {
@@ -4960,7 +4960,7 @@ def render_portugal_fruits_page() -> None:
     }
     has_policy = _sf_has_active_policy(params)
     if not has_policy:
-        st.info("Select rationing, a Portuguese-fruit subsidy, or non-neutral communication.")
+        st.info("Select rationing, an orange affordability subsidy, or non-neutral communication.")
     if st.button(
         "Run Portugal fruit policy analysis", type="primary", key="pt_run_policy",
         disabled=not has_policy,
