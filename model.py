@@ -206,7 +206,17 @@ class ProductAgent(Agent):
         _raw_origin = product_data.get("origin", "Unknown")
         _FINNISH = {"suomi", "finnish", "finland", "fi", "kotimainen"}
         self.origin = "Suomi" if str(_raw_origin).strip().lower() in _FINNISH else _raw_origin
+        self.is_domestic = bool(
+            product_data.get("is_domestic", self.origin == "Suomi")
+        )
         self.is_plant_based = bool(product_data.get("is_plant_based", False))
+        # Optional case-study attributes used by a validated pooled choice model
+        # (for example origin, size and appearance in the Portugal orange DCE).
+        # Finland products omit this field and retain the existing milk utility.
+        self.choice_attributes = {
+            str(key): float(value)
+            for key, value in (product_data.get("choice_attributes", {}) or {}).items()
+        }
 
         # Shelf life is needed when constructing the initial FIFO age profile.
         self.max_shelf_life = int(product_data.get("shelf_life_days", 14))
@@ -348,7 +358,7 @@ class ProductAgent(Agent):
 
         # Apply fat tax / subsidy on top of (possibly inflated) base price
         policy: PolicyConfig = self.model.policy_config
-        is_finnish = (self.origin == "Suomi")
+        is_finnish = self.is_domestic
         self.current_price = policy.apply_price_policy(
             inflated, self.fat_content, is_finnish, self.is_bio
         )
@@ -474,7 +484,7 @@ class SupplyTruck(Agent):
                     if product:
                         # Policy domestic supply shock — randomly block a fraction
                         # of Finnish-origin deliveries proportional to severity
-                        if shock_active and product.origin == "Suomi":
+                        if shock_active and product.is_domestic:
                             blocked_frac = policy.domestic_shock_severity
                             qty = max(0, int(qty * (1.0 - blocked_frac)))
                             if qty == 0:
@@ -792,8 +802,17 @@ class ConsumerAgent(Agent):
             self._price_acceptance_threshold(intention) + 1e-12
         )
 
-    def _dce_milk_utility(self, product: ProductAgent) -> float:
-        """Pooled DCE utility for available milk candidates on the EUR scale."""
+    def _dce_candidate_utility(self, product: ProductAgent) -> float:
+        """Pooled DCE utility for candidates on the recorded-price scale."""
+        generic = self.model.dce_generic_feature_coefficients
+        if generic:
+            utility = generic.get("price", 0.0) * self._effective_price(product)
+            utility += sum(
+                coefficient * float(product.choice_attributes.get(attribute, 0.0))
+                for attribute, coefficient in generic.items()
+                if attribute not in {"price", "optout"}
+            )
+            return utility
         fat_centered = float(product.fat_content) - 1.5
         coefficients = self.model.dce_choice_coefficients
         return (
@@ -926,7 +945,7 @@ class ConsumerAgent(Agent):
             self.model.dce_price_choice_supported
             and normalized_category in self.model.dce_applicable_categories
         ):
-            utilities = [self._dce_milk_utility(candidate) for candidate in eligible]
+            utilities = [self._dce_candidate_utility(candidate) for candidate in eligible]
             maximum = max(utilities)
             weights = [math.exp(value - maximum) for value in utilities]
             return self.model._day_rng.choices(eligible, weights=weights, k=1)[0]
@@ -1022,7 +1041,7 @@ class ConsumerAgent(Agent):
                 self.items_substituted += qty_purchased
 
             # CO2 attribution
-            is_finnish = (product.origin == "Suomi")
+            is_finnish = product.is_domestic
             co2_factor = CO2_PRODUCTION.get((is_finnish, product.is_bio), 2.2)
             product.daily_co2_sales += qty_purchased * co2_factor
 
@@ -1787,6 +1806,12 @@ class SupermarketModel(Model):
             "fat_linear": float(dce_validation.get("fat_linear_coefficient", 0.0) or 0.0),
             "fat_quadratic": float(dce_validation.get("fat_quadratic_coefficient", 0.0) or 0.0),
         }
+        self.dce_generic_feature_coefficients = {
+            str(name): float(value)
+            for name, value in (
+                dce_validation.get("feature_coefficients", {}) or {}
+            ).items()
+        }
         substitution_validation = config.get("stats", {}).get(
             "substitution_choice_validation", {}
         )
@@ -1818,7 +1843,7 @@ class SupermarketModel(Model):
             substitution_validation.get("n_unambiguous_events", 0)
         )
         self.substitution_ranking_method = (
-            "dce_mnl_milk_plus_validated_phase_transition_categories"
+            "dce_mnl_candidates_plus_validated_phase_transition_categories"
             if self.dce_price_choice_supported
             else "validated_phase_transition_target_shares"
             if self.substitution_transition_categories
@@ -2426,12 +2451,16 @@ class SupermarketModel(Model):
             "ArchetypeModifiersEnabled": int(self.archetype_modifiers_enabled),
             "PolicyChoiceEffectsEnabled": int(self.policy_choice_effects_enabled),
             "DCEAttributeRankingEnabled": int(
-                bool(self.substitution_ranking_categories)
+                self.dce_price_choice_supported
+                or bool(self.substitution_ranking_categories)
             ),
             "DCEAttributeRankingCategories": (
-                ",".join(sorted(self.substitution_ranking_categories)) or "none"
+                ",".join(sorted(
+                    self.substitution_ranking_categories
+                    | (self.dce_applicable_categories if self.dce_price_choice_supported else set())
+                )) or "none"
             ),
-            "ChoicePriceScaleIdentified": 0,
+            "ChoicePriceScaleIdentified": int(self.dce_price_choice_supported),
             "SubstitutionPriceGateEnabled": int(
                 self.substitution_price_gate_supported
             ),

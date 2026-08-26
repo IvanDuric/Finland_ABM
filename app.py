@@ -28,6 +28,7 @@ import io
 import json
 import math
 import os
+import pathlib as _pl
 import tempfile
 import time
 
@@ -72,6 +73,10 @@ from validation_protocol import (
     validate_target_definitions,
     validation_summary,
     validation_target_template,
+)
+from portugal_fruits import (
+    build_portugal_fruit_config,
+    deidentified_calibration_summary,
 )
 
 plt.switch_backend("Agg")
@@ -1392,7 +1397,7 @@ const CS_TRANS = {
         tag: 'DAIRY · SOUTH EU', status: 'soon' },
       { title: 'Portugal — Fruits',
         desc: 'Simulate fruit product availability, panic-buying dynamics and supply disruptions in the Portuguese grocery market.',
-        tag: 'FRUITS · WEST EU', status: 'soon' },
+        tag: 'FRUITS · WEST EU · PRELIMINARY', status: 'active' },
       { title: 'Greece — Fish Supply Chain',
         desc: 'Simulate fish product availability, panic-buying dynamics and supply disruptions in the Greek grocery market.',
         tag: 'FISH · SOUTH EU', status: 'soon' },
@@ -1414,7 +1419,7 @@ const CS_TRANS = {
         tag: 'MAITOTUOTTEET · ET. EU', status: 'soon' },
       { title: 'Portugali — Hedelmät',
         desc: 'Simuloi hedelmätuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä portugalilaisessa ruokakaupassa.',
-        tag: 'HEDELMÄT · LÄNSI-EU', status: 'soon' },
+        tag: 'HEDELMÄT · LÄNSI-EU · ALUSTAVA', status: 'active' },
       { title: 'Kreikka — Kalan toimitusketju',
         desc: 'Simuloi kalatuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä kreikkalaisessa ruokakaupassa.',
         tag: 'KALA · ET. EU', status: 'soon' },
@@ -1436,7 +1441,7 @@ const CS_TRANS = {
         tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
       { title: 'Πορτογαλία — Φρούτα',
         desc: 'Προσομοιώστε τη διαθεσιμότητα φρούτων, αγορές πανικού και διαταραχές στην πορτογαλική αγορά.',
-        tag: 'ΦΡΟΥΤΑ · ΔΥΤΙΚΗ ΕΕ', status: 'soon' },
+        tag: 'ΦΡΟΥΤΑ · ΔΥΤΙΚΗ ΕΕ · ΠΡΟΚΑΤΑΡΚΤΙΚΟ', status: 'active' },
       { title: 'Ελλάδα — Αλυσίδα Ψαριού',
         desc: 'Προσομοιώστε τη διαθεσιμότητα ψαριών, αγορές πανικού και διαταραχές στην ελληνική αγορά.',
         tag: 'ΨΑΡΙ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
@@ -1458,7 +1463,7 @@ const CS_TRANS = {
         tag: 'LATICÍNIOS · SUL UE', status: 'soon' },
       { title: 'Portugal — Frutas',
         desc: 'Simule disponibilidade de frutas, compras em pânico e perturbações logísticas no mercado português.',
-        tag: 'FRUTAS · OESTE UE', status: 'soon' },
+        tag: 'FRUTAS · OESTE UE · PRELIMINAR', status: 'active' },
       { title: 'Grécia — Cadeia de Peixe',
         desc: 'Simule disponibilidade de peixe, compras em pânico e perturbações logísticas no mercado grego.',
         tag: 'PEIXE · SUL UE', status: 'soon' },
@@ -1619,11 +1624,11 @@ const CSFooter = () => (
 );
 
 // ── Single case-study card ────────────────────────────────────────────────────
-const CaseStudyCard = ({ card, flag, Photo, launchBtn, comingSoon }) => {
+const CaseStudyCard = ({ card, flag, Photo, launchBtn, comingSoon, caseIndex }) => {
   const isActive = card.status === 'active';
   const handleLaunch = () => {
     if (!isActive) return;
-    try { window.parent.postMessage({type:'launch_grocerysim'}, '*'); } catch(e) {}
+    try { window.parent.postMessage({type:'launch_case_study', caseIndex:caseIndex}, '*'); } catch(e) {}
   };
   return (
     <div className={'cs-card ' + (isActive ? 'active' : 'inactive')}>
@@ -1686,6 +1691,7 @@ const CaseStudiesPage = ({ t, lang, setLang }) => {
               Photo={PHOTOS[i]}
               launchBtn={t.launchBtn}
               comingSoon={t.comingSoon}
+              caseIndex={i}
             />
           ))}
         </div>
@@ -1900,6 +1906,9 @@ def render_case_studies_page():
             st.session_state["lang"] = _lc
             st.session_state["page"] = "main"
             st.rerun()
+    if st.button("→portugal_fruits", key="portugal_fruits_nav"):
+        st.session_state["page"] = "portugal_fruits"
+        st.rerun()
     if st.button("→back", key="back_nav_btn"):
         st.session_state["page"] = "landing"
         st.rerun()
@@ -1909,7 +1918,7 @@ def render_case_studies_page():
     # JS bridge: hide trigger buttons and route React postMessages to them
     components.html("""<script>
 (function(){
-  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→back'];
+  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits','→back'];
   var obs = new MutationObserver(function(){
     window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
       var lbl = (c.querySelector('button p, button') || {}).textContent || '';
@@ -1920,7 +1929,13 @@ def render_case_studies_page():
   try { obs.observe(window.parent.document.body, {childList:true, subtree:true}); } catch(e){}
   window.parent.addEventListener('message', function(e){
     if(!e.data) return;
-    if(e.data.type === 'launch_grocerysim'){
+    if(e.data.type === 'launch_case_study'){
+      if(Number(e.data.caseIndex) === 2){
+        window.parent.document.querySelectorAll('button').forEach(function(b){
+          if((b.textContent || '').trim() === '→portugal_fruits') b.click();
+        });
+        return;
+      }
       var lang = 'en';
       try { lang = window.parent.sessionStorage.getItem('grocerysim_lang') || 'en'; } catch(e2){}
       var target = '→main_' + lang;
@@ -4509,6 +4524,458 @@ def render_securefood_page():
 
 
 # ===========================================================================
+# PORTUGAL — FRUITS (ORANGES), PRELIMINARY LOCAL-DEVELOPMENT CASE STUDY
+# ===========================================================================
+
+_PT_DEFAULT_EXPORT = _pl.Path(
+    "/Users/itiamo/Downloads/grocerysim-portugal-light-default-rtdb-users-export.json"
+)
+
+
+@st.cache_data(show_spinner=False, max_entries=3)
+def _pt_config_from_export(export: dict) -> dict:
+    return build_portugal_fruit_config(export, pool_size=2000, n_archetypes=4)
+
+
+def _pt_load_config(uploaded_file=None) -> dict | None:
+    try:
+        if uploaded_file is not None:
+            export = json.load(uploaded_file)
+        elif _PT_DEFAULT_EXPORT.exists():
+            export = json.loads(_PT_DEFAULT_EXPORT.read_text(encoding="utf-8"))
+        else:
+            return None
+        return _pt_config_from_export(export)
+    except Exception as exc:
+        st.error(f"Portugal preliminary-data processing failed: {exc}")
+        return None
+
+
+def _pt_run_simulation(config: dict, params: dict) -> dict | None:
+    """Run the shared validated engine without replacing Finland session data."""
+    previous = st.session_state.get("config_data")
+    try:
+        st.session_state["config_data"] = config
+        return _sf_run_simulation(params)
+    finally:
+        st.session_state["config_data"] = previous
+
+
+def _pt_result_metrics(result: dict) -> dict:
+    df = result["df"]
+    baseline = df[df["Scenario"] == "Baseline"]
+    crisis = df[df["Scenario"] == "Crisis"]
+    no_policy = df[df["Scenario"] == "Crisis (No Policy)"]
+    metrics = {
+        "baseline_sales": float(baseline["Sales"].sum()),
+        "crisis_sales": float(crisis["Sales"].sum()),
+        # Use household-requested minus purchased units. LostSales excludes
+        # demand removed by rationing and would make access appear to improve
+        # merely because the policy prevented requests from reaching checkout.
+        "crisis_unmet": float(crisis["UnmetDemandUnits"].sum()),
+        "crisis_waste": float(crisis["Waste"].sum()),
+        "baseline_waste": float(baseline["Waste"].sum()),
+        "crisis_spend": float(crisis["NominalRevenue"].sum()),
+        "peak_panic": float(crisis["PanicLevel"].max()),
+        "crisis_fulfillment": float(crisis["FulfillmentRate"].mean()),
+    }
+    metrics["sales_change_pct"] = 100.0 * (
+        metrics["crisis_sales"] / max(metrics["baseline_sales"], 1.0) - 1.0
+    )
+    metrics["waste_change"] = metrics["crisis_waste"] - metrics["baseline_waste"]
+    if not no_policy.empty:
+        metrics.update({
+            "no_policy_sales": float(no_policy["Sales"].sum()),
+            "no_policy_unmet": float(no_policy["UnmetDemandUnits"].sum()),
+            "policy_sales_change": float(crisis["Sales"].sum() - no_policy["Sales"].sum()),
+            "policy_unmet_change": float(
+                crisis["UnmetDemandUnits"].sum()
+                - no_policy["UnmetDemandUnits"].sum()
+            ),
+            "policy_waste_change": float(crisis["Waste"].sum() - no_policy["Waste"].sum()),
+            "no_policy_fulfillment": float(no_policy["FulfillmentRate"].mean()),
+            "policy_fulfillment_change": float(
+                crisis["FulfillmentRate"].mean()
+                - no_policy["FulfillmentRate"].mean()
+            ),
+        })
+    return metrics
+
+
+def _render_pt_results(result: dict, title: str) -> None:
+    df = result["df"]
+    prod = result["df_prod"]
+    params = result["params"]
+    metrics = _pt_result_metrics(result)
+    st.markdown(f"### {title}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Fruit units purchased", f"{metrics['crisis_sales']:,.0f}",
+              f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline")
+    k2.metric("Unmet fruit demand", f"{metrics['crisis_unmet']:,.0f} units")
+    k3.metric("Fruit waste", f"{metrics['crisis_waste']:,.0f} units",
+              f"{metrics['waste_change']:+,.0f} vs baseline")
+    k4.metric("Requested-basket fulfilment", f"{metrics['crisis_fulfillment']:.1%}")
+
+    scenarios = ["Baseline", "Crisis"]
+    if "Crisis (No Policy)" in set(df["Scenario"]):
+        scenarios.append("Crisis (No Policy)")
+    view = df[df["Scenario"].isin(scenarios)]
+    fig_sales = px.line(
+        view, x="Day", y="Sales", color="Scenario",
+        title="Daily fruit purchases — paired scenario comparison",
+        labels={"Sales": "Fruit units purchased"},
+        color_discrete_map={
+            "Baseline": "#2980b9", "Crisis": "#e67e22",
+            "Crisis (No Policy)": "#7f8c8d",
+        },
+    )
+    _sf_crisis_band(
+        fig_sales, params["cri_start"],
+        params["cri_start"] + params["cri_duration"], params["days"],
+    )
+    st.plotly_chart(fig_sales, use_container_width=True)
+    st.caption(
+        "Baseline and crisis runs use the same seed and resampled households. The difference "
+        "therefore reflects configured prices, supply delays and policy—not a different cohort."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fig_access = px.line(
+            view, x="Day", y="UnmetDemandUnits", color="Scenario",
+            title="Unmet fruit demand", labels={"UnmetDemandUnits": "Requested minus purchased units"},
+        )
+        _sf_crisis_band(
+            fig_access, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_access, use_container_width=True)
+    with c2:
+        fig_panic = px.line(
+            view, x="Day", y="PanicLevel", color="Scenario",
+            title="Exploratory scarcity-response state",
+            labels={"PanicLevel": "Internal state (0–1)"},
+        )
+        _sf_crisis_band(
+            fig_panic, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_panic, use_container_width=True)
+
+    if not prod.empty:
+        shelf = (
+            prod[prod["Scenario"].isin(scenarios)]
+            .groupby(["Day", "Scenario", "Category"], as_index=False)["Shelf"].sum()
+        )
+        fig_stock = px.line(
+            shelf, x="Day", y="Shelf", color="Category", line_dash="Scenario",
+            title="Shelf stock by fruit group",
+            labels={"Shelf": "Units on shelf"},
+        )
+        _sf_crisis_band(
+            fig_stock, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_stock, use_container_width=True)
+        st.caption(
+            "Orange is separated from other fruit because only oranges have a dedicated DCE. "
+            "Cross-group substitution is not asserted by the preliminary model."
+        )
+
+    if "policy_unmet_change" in metrics:
+        direction = "reduced" if metrics["policy_unmet_change"] < 0 else "increased"
+        st.info(
+            f"Against the paired crisis without policy, the selected intervention "
+            f"{direction} unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, "
+            f"changed purchases by **{metrics['policy_sales_change']:+,.0f} units**, and changed "
+            f"requested-basket fulfilment by **{metrics['policy_fulfillment_change']:+.1%}**. "
+            f"Waste changed by **{metrics['policy_waste_change']:+,.0f} units**. These are simulated "
+            "counterfactual effects, not forecasts."
+        )
+
+
+def _pt_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
+    metrics = _pt_result_metrics(result)
+    params = result["params"]
+    summary = deidentified_calibration_summary(config)
+    dce = summary["orange_dce"]
+
+    def safe(value: object) -> str:
+        text = str(value).replace("—", "-").replace("–", "-").replace("€", "EUR ")
+        return text.encode("latin-1", "replace").decode("latin-1")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_page()
+
+    def paragraph(value: object, height: float = 6, align: str = "L") -> None:
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(
+            0, height, safe(value), align=align,
+            new_x="LMARGIN", new_y="NEXT",
+        )
+
+    pdf.set_font("Helvetica", "B", 19)
+    paragraph("GROCERYsim SecureFood - Portugal Fruits", 9, "C")
+    pdf.set_font("Helvetica", "", 12)
+    paragraph("Climate-driven fruit and orange supply disruption", 7, "C")
+    pdf.ln(5)
+    pdf.set_fill_color(242, 238, 223)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, safe(report_label), new_x="LMARGIN", new_y="NEXT", fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+            "PRELIMINARY DEVELOPMENT REPORT. Data collection is ongoing. Results are "
+            "directional model outputs and must not be presented as population estimates "
+            "or forecasts. Halle participants and carrot-specific material are excluded."
+    )
+
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "1. Empirical basis", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    sample = summary["sample"]
+    paragraph(
+            f"Raw sessions: {sample['raw_sessions']}; finished sessions: "
+            f"{sample['finished_sessions']}; finished Halle sessions excluded: "
+            f"{sample['halle_finished_excluded']}; eligible participant profiles: "
+            f"{sample['eligible_profiles']}. Complete profiles are resampled with "
+            "replacement; attributes are not independently jittered."
+    )
+    paragraph(
+            f"Orange DCE: {dce.get('n_participants', 0)} participants, recorded EUR/kg "
+            f"prices, held-out log loss {dce.get('validation_log_loss', 'n/a')} versus "
+            f"null {dce.get('null_model_log_loss', 'n/a')}. Pooled price coefficient: "
+            f"{dce.get('price_coefficient', 'n/a')}."
+    )
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "2. Scenario specification", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+            f"{params['days']} days; {params['base_con']} visits/day; crisis starts Day "
+            f"{params['cri_start']} for {params['cri_duration']} days; retail inflation "
+            f"{params['inf']:.0f}%; delivery interruption {params['dis']} days; normal lead "
+            f"time {params['lead']} days; reorder point {params['reorder']:.0%}; target stock "
+            f"{params['target']:.0%}."
+    )
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "3. Results generated from this analysis", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    result_lines = [
+        f"Crisis fruit purchases: {metrics['crisis_sales']:,.0f} units ({metrics['sales_change_pct']:+.1f}% versus baseline).",
+        f"Crisis unmet demand: {metrics['crisis_unmet']:,.0f} units.",
+        f"Crisis waste: {metrics['crisis_waste']:,.0f} units ({metrics['waste_change']:+,.0f} versus baseline).",
+        f"Peak exploratory behavioural-pressure state: {metrics['peak_panic']:.2f}/1.0.",
+        f"Mean requested-basket fulfilment: {metrics['crisis_fulfillment']:.1%}.",
+    ]
+    if "policy_unmet_change" in metrics:
+        result_lines.extend([
+            f"Policy effect on unmet demand: {metrics['policy_unmet_change']:+,.0f} units versus paired no-policy crisis.",
+            f"Policy effect on purchases: {metrics['policy_sales_change']:+,.0f} units.",
+            f"Policy effect on waste: {metrics['policy_waste_change']:+,.0f} units.",
+            f"Policy effect on requested-basket fulfilment: {metrics['policy_fulfillment_change']:+.1%}.",
+        ])
+    for line in result_lines:
+        paragraph(f"- {line}")
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "4. Interpretation limits", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    for caution in summary["cautions"]:
+        paragraph(f"- {caution}")
+    return bytes(pdf.output())
+
+
+def _pt_download_row(result: dict, config: dict, key: str, report_label: str) -> None:
+    report = _pt_report_bytes(result, config, report_label)
+    c1, c2, c3 = st.columns(3)
+    c1.download_button(
+        "Download PDF report", report,
+        file_name=f"GROCERYsim_Portugal_Fruits_{key}.pdf",
+        mime="application/pdf", key=f"pt_{key}_pdf", use_container_width=True,
+    )
+    c2.download_button(
+        "Download daily results (CSV)", result["df"].to_csv(index=False).encode("utf-8"),
+        file_name=f"GROCERYsim_Portugal_Fruits_{key}_daily.csv",
+        mime="text/csv", key=f"pt_{key}_daily", use_container_width=True,
+    )
+    c3.download_button(
+        "Download product results (CSV)", result["df_prod"].to_csv(index=False).encode("utf-8"),
+        file_name=f"GROCERYsim_Portugal_Fruits_{key}_products.csv",
+        mime="text/csv", key=f"pt_{key}_products", use_container_width=True,
+    )
+
+
+def render_portugal_fruits_page() -> None:
+    """SecureFood-only Portugal fruit case study for local development."""
+    st.markdown("""<style>
+        section[data-testid="stSidebar"], header[data-testid="stHeader"],
+        #MainMenu, footer { display:none !important; }
+    </style>""", unsafe_allow_html=True)
+    back, heading = st.columns([1, 8])
+    with back:
+        if st.button("Back to case studies", key="pt_back"):
+            if "case" in st.query_params:
+                del st.query_params["case"]
+            st.session_state["page"] = "case_studies"
+            st.rerun()
+    with heading:
+        st.markdown("## Portugal — Fruits (Oranges)")
+        st.caption("SecureFood Scenario Simulator · preliminary local-development case study")
+
+    st.warning(
+        "**Preliminary model:** data collection is ongoing. This local case study is not part "
+        "of the deployed website and its outputs are directional, not population estimates."
+    )
+    with st.expander("Preliminary source data", expanded=False):
+        upload = st.file_uploader(
+            "Upload Portugal GROCERYsim Firebase export", type=["json"], key="pt_export_upload"
+        )
+        st.caption(
+            "For this local test, the attached export is loaded automatically from Downloads. "
+            "A newly uploaded file overrides it. Raw participant data are not copied into the repository."
+        )
+    if upload is not None:
+        st.session_state["pt_config"] = _pt_load_config(upload)
+        st.session_state["pt_results_default"] = None
+        st.session_state["pt_results_policy"] = None
+    elif st.session_state.get("pt_config") is None:
+        with st.spinner("Processing the preliminary Portugal cohort..."):
+            st.session_state["pt_config"] = _pt_load_config()
+    config = st.session_state.get("pt_config")
+    if config is None:
+        st.error("Attach the Portugal Firebase export above to continue.")
+        return
+
+    summary = deidentified_calibration_summary(config)
+    sample = summary["sample"]
+    dce = summary["orange_dce"]
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Eligible participants", sample["eligible_profiles"])
+    s2.metric("Halle excluded", sample["halle_finished_excluded"])
+    s3.metric("Fruit SKUs", summary["catalogue"]["skus"])
+    s4.metric("Orange DCE participants", dce.get("n_participants", 0))
+    with st.expander("Calibration and exclusion audit", expanded=False):
+        st.json(summary, expanded=False)
+
+    st.markdown("### Scenario: climate pressure on Portuguese fruit supply")
+    st.markdown(
+        "A heat-and-water-stress episode reduces harvest reliability and interrupts fruit "
+        "deliveries. Retail prices rise while selected products become unavailable. Households "
+        "start from their observed normal fruit baskets; price retention and substitution "
+        "propensities are estimated from the repeated higher-price/missing-product shopping task. "
+        "The orange DCE contributes pooled price, Portuguese/Algarve origin, size and appearance "
+        "preferences only when choosing among orange alternatives."
+    )
+    st.info(
+        "The retail catalogue does not identify orange size. The DCE size effect is therefore "
+        "reported but not assigned to a retail SKU. This is an explicit data gap, not an imputed attribute."
+    )
+
+    default_params = {
+        "days": 120, "month": 7, "base_con": 200,
+        "reorder": 0.35, "target": 0.85, "lead": 3,
+        "cri_start": 30, "cri_duration": 45, "inf": 20.0, "dis": 7,
+        "panic": 0.40, "hoard": 1.35, "mc_runs": 1,
+        "policy_cfg": _sf_no_policy_config(30), "purchase_limit": None,
+        "media_intensity": 0.0, "communication_type": "neutral",
+        "stockpile_days": None, "exploratory_behaviour": True,
+    }
+    st.markdown("### 1. Run the no-policy preset")
+    with st.expander("View preset parameters", expanded=False):
+        st.markdown(
+            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% fruit-price "
+            "increase; 7-day delivery interruption; 3-day normal lead time; 35% reorder point; "
+            "85% restock target; behavioural-pressure sensitivity 0.40; precautionary-purchase "
+            "factor 1.35; no policy intervention; paired seed 42."
+        )
+    if st.button("Run Portugal fruit preset", type="primary", key="pt_run_default"):
+        with st.spinner("Running paired no-crisis and fruit-crisis simulations..."):
+            st.session_state["pt_results_default"] = _pt_run_simulation(config, default_params)
+    if st.session_state.get("pt_results_default"):
+        _pt_download_row(
+            st.session_state["pt_results_default"], config, "default",
+            "No-policy preset generated from this simulation",
+        )
+        _render_pt_results(st.session_state["pt_results_default"], "No-policy preset results")
+
+    st.divider()
+    st.markdown("### 2. Optional policy analysis")
+    enabled = st.checkbox(
+        "Enable additional Portugal fruit policy analysis", key="pt_policy_enabled",
+        help="Policy assumptions are excluded until this control is enabled.",
+    )
+    if not enabled:
+        st.caption("Enable this section to reveal scenario and policy controls.")
+        return
+
+    a, b, c = st.columns(3)
+    with a:
+        st.markdown("**Crisis and demand**")
+        days = st.slider("Simulation days", 60, 240, 120, 10, key="pt_days",
+                         help="Includes pre-crisis, disruption and recovery periods.")
+        consumers = st.number_input("Shopping visits per day", 50, 1000, 200, 50, key="pt_consumers",
+                                    help="Store traffic; this does not change the empirical sample size.")
+        start = st.slider("Crisis start day", 10, max(11, days - 20), min(30, days - 20), key="pt_start")
+        duration = st.slider("Crisis duration", 5, max(5, days - start), min(45, days - start), 5, key="pt_duration")
+        inflation = st.slider("Fruit price increase (%)", 0, 80, 20, 5, key="pt_inflation",
+                              help="Applied to retail fruit prices during the configured crisis.")
+    with b:
+        st.markdown("**Logistics and behaviour**")
+        disruption = st.slider("Delivery interruption (days)", 0, 21, 7, key="pt_disruption")
+        lead = st.slider("Normal lead time (days)", 1, 10, 3, key="pt_lead")
+        reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="pt_reorder") / 100
+        target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="pt_target") / 100
+        panic = st.slider("Scarcity-response sensitivity", 0.0, 1.0, 0.40, 0.05, key="pt_panic",
+                          help="Exploratory response to observed scarcity; it is not a questionnaire scale.")
+        hoard = st.slider("Precautionary-purchase factor", 1.0, 2.5, 1.35, 0.05, key="pt_hoard")
+    with c:
+        st.markdown("**Policy levers**")
+        rationing = st.checkbox("Per-fruit quantity limit", key="pt_rationing")
+        limit = st.slider("Maximum units per fruit SKU", 1, 8, 3, key="pt_limit", disabled=not rationing)
+        subsidy = st.checkbox("Portuguese fruit price subsidy", key="pt_subsidy")
+        subsidy_rate = st.slider("Subsidy rate (%)", 5, 40, 15, 5, key="pt_subsidy_rate", disabled=not subsidy) / 100
+        comm = st.selectbox("Public communication", ["neutral", "calming", "panic"], key="pt_comm",
+                            help="Calming communication reduces the exploratory scarcity-response state; neutral has no effect.")
+        intensity = st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05,
+                              key="pt_comm_intensity", disabled=comm == "neutral") if comm != "neutral" else 0.0
+
+    policy_cfg = _sf_no_policy_config(start)
+    policy_cfg.update({
+        "subsidy_active": subsidy, "subsidy_target": "domestic",
+        "subsidy_rate": subsidy_rate if subsidy else 0.0,
+    })
+    params = {
+        "days": days, "month": 7, "base_con": int(consumers),
+        "reorder": reorder, "target": target, "lead": lead,
+        "cri_start": start, "cri_duration": duration,
+        "inf": float(inflation), "dis": disruption,
+        "panic": panic, "hoard": hoard, "mc_runs": 1,
+        "policy_cfg": policy_cfg,
+        "purchase_limit": limit if rationing else None,
+        "media_intensity": intensity, "communication_type": comm,
+        "stockpile_days": None, "exploratory_behaviour": True,
+    }
+    has_policy = _sf_has_active_policy(params)
+    if not has_policy:
+        st.info("Select rationing, a Portuguese-fruit subsidy, or non-neutral communication.")
+    if st.button(
+        "Run Portugal fruit policy analysis", type="primary", key="pt_run_policy",
+        disabled=not has_policy,
+    ):
+        with st.spinner("Running paired policy and no-policy fruit crises..."):
+            st.session_state["pt_results_policy"] = _pt_run_simulation(config, params)
+    if st.session_state.get("pt_results_policy"):
+        _pt_download_row(
+            st.session_state["pt_results_policy"], config, "policy",
+            "Optional policy analysis generated from this simulation",
+        )
+        _render_pt_results(st.session_state["pt_results_policy"], "Policy analysis results")
+
+
+# ===========================================================================
 # 1. SESSION STATE INITIALISATION
 # ===========================================================================
 
@@ -4523,6 +4990,10 @@ defaults = {
     "sf_preset_report_artifacts": None,
     "sf_policy_report_artifacts": None,
     "sf_policy_report_signature": None,
+    # Portugal fruits local-development case study
+    "pt_config": None,
+    "pt_results_default": None,
+    "pt_results_policy": None,
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
@@ -4976,8 +5447,6 @@ def _arch_name(arch_key: str) -> str:
 # Product catalogue → data/master_products.json  (committed to GitHub,
 #                    not sensitive)
 # ---------------------------------------------------------------------------
-import pathlib as _pl
-
 _DATA_DIR      = _pl.Path(__file__).parent / "data"
 _PRODUCTS_PATH = str(_DATA_DIR / "master_products.json")
 _LOCAL_DCE_PATH = _pl.Path(__file__).parent / ".streamlit" / "dce_data_clean.csv"
@@ -15915,12 +16384,19 @@ def main():
 
 
 if __name__ == "__main__":
-    page = st.session_state.get("page", "landing")
+    # Local-development deep link; this branch is intentionally not deployed.
+    page = (
+        "portugal_fruits"
+        if st.query_params.get("case") == "portugal-fruits"
+        else st.session_state.get("page", "landing")
+    )
     if page == "landing":
         render_landing_page()
     elif page == "case_studies":
         render_case_studies_page()
     elif page == "securefood":
         render_securefood_page()
+    elif page == "portugal_fruits":
+        render_portugal_fruits_page()
     else:
         main()
