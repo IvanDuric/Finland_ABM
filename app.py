@@ -79,6 +79,7 @@ from portugal_fruits import (
     deidentified_calibration_summary,
 )
 from greece_dairy import build_greece_dairy_synthetic_config
+from greece_fish import build_greece_fish_synthetic_config
 
 plt.switch_backend("Agg")
 
@@ -1400,8 +1401,8 @@ const CS_TRANS = {
         desc: 'Simulate fruit product availability, panic-buying dynamics and supply disruptions in the Portuguese grocery market.',
         tag: 'FRUITS · WEST EU · PRELIMINARY', status: 'active' },
       { title: 'Greece — Fish Supply Chain',
-        desc: 'Simulate fish product availability, panic-buying dynamics and supply disruptions in the Greek grocery market.',
-        tag: 'FISH · SOUTH EU', status: 'soon' },
+        desc: 'Test a synthetic Greek fish supply and cold-chain disruption scenario while empirical data collection is pending.',
+        tag: 'FISH · SOUTH EU · SYNTHETIC', status: 'active' },
     ],
   },
   fi: {
@@ -1422,8 +1423,8 @@ const CS_TRANS = {
         desc: 'Simuloi hedelmätuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä portugalilaisessa ruokakaupassa.',
         tag: 'HEDELMÄT · LÄNSI-EU · ALUSTAVA', status: 'active' },
       { title: 'Kreikka — Kalan toimitusketju',
-        desc: 'Simuloi kalatuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä kreikkalaisessa ruokakaupassa.',
-        tag: 'KALA · ET. EU', status: 'soon' },
+        desc: 'Testaa synteettistä Kreikan kala- ja kylmäketjun häiriöskenaariota empiirisen aineiston keruuta odotettaessa.',
+        tag: 'KALA · ET. EU · SYNTEETTINEN', status: 'active' },
     ],
   },
   el: {
@@ -1444,8 +1445,8 @@ const CS_TRANS = {
         desc: 'Προσομοιώστε τη διαθεσιμότητα φρούτων, αγορές πανικού και διαταραχές στην πορτογαλική αγορά.',
         tag: 'ΦΡΟΥΤΑ · ΔΥΤΙΚΗ ΕΕ · ΠΡΟΚΑΤΑΡΚΤΙΚΟ', status: 'active' },
       { title: 'Ελλάδα — Αλυσίδα Ψαριού',
-        desc: 'Προσομοιώστε τη διαθεσιμότητα ψαριών, αγορές πανικού και διαταραχές στην ελληνική αγορά.',
-        tag: 'ΨΑΡΙ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
+        desc: 'Δοκιμάστε ένα συνθετικό σενάριο διαταραχής αλιείας και ψυχρής αλυσίδας έως τη συλλογή δεδομένων.',
+        tag: 'ΨΑΡΙ · ΝΟΤΙΑ ΕΕ · ΣΥΝΘΕΤΙΚΟ', status: 'active' },
     ],
   },
   pt: {
@@ -1466,8 +1467,8 @@ const CS_TRANS = {
         desc: 'Simule disponibilidade de frutas, compras em pânico e perturbações logísticas no mercado português.',
         tag: 'FRUTAS · OESTE UE · PRELIMINAR', status: 'active' },
       { title: 'Grécia — Cadeia de Peixe',
-        desc: 'Simule disponibilidade de peixe, compras em pânico e perturbações logísticas no mercado grego.',
-        tag: 'PEIXE · SUL UE', status: 'soon' },
+        desc: 'Teste um cenário sintético de perturbação do peixe e da cadeia de frio enquanto se aguardam dados.',
+        tag: 'PEIXE · SUL UE · SINTÉTICO', status: 'active' },
     ],
   },
 };
@@ -1913,6 +1914,9 @@ def render_case_studies_page():
     if st.button("→greece_dairy", key="greece_dairy_nav"):
         st.session_state["page"] = "greece_dairy"
         st.rerun()
+    if st.button("→greece_fish", key="greece_fish_nav"):
+        st.session_state["page"] = "greece_fish"
+        st.rerun()
     if st.button("→back", key="back_nav_btn"):
         st.session_state["page"] = "landing"
         st.rerun()
@@ -1922,7 +1926,7 @@ def render_case_studies_page():
     # JS bridge: hide trigger buttons and route React postMessages to them
     components.html("""<script>
 (function(){
-  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits','→greece_dairy','→back'];
+  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits','→greece_dairy','→greece_fish','→back'];
   var obs = new MutationObserver(function(){
     window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
       var lbl = (c.querySelector('button p, button') || {}).textContent || '';
@@ -1943,6 +1947,12 @@ def render_case_studies_page():
       if(Number(e.data.caseIndex) === 2){
         window.parent.document.querySelectorAll('button').forEach(function(b){
           if((b.textContent || '').trim() === '→portugal_fruits') b.click();
+        });
+        return;
+      }
+      if(Number(e.data.caseIndex) === 3){
+        window.parent.document.querySelectorAll('button').forEach(function(b){
+          if((b.textContent || '').trim() === '→greece_fish') b.click();
         });
         return;
       }
@@ -5402,6 +5412,437 @@ def render_greece_dairy_page() -> None:
 
 
 # ===========================================================================
+# GREECE — FISH, SYNTHETIC LOCAL-DEVELOPMENT CASE STUDY
+# ===========================================================================
+
+@st.cache_data(show_spinner=False)
+def _gf_build_config() -> dict:
+    return build_greece_fish_synthetic_config()
+
+
+def _gf_run_simulation(config: dict, params: dict) -> dict | None:
+    """Run the shared engine without replacing another case-study configuration."""
+    previous = st.session_state.get("config_data")
+    try:
+        st.session_state["config_data"] = config
+        return _sf_run_simulation(params)
+    finally:
+        st.session_state["config_data"] = previous
+
+
+def _render_gf_results(result: dict, title: str) -> None:
+    df = result["df"]
+    prod = result["df_prod"]
+    params = result["params"]
+    metrics = _pt_result_metrics(result)
+    st.markdown(f"### {title}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric(
+        "Fish units purchased", f"{metrics['crisis_sales']:,.0f}",
+        f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline",
+    )
+    k2.metric("Unmet fish demand", f"{metrics['crisis_unmet']:,.0f} units")
+    k3.metric(
+        "Fish waste", f"{metrics['crisis_waste']:,.0f} units",
+        f"{metrics['waste_change']:+,.0f} vs baseline",
+    )
+    k4.metric("Requested-basket fulfilment", f"{metrics['crisis_fulfillment']:.1%}")
+
+    scenarios = ["Baseline", "Crisis"]
+    if "Crisis (No Policy)" in set(df["Scenario"]):
+        scenarios.append("Crisis (No Policy)")
+    view = df[df["Scenario"].isin(scenarios)]
+    colours = {
+        "Baseline": "#2980b9", "Crisis": "#e67e22",
+        "Crisis (No Policy)": "#7f8c8d",
+    }
+    fig_sales = px.line(
+        view, x="Day", y="Sales", color="Scenario",
+        title="Daily fish purchases — paired scenario comparison",
+        labels={"Sales": "Fish units purchased"}, color_discrete_map=colours,
+    )
+    _sf_crisis_band(
+        fig_sales, params["cri_start"],
+        params["cri_start"] + params["cri_duration"], params["days"],
+    )
+    st.plotly_chart(fig_sales, use_container_width=True)
+    st.caption(
+        "Baseline and crisis runs use the same synthetic households and paired seed. The gap "
+        "therefore reflects the configured price and delivery shock, not a different population."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fig_access = px.line(
+            view, x="Day", y="UnmetDemandUnits", color="Scenario",
+            title="Unmet fish demand",
+            labels={"UnmetDemandUnits": "Requested minus purchased units"},
+            color_discrete_map=colours,
+        )
+        _sf_crisis_band(
+            fig_access, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_access, use_container_width=True)
+    with c2:
+        fig_waste = px.line(
+            view, x="Day", y="Waste", color="Scenario",
+            title="Fish waste from shelf-life expiry",
+            labels={"Waste": "Expired units"}, color_discrete_map=colours,
+        )
+        _sf_crisis_band(
+            fig_waste, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_waste, use_container_width=True)
+
+    if not prod.empty:
+        shelf = (
+            prod[prod["Scenario"].isin(scenarios)]
+            .groupby(["Day", "Scenario", "Category"], as_index=False)["Shelf"].sum()
+        )
+        fig_stock = px.line(
+            shelf, x="Day", y="Shelf", color="Category", line_dash="Scenario",
+            title="Shelf stock by fish product group",
+            labels={"Shelf": "Units on shelf"},
+        )
+        _sf_crisis_band(
+            fig_stock, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_stock, use_container_width=True)
+        st.caption(
+            "Fresh fish uses short synthetic shelf lives, whereas frozen and canned fish act as "
+            "longer-life alternatives. Substitution remains within the same product group because "
+            "cross-group Greek choice behaviour has not been observed."
+        )
+
+    if "policy_unmet_change" in metrics:
+        direction = "reduced" if metrics["policy_unmet_change"] < 0 else "increased"
+        st.info(
+            f"Against the paired synthetic crisis without policy, the intervention {direction} "
+            f"unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, changed purchases "
+            f"by **{metrics['policy_sales_change']:+,.0f} units**, changed fulfilment by "
+            f"**{metrics['policy_fulfillment_change']:+.1%}**, and changed waste by "
+            f"**{metrics['policy_waste_change']:+,.0f} units**. These are synthetic scenario "
+            "differences, not estimated Greek fisheries-policy effects."
+        )
+
+
+def _gf_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
+    metrics = _pt_result_metrics(result)
+    params = result["params"]
+    stats = config["stats"]
+
+    def safe(value: object) -> str:
+        text = str(value).replace("—", "-").replace("–", "-").replace("€", "EUR ")
+        return text.encode("latin-1", "replace").decode("latin-1")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_page()
+
+    def paragraph(value: object, height: float = 6, align: str = "L") -> None:
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, height, safe(value), align=align,
+                       new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "B", 19)
+    paragraph("GROCERYsim SecureFood - Greece Fish", 9, "C")
+    pdf.set_font("Helvetica", "", 12)
+    paragraph("Synthetic fish supply and cold-chain disruption prototype", 7, "C")
+    pdf.ln(5)
+    pdf.set_fill_color(220, 240, 245)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, safe(report_label), new_x="LMARGIN", new_y="NEXT", fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+        "SYNTHETIC DEVELOPMENT REPORT. Greece-specific participant, DCE, fisheries, retail, "
+        "inventory, delivery, cold-chain and waste data are not available. Results are "
+        "software-test scenario outputs, not Greek estimates, forecasts, or policy evidence."
+    )
+
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "1. Synthetic basis", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+        f"Empirical participants: 0; synthetic household templates: "
+        f"{stats['n_synthetic_templates']}; simulated household pool: {stats['pool_size']}; "
+        f"illustrative fish SKUs: {stats['catalogue_skus']}; estimated DCE: none."
+    )
+    assumptions = stats["synthetic_assumptions"]
+    for key in ("catalogue_prices", "basket_construction", "price_sensitivity", "substitution", "shelf_life", "panic_and_hoarding"):
+        paragraph(f"- {key.replace('_', ' ').title()}: {assumptions[key]}")
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "2. Scenario specification", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+        f"{params['days']} days; {params['base_con']} visits/day; crisis starts Day "
+        f"{params['cri_start']} for {params['cri_duration']} days; fish-price increase "
+        f"{params['inf']:.0f}%; cold-chain delivery interruption {params['dis']} days; "
+        f"normal lead time {params['lead']} days; reorder point {params['reorder']:.0%}; "
+        f"restock target {params['target']:.0%}."
+    )
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "3. Results generated by this run", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    lines = [
+        f"Crisis fish purchases: {metrics['crisis_sales']:,.0f} units ({metrics['sales_change_pct']:+.1f}% versus baseline).",
+        f"Crisis unmet demand: {metrics['crisis_unmet']:,.0f} units.",
+        f"Crisis fish waste: {metrics['crisis_waste']:,.0f} units ({metrics['waste_change']:+,.0f} versus baseline).",
+        f"Mean requested-basket fulfilment: {metrics['crisis_fulfillment']:.1%}.",
+    ]
+    if "policy_unmet_change" in metrics:
+        lines.extend([
+            f"Policy difference in unmet demand: {metrics['policy_unmet_change']:+,.0f} units versus paired no-policy crisis.",
+            f"Policy difference in purchases: {metrics['policy_sales_change']:+,.0f} units.",
+            f"Policy difference in waste: {metrics['policy_waste_change']:+,.0f} units.",
+            f"Policy difference in fulfilment: {metrics['policy_fulfillment_change']:+.1%}.",
+        ])
+    for line in lines:
+        paragraph(f"- {line}")
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "4. Required next validation steps", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    for caution in stats["scientific_cautions"]:
+        paragraph(f"- {caution}")
+    return bytes(pdf.output())
+
+
+def _gf_download_row(result: dict, config: dict, key: str, report_label: str) -> None:
+    report = _gf_report_bytes(result, config, report_label)
+    c1, c2, c3 = st.columns(3)
+    c1.download_button(
+        "Download PDF report", report,
+        file_name=f"GROCERYsim_Greece_Fish_{key}.pdf",
+        mime="application/pdf", key=f"gf_{key}_pdf", use_container_width=True,
+    )
+    c2.download_button(
+        "Download daily results (CSV)", result["df"].to_csv(index=False).encode("utf-8"),
+        file_name=f"GROCERYsim_Greece_Fish_{key}_daily.csv",
+        mime="text/csv", key=f"gf_{key}_daily", use_container_width=True,
+    )
+    c3.download_button(
+        "Download product results (CSV)", result["df_prod"].to_csv(index=False).encode("utf-8"),
+        file_name=f"GROCERYsim_Greece_Fish_{key}_products.csv",
+        mime="text/csv", key=f"gf_{key}_products", use_container_width=True,
+    )
+
+
+def render_greece_fish_page() -> None:
+    """SecureFood-only synthetic Greece fish case study for local development."""
+    st.markdown("""<style>
+        section[data-testid="stSidebar"], header[data-testid="stHeader"],
+        #MainMenu, footer { display:none !important; }
+    </style>""", unsafe_allow_html=True)
+    back, heading = st.columns([1, 8])
+    with back:
+        if st.button("Back to case studies", key="gf_back"):
+            if "case" in st.query_params:
+                del st.query_params["case"]
+            st.session_state["page"] = "case_studies"
+            st.rerun()
+    with heading:
+        st.markdown("## Greece — Fish Supply Chain")
+        st.caption("SecureFood Scenario Simulator · synthetic local-development prototype")
+
+    st.error(
+        "**Synthetic model — no Greek fish case-study data are currently available.** The "
+        "catalogue, households, baskets, budgets, shelf lives, price responses and substitution "
+        "propensities are declared demonstration assumptions. Outputs test the ABM workflow; "
+        "they are not empirical results, forecasts, or evidence about Greek consumers, fisheries, "
+        "aquaculture, retailers, or policies."
+    )
+    if st.session_state.get("gf_config") is None:
+        st.session_state["gf_config"] = _gf_build_config()
+    config = st.session_state["gf_config"]
+    stats = config["stats"]
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Empirical participants", "0")
+    s2.metric("Synthetic household templates", stats["n_synthetic_templates"])
+    s3.metric("Simulated household pool", f"{stats['pool_size']:,}")
+    s4.metric("Illustrative fish SKUs", stats["catalogue_skus"])
+    st.caption(
+        "The 240 templates are reproducible artificial household records resampled into 1,200 "
+        "persistent simulated households. There is **no Greek fish Discrete Choice Experiment** "
+        "in this version."
+    )
+
+    with st.expander("View synthetic-data assumptions and fish catalogue", expanded=False):
+        assumptions = stats["synthetic_assumptions"]
+        st.markdown(
+            f"- **Prices:** {assumptions['catalogue_prices']}\n"
+            f"- **Baskets:** {assumptions['basket_construction']}\n"
+            f"- **Price response:** {assumptions['price_sensitivity']}\n"
+            f"- **Substitution:** {assumptions['substitution']}\n"
+            f"- **Shelf lives:** {assumptions['shelf_life']}\n"
+            f"- **Default behaviour:** {assumptions['panic_and_hoarding']}"
+        )
+        catalogue = pd.DataFrame(config["products"])[
+            ["name", "category", "price", "origin", "shelf_life_days"]
+        ].rename(columns={
+            "name": "Product", "category": "Group", "price": "Synthetic price (EUR)",
+            "origin": "Synthetic origin", "shelf_life_days": "Shelf life (days)",
+        })
+        st.dataframe(catalogue, hide_index=True, use_container_width=True)
+
+    st.markdown("### Scenario: marine disruption and fish cold-chain interruption")
+    st.markdown(
+        "A severe marine-heat and storm sequence disrupts landings, aquaculture output and "
+        "temperature-controlled deliveries to a Greek supermarket. Fish prices rise and "
+        "replenishment is delayed. Fresh farmed fish and small pelagic fish are highly "
+        "perishable, while frozen and canned products provide longer-life inventory. With no "
+        "Greek behavioural observations, the default uses synthetic routine baskets without "
+        "panic or extra purchasing."
+    )
+
+    default_params = {
+        "days": 120, "month": 7, "base_con": 200,
+        "reorder": 0.35, "target": 0.85, "lead": 3,
+        "cri_start": 30, "cri_duration": 45, "inf": 20.0, "dis": 7,
+        "panic": 0.0, "hoard": 1.0, "mc_runs": 1,
+        "policy_cfg": _sf_no_policy_config(30), "purchase_limit": None,
+        "media_intensity": 0.0, "communication_type": "neutral",
+        "stockpile_days": None, "exploratory_behaviour": False,
+    }
+    st.markdown("### 1. Run the synthetic no-policy preset")
+    with st.expander("View preset parameters", expanded=False):
+        st.markdown(
+            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% synthetic fish-"
+            "price increase; 7-day cold-chain delivery interruption; 3-day normal lead time; "
+            "35% reorder point; 85% restock target; no panic or hoarding; no policy; paired seed "
+            "42. Every behavioural and fisheries value is an explicit synthetic assumption."
+        )
+    if st.button("Run Greece fish synthetic preset", type="primary", key="gf_run_default"):
+        with st.spinner("Running paired synthetic baseline and fish-crisis simulations..."):
+            st.session_state["gf_results_default"] = _gf_run_simulation(config, default_params)
+    if st.session_state.get("gf_results_default"):
+        _gf_download_row(
+            st.session_state["gf_results_default"], config, "default",
+            "Synthetic no-policy preset generated from this run",
+        )
+        _render_gf_results(st.session_state["gf_results_default"], "Synthetic no-policy results")
+
+    st.divider()
+    st.markdown("### 2. Optional synthetic policy analysis")
+    enabled = st.checkbox(
+        "Enable additional Greece fish policy analysis", key="gf_policy_enabled",
+        help="Policy controls are hidden and excluded until enabled.",
+    )
+    if not enabled:
+        st.caption("Enable this section to reveal scenario and fish-policy controls.")
+        return
+
+    a, b, c = st.columns(3)
+    with a:
+        st.markdown("**Crisis and demand**")
+        days = st.slider("Simulation days", 60, 240, 120, 10, key="gf_days")
+        consumers = st.number_input(
+            "Shopping visits per day", 50, 1000, 200, 50, key="gf_consumers",
+            help="Synthetic store traffic; it is not measured Greek footfall.",
+        )
+        start = st.slider("Crisis start day", 10, max(11, days - 20), min(30, days - 20), key="gf_start")
+        duration = st.slider("Crisis duration", 5, max(5, days - start), min(45, days - start), 5, key="gf_duration")
+        inflation = st.slider(
+            "Fish price increase (%)", 0, 80, 20, 5, key="gf_inflation",
+            help="Analyst-defined crisis price shock applied to every fish SKU.",
+        )
+    with b:
+        st.markdown("**Cold chain and behaviour**")
+        disruption = st.slider(
+            "Fish delivery interruption (days)", 0, 21, 7, key="gf_disruption",
+            help="Number of crisis days on which scheduled fish deliveries are blocked.",
+        )
+        lead = st.slider("Normal fish lead time (days)", 1, 10, 3, key="gf_lead")
+        reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="gf_reorder") / 100
+        target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="gf_target") / 100
+        exploratory = st.checkbox(
+            "Enable exploratory scarcity behaviour", key="gf_exploratory",
+            help="Off by default because panic and extra purchasing have not been estimated from Greek fish data.",
+        )
+        panic = st.slider(
+            "Exploratory scarcity-response sensitivity", 0.0, 0.8, 0.20, 0.05, key="gf_panic",
+            help="Unvalidated synthetic assumption; no Greek fish questionnaire estimates it.",
+            disabled=not exploratory,
+        )
+        hoard = st.slider(
+            "Exploratory extra-purchase factor", 1.0, 1.6, 1.10, 0.05, key="gf_hoard",
+            help="Kept low because fresh fish is highly perishable; this multiplier is not estimated.",
+            disabled=not exploratory,
+        )
+    with c:
+        st.markdown("**Fish policy levers**")
+        rationing = st.checkbox("Per-SKU fish quantity limit", key="gf_rationing")
+        limit = st.slider("Maximum units per fish SKU", 1, 8, 3, key="gf_limit", disabled=not rationing)
+        subsidy = st.checkbox(
+            "Affordable fish-protein subsidy", key="gf_subsidy",
+            help="Reduces modeled prices only for small pelagic and canned fish, not premium fresh or frozen products.",
+        )
+        subsidy_rate = st.slider(
+            "Affordable fish subsidy rate (%)", 5, 40, 15, 5,
+            key="gf_subsidy_rate", disabled=not subsidy,
+        ) / 100
+        comm = st.selectbox(
+            "Public scarcity communication", ["neutral", "calming", "panic"], key="gf_comm",
+            help="Exploratory behavioural scenario; it is not a measured communication effect.",
+            disabled=not exploratory,
+        )
+        intensity = (
+            st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05, key="gf_comm_intensity")
+            if exploratory and comm != "neutral" else 0.0
+        )
+
+    policy_cfg = _sf_no_policy_config(start)
+    policy_cfg.update({
+        "subsidy_active": subsidy,
+        "subsidy_target": "category",
+        "subsidy_categories": ["Small pelagic fish", "Canned fish"],
+        "subsidy_rate": subsidy_rate if subsidy else 0.0,
+    })
+    params = {
+        "days": days, "month": 7, "base_con": int(consumers),
+        "reorder": reorder, "target": target, "lead": lead,
+        "cri_start": start, "cri_duration": duration,
+        "inf": float(inflation), "dis": disruption,
+        "panic": panic if exploratory else 0.0,
+        "hoard": hoard if exploratory else 1.0, "mc_runs": 1,
+        "policy_cfg": policy_cfg,
+        "purchase_limit": limit if rationing else None,
+        "media_intensity": intensity,
+        "communication_type": comm if exploratory else "neutral",
+        "stockpile_days": None,
+        "exploratory_behaviour": exploratory,
+    }
+    has_policy = _sf_has_active_policy(params)
+    if not has_policy:
+        st.info("Select a quantity limit, affordable fish subsidy, or non-neutral communication.")
+    if st.button(
+        "Run Greece fish policy analysis", type="primary", key="gf_run_policy",
+        disabled=not has_policy,
+    ):
+        with st.spinner("Running paired synthetic policy and no-policy fish crises..."):
+            st.session_state["gf_results_policy"] = _gf_run_simulation(config, params)
+            st.session_state["gf_results_policy_signature"] = _sf_param_signature(params)
+    policy_result_is_current = bool(
+        st.session_state.get("gf_results_policy")
+        and st.session_state.get("gf_results_policy_signature") == _sf_param_signature(params)
+    )
+    if policy_result_is_current:
+        _gf_download_row(
+            st.session_state["gf_results_policy"], config, "policy",
+            "Synthetic policy analysis generated from this run",
+        )
+        _render_gf_results(st.session_state["gf_results_policy"], "Synthetic policy-analysis results")
+    elif st.session_state.get("gf_results_policy"):
+        st.caption("Policy settings changed. Run the analysis again to refresh its report and CSV files.")
+
+
+# ===========================================================================
 # 1. SESSION STATE INITIALISATION
 # ===========================================================================
 
@@ -5424,6 +5865,11 @@ defaults = {
     "gr_config": None,
     "gr_results_default": None,
     "gr_results_policy": None,
+    # Greece fish synthetic local-development case study
+    "gf_config": None,
+    "gf_results_default": None,
+    "gf_results_policy": None,
+    "gf_results_policy_signature": None,
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
@@ -16819,6 +17265,7 @@ if __name__ == "__main__":
     page = {
         "portugal-fruits": "portugal_fruits",
         "greece-dairy": "greece_dairy",
+        "greece-fish": "greece_fish",
     }.get(_case_link, st.session_state.get("page", "landing"))
     if page == "landing":
         render_landing_page()
@@ -16830,5 +17277,7 @@ if __name__ == "__main__":
         render_portugal_fruits_page()
     elif page == "greece_dairy":
         render_greece_dairy_page()
+    elif page == "greece_fish":
+        render_greece_fish_page()
     else:
         main()
