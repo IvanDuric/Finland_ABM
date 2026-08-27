@@ -1909,12 +1909,27 @@ def render_case_studies_page():
             st.session_state["page"] = "main"
             st.rerun()
     if st.button("→portugal_fruits", key="portugal_fruits_nav"):
+        st.session_state["pt_lang"] = "en"
+        st.session_state["page"] = "portugal_fruits"
+        st.rerun()
+    if st.button("→portugal_fruits_pt", key="portugal_fruits_pt_nav"):
+        st.session_state["pt_lang"] = "pt"
         st.session_state["page"] = "portugal_fruits"
         st.rerun()
     if st.button("→greece_dairy", key="greece_dairy_nav"):
+        st.session_state["gr_lang"] = "en"
+        st.session_state["page"] = "greece_dairy"
+        st.rerun()
+    if st.button("→greece_dairy_el", key="greece_dairy_el_nav"):
+        st.session_state["gr_lang"] = "el"
         st.session_state["page"] = "greece_dairy"
         st.rerun()
     if st.button("→greece_fish", key="greece_fish_nav"):
+        st.session_state["gf_lang"] = "en"
+        st.session_state["page"] = "greece_fish"
+        st.rerun()
+    if st.button("→greece_fish_el", key="greece_fish_el_nav"):
+        st.session_state["gf_lang"] = "el"
         st.session_state["page"] = "greece_fish"
         st.rerun()
     if st.button("→back", key="back_nav_btn"):
@@ -1926,7 +1941,9 @@ def render_case_studies_page():
     # JS bridge: hide trigger buttons and route React postMessages to them
     components.html("""<script>
 (function(){
-  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits','→greece_dairy','→greece_fish','→back'];
+  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits',
+              '→portugal_fruits_pt','→greece_dairy','→greece_dairy_el',
+              '→greece_fish','→greece_fish_el','→back'];
   var obs = new MutationObserver(function(){
     window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
       var lbl = (c.querySelector('button p, button') || {}).textContent || '';
@@ -1938,26 +1955,29 @@ def render_case_studies_page():
   window.parent.addEventListener('message', function(e){
     if(!e.data) return;
     if(e.data.type === 'launch_case_study'){
+      var lang = 'en';
+      try { lang = window.parent.sessionStorage.getItem('grocerysim_lang') || 'en'; } catch(e2){}
       if(Number(e.data.caseIndex) === 1){
+        var dairyTarget = lang === 'el' ? '→greece_dairy_el' : '→greece_dairy';
         window.parent.document.querySelectorAll('button').forEach(function(b){
-          if((b.textContent || '').trim() === '→greece_dairy') b.click();
+          if((b.textContent || '').trim() === dairyTarget) b.click();
         });
         return;
       }
       if(Number(e.data.caseIndex) === 2){
+        var fruitTarget = lang === 'pt' ? '→portugal_fruits_pt' : '→portugal_fruits';
         window.parent.document.querySelectorAll('button').forEach(function(b){
-          if((b.textContent || '').trim() === '→portugal_fruits') b.click();
+          if((b.textContent || '').trim() === fruitTarget) b.click();
         });
         return;
       }
       if(Number(e.data.caseIndex) === 3){
+        var fishTarget = lang === 'el' ? '→greece_fish_el' : '→greece_fish';
         window.parent.document.querySelectorAll('button').forEach(function(b){
-          if((b.textContent || '').trim() === '→greece_fish') b.click();
+          if((b.textContent || '').trim() === fishTarget) b.click();
         });
         return;
       }
-      var lang = 'en';
-      try { lang = window.parent.sessionStorage.getItem('grocerysim_lang') || 'en'; } catch(e2){}
       var target = '→main_' + lang;
       window.parent.document.querySelectorAll('button').forEach(function(b){
         if((b.textContent || '').trim() === target) b.click();
@@ -4622,19 +4642,112 @@ def _pt_result_metrics(result: dict) -> dict:
     return metrics
 
 
-def _render_pt_results(result: dict, title: str) -> None:
+_PT_TEXT = {
+    "en": {
+        "back": "Back to case studies", "heading": "Portugal — Fruits (Oranges)",
+        "caption": "SecureFood Scenario Simulator · preliminary local-development case study",
+        "warning": "**Preliminary model:** data collection is ongoing. This local case study is not part of the deployed website and its outputs are directional, not population estimates.",
+        "participants": "Participants analysed", "excluded": "Participants excluded (Halle)",
+        "products": "Distinct fruit products", "dce_participants": "Participants in Discrete Choice Experiment",
+        "sample_note": "**Distinct fruit products (18)** means 18 different product names appeared in the eligible participants' normal or disrupted shopping baskets—for example bananas, apples, kiwis and four orange products. It is a product count, not the number of fruit categories or participants. **The orange Discrete Choice Experiment uses 71 participants** with complete recorded-price choices; two eligible shopping participants had an earlier choice format without the full price/attribute data and are not used to estimate the DCE coefficients.",
+        "scenario_heading": "### Scenario: climate pressure on Portuguese fruit supply",
+        "scenario": "A heat-and-water-stress episode reduces Portuguese fruit yields and marketable orange quality while interrupting temperature-sensitive deliveries. Retail prices rise and selected fruits become unavailable. Households start from their observed normal fruit baskets; price retention and substitution propensities are estimated from the repeated higher-price/missing-product shopping task. The orange DCE contributes pooled price, Portuguese/Algarve origin, size and appearance preferences only when choosing among orange alternatives.",
+        "data_gap": "The retail catalogue does not identify orange size. The DCE size effect is therefore reported but not assigned to a retail SKU. This is an explicit data gap, not an imputed attribute.",
+        "preset_heading": "### 1. Run the no-policy preset", "preset_expander": "View preset parameters",
+        "preset": "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% fruit-price increase; 7-day delivery interruption; 3-day normal lead time; 35% reorder point; 85% restock target; no assumed panic or hoarding multiplier; no policy intervention; paired seed 42. Price retention and substitution come from the two observed fruit shopping stages.",
+        "run_preset": "Run Portugal fruit preset", "preset_spinner": "Running paired no-crisis and fruit-crisis simulations...",
+        "preset_report": "No-policy preset generated from this simulation", "preset_results": "No-policy preset results",
+        "policy_heading": "### 2. Optional policy analysis", "enable_policy": "Enable additional Portugal fruit policy analysis",
+        "enable_help": "Policy assumptions are excluded until this control is enabled.",
+        "enable_caption": "Enable this section to reveal scenario and policy controls.",
+        "crisis_demand": "**Crisis and demand**", "days": "Simulation days", "days_help": "Includes pre-crisis, disruption and recovery periods.",
+        "visits": "Shopping visits per day", "visits_help": "Store traffic; this does not change the empirical sample size.",
+        "start": "Crisis start day", "duration": "Crisis duration", "inflation": "Fruit price increase (%)",
+        "inflation_help": "Applied to retail fruit prices during the configured crisis.",
+        "logistics": "**Logistics and behaviour**", "disruption": "Delivery interruption (days)", "lead": "Normal lead time (days)",
+        "reorder": "Reorder point (% capacity)", "target": "Restock target (% capacity)",
+        "panic": "Exploratory scarcity-response sensitivity", "panic_help": "Optional fruit-specific scenario assumption. The questionnaire does not measure panic.",
+        "hoard": "Exploratory extra-purchase factor", "hoard_help": "Kept low for perishable fruit. Only 4.1% of eligible participants increased basket quantity in stage two.",
+        "policy_levers": "**Policy levers**", "rationing": "Per-fruit quantity limit", "limit": "Maximum units per fruit SKU",
+        "subsidy": "Orange affordability subsidy", "subsidy_help": "Reduces prices only for the four observed orange products, not all fruit.",
+        "subsidy_rate": "Orange subsidy rate (%)", "communication": "Public communication",
+        "communication_help": "Calming communication reduces the exploratory scarcity-response state; neutral has no effect.",
+        "intensity": "Communication intensity", "select_policy": "Select rationing, an orange affordability subsidy, or non-neutral communication.",
+        "run_policy": "Run Portugal fruit policy analysis", "policy_spinner": "Running paired policy and no-policy fruit crises...",
+        "policy_report": "Optional policy analysis generated from this simulation", "policy_results": "Policy analysis results",
+        "units": "Fruit units purchased", "unmet": "Unmet fruit demand", "waste": "Fruit waste",
+        "fulfilment": "Requested-basket fulfilment", "vs_baseline": "vs no-crisis baseline", "waste_vs": "vs baseline",
+        "sales_chart": "Daily fruit purchases — paired scenario comparison", "sales_axis": "Fruit units purchased",
+        "pair_caption": "Baseline and crisis runs use the same seed and resampled households. The difference therefore reflects configured prices, supply delays and policy—not a different cohort.",
+        "unmet_chart": "Unmet fruit demand", "unmet_axis": "Requested minus purchased units",
+        "panic_chart": "Exploratory scarcity-response state", "panic_axis": "Internal state (0–1)",
+        "shelf_chart": "Shelf stock by fruit group", "shelf_axis": "Units on shelf",
+        "shelf_caption": "Orange is separated from other fruit because only oranges have a dedicated DCE. Cross-group substitution is not asserted by the preliminary model.",
+        "reduced": "reduced", "increased": "increased", "policy_effect_prefix": "Against the paired crisis without policy, the selected intervention",
+        "policy_effect_suffix": "These are simulated counterfactual effects, not forecasts.",
+        "pdf": "Download PDF report", "daily_csv": "Download daily results (CSV)", "product_csv": "Download product results (CSV)",
+    },
+    "pt": {
+        "back": "Voltar aos estudos de caso", "heading": "Portugal — Frutas (Laranjas)",
+        "caption": "Simulador de Cenários SecureFood · estudo de caso preliminar em desenvolvimento local",
+        "warning": "**Modelo preliminar:** a recolha de dados está em curso. Este estudo de caso local não faz parte do site publicado e os seus resultados são indicativos, não estimativas populacionais.",
+        "participants": "Participantes analisados", "excluded": "Participantes excluídos (Halle)",
+        "products": "Produtos de fruta distintos", "dce_participants": "Participantes na Experiência de Escolha Discreta",
+        "sample_note": "**Produtos de fruta distintos (18)** significa que 18 nomes de produtos diferentes surgiram nos cabazes normais ou sob perturbação dos participantes elegíveis—por exemplo bananas, maçãs, kiwis e quatro produtos de laranja. É uma contagem de produtos, não de categorias ou participantes. **A Experiência de Escolha Discreta sobre laranjas utiliza 71 participantes** com escolhas completas e preços registados; dois participantes elegíveis utilizaram um formato anterior sem todos os dados de preço e atributos e não entram na estimação dos coeficientes.",
+        "scenario_heading": "### Cenário: pressão climática sobre o abastecimento português de fruta",
+        "scenario": "Um episódio de calor e stress hídrico reduz a produção portuguesa de fruta e a qualidade comercial das laranjas, interrompendo simultaneamente entregas sensíveis à temperatura. Os preços sobem e algumas frutas ficam indisponíveis. Os agregados partem dos cabazes normais observados; a retenção perante preços mais altos e a substituição são estimadas a partir da segunda tarefa de compra com preços superiores e produtos em falta. A experiência de escolha das laranjas contribui apenas para escolhas entre alternativas de laranja.",
+        "data_gap": "O catálogo de retalho não identifica o tamanho das laranjas. O efeito do tamanho na experiência de escolha é apresentado, mas não atribuído a um SKU. Trata-se de uma lacuna de dados explícita, não de um atributo imputado.",
+        "preset_heading": "### 1. Executar o cenário predefinido sem política", "preset_expander": "Ver parâmetros predefinidos",
+        "preset": "120 dias; 200 visitas de compra/dia; crise no Dia 30 durante 45 dias; aumento de 20% no preço da fruta; interrupção de entregas durante 7 dias; prazo normal de 3 dias; ponto de encomenda de 35%; reposição até 85%; sem pânico ou multiplicador de acumulação; sem política; semente emparelhada 42. A retenção e a substituição provêm das duas fases de compra observadas.",
+        "run_preset": "Executar cenário predefinido de fruta", "preset_spinner": "A executar simulações emparelhadas sem crise e com crise da fruta...",
+        "preset_report": "Cenário sem política gerado por esta simulação", "preset_results": "Resultados do cenário sem política",
+        "policy_heading": "### 2. Análise opcional de políticas", "enable_policy": "Ativar análise adicional de políticas para a fruta em Portugal",
+        "enable_help": "As hipóteses de política ficam excluídas até este controlo ser ativado.",
+        "enable_caption": "Ative esta secção para mostrar os controlos de cenário e política.",
+        "crisis_demand": "**Crise e procura**", "days": "Dias de simulação", "days_help": "Inclui períodos pré-crise, perturbação e recuperação.",
+        "visits": "Visitas de compra por dia", "visits_help": "Tráfego da loja; não altera o tamanho da amostra empírica.",
+        "start": "Dia de início da crise", "duration": "Duração da crise", "inflation": "Aumento do preço da fruta (%)",
+        "inflation_help": "Aplicado aos preços da fruta durante a crise configurada.",
+        "logistics": "**Logística e comportamento**", "disruption": "Interrupção de entregas (dias)", "lead": "Prazo normal de entrega (dias)",
+        "reorder": "Ponto de encomenda (% da capacidade)", "target": "Meta de reposição (% da capacidade)",
+        "panic": "Sensibilidade exploratória à escassez", "panic_help": "Hipótese opcional específica da fruta. O questionário não mede pânico.",
+        "hoard": "Fator exploratório de compra adicional", "hoard_help": "Mantido baixo devido à perecibilidade. Apenas 4,1% dos participantes aumentaram a quantidade na segunda fase.",
+        "policy_levers": "**Instrumentos de política**", "rationing": "Limite de quantidade por fruta", "limit": "Máximo de unidades por SKU de fruta",
+        "subsidy": "Subsídio à acessibilidade das laranjas", "subsidy_help": "Reduz apenas os preços dos quatro produtos de laranja observados, não de toda a fruta.",
+        "subsidy_rate": "Taxa de subsídio às laranjas (%)", "communication": "Comunicação pública",
+        "communication_help": "A comunicação tranquilizadora reduz o estado exploratório de escassez; neutra não tem efeito.",
+        "intensity": "Intensidade da comunicação", "select_policy": "Selecione racionamento, subsídio às laranjas ou comunicação não neutra.",
+        "run_policy": "Executar análise de políticas da fruta", "policy_spinner": "A executar crises emparelhadas com e sem política...",
+        "policy_report": "Análise opcional de políticas gerada por esta simulação", "policy_results": "Resultados da análise de políticas",
+        "units": "Unidades de fruta compradas", "unmet": "Procura de fruta não satisfeita", "waste": "Desperdício de fruta",
+        "fulfilment": "Satisfação do cabaz solicitado", "vs_baseline": "face à referência sem crise", "waste_vs": "face à referência",
+        "sales_chart": "Compras diárias de fruta — comparação emparelhada", "sales_axis": "Unidades de fruta compradas",
+        "pair_caption": "A referência e a crise utilizam a mesma semente e os mesmos agregados reamostrados. A diferença reflete preços, atrasos de abastecimento e política, não uma coorte diferente.",
+        "unmet_chart": "Procura de fruta não satisfeita", "unmet_axis": "Unidades solicitadas menos compradas",
+        "panic_chart": "Estado exploratório de resposta à escassez", "panic_axis": "Estado interno (0–1)",
+        "shelf_chart": "Stock em prateleira por grupo de fruta", "shelf_axis": "Unidades em prateleira",
+        "shelf_caption": "A laranja é separada das restantes frutas porque apenas as laranjas têm uma experiência de escolha dedicada. O modelo preliminar não assume substituição entre grupos.",
+        "reduced": "reduziu", "increased": "aumentou", "policy_effect_prefix": "Face à crise emparelhada sem política, a intervenção selecionada",
+        "policy_effect_suffix": "São efeitos contrafactuais simulados, não previsões.",
+        "pdf": "Descarregar relatório PDF", "daily_csv": "Descarregar resultados diários (CSV)", "product_csv": "Descarregar resultados por produto (CSV)",
+    },
+}
+
+
+def _render_pt_results(result: dict, title: str, language: str = "en") -> None:
+    t = _PT_TEXT.get(language, _PT_TEXT["en"])
     df = result["df"]
     prod = result["df_prod"]
     params = result["params"]
     metrics = _pt_result_metrics(result)
     st.markdown(f"### {title}")
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Fruit units purchased", f"{metrics['crisis_sales']:,.0f}",
-              f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline")
-    k2.metric("Unmet fruit demand", f"{metrics['crisis_unmet']:,.0f} units")
-    k3.metric("Fruit waste", f"{metrics['crisis_waste']:,.0f} units",
-              f"{metrics['waste_change']:+,.0f} vs baseline")
-    k4.metric("Requested-basket fulfilment", f"{metrics['crisis_fulfillment']:.1%}")
+    k1.metric(t["units"], f"{metrics['crisis_sales']:,.0f}",
+              f"{metrics['sales_change_pct']:+.1f}% {t['vs_baseline']}")
+    k2.metric(t["unmet"], f"{metrics['crisis_unmet']:,.0f} units")
+    k3.metric(t["waste"], f"{metrics['crisis_waste']:,.0f} units",
+              f"{metrics['waste_change']:+,.0f} {t['waste_vs']}")
+    k4.metric(t["fulfilment"], f"{metrics['crisis_fulfillment']:.1%}")
 
     scenarios = ["Baseline", "Crisis"]
     if "Crisis (No Policy)" in set(df["Scenario"]):
@@ -4642,8 +4755,7 @@ def _render_pt_results(result: dict, title: str) -> None:
     view = df[df["Scenario"].isin(scenarios)]
     fig_sales = px.line(
         view, x="Day", y="Sales", color="Scenario",
-        title="Daily fruit purchases — paired scenario comparison",
-        labels={"Sales": "Fruit units purchased"},
+        title=t["sales_chart"], labels={"Sales": t["sales_axis"]},
         color_discrete_map={
             "Baseline": "#2980b9", "Crisis": "#e67e22",
             "Crisis (No Policy)": "#7f8c8d",
@@ -4655,15 +4767,14 @@ def _render_pt_results(result: dict, title: str) -> None:
     )
     st.plotly_chart(fig_sales, use_container_width=True)
     st.caption(
-        "Baseline and crisis runs use the same seed and resampled households. The difference "
-        "therefore reflects configured prices, supply delays and policy—not a different cohort."
+        t["pair_caption"]
     )
 
     c1, c2 = st.columns(2)
     with c1:
         fig_access = px.line(
             view, x="Day", y="UnmetDemandUnits", color="Scenario",
-            title="Unmet fruit demand", labels={"UnmetDemandUnits": "Requested minus purchased units"},
+            title=t["unmet_chart"], labels={"UnmetDemandUnits": t["unmet_axis"]},
         )
         _sf_crisis_band(
             fig_access, params["cri_start"],
@@ -4673,8 +4784,7 @@ def _render_pt_results(result: dict, title: str) -> None:
     with c2:
         fig_panic = px.line(
             view, x="Day", y="PanicLevel", color="Scenario",
-            title="Exploratory scarcity-response state",
-            labels={"PanicLevel": "Internal state (0–1)"},
+            title=t["panic_chart"], labels={"PanicLevel": t["panic_axis"]},
         )
         _sf_crisis_band(
             fig_panic, params["cri_start"],
@@ -4689,8 +4799,7 @@ def _render_pt_results(result: dict, title: str) -> None:
         )
         fig_stock = px.line(
             shelf, x="Day", y="Shelf", color="Category", line_dash="Scenario",
-            title="Shelf stock by fruit group",
-            labels={"Shelf": "Units on shelf"},
+            title=t["shelf_chart"], labels={"Shelf": t["shelf_axis"]},
         )
         _sf_crisis_band(
             fig_stock, params["cri_start"],
@@ -4698,19 +4807,18 @@ def _render_pt_results(result: dict, title: str) -> None:
         )
         st.plotly_chart(fig_stock, use_container_width=True)
         st.caption(
-            "Orange is separated from other fruit because only oranges have a dedicated DCE. "
-            "Cross-group substitution is not asserted by the preliminary model."
+            t["shelf_caption"]
         )
 
     if "policy_unmet_change" in metrics:
-        direction = "reduced" if metrics["policy_unmet_change"] < 0 else "increased"
+        direction = t["reduced"] if metrics["policy_unmet_change"] < 0 else t["increased"]
         st.info(
-            f"Against the paired crisis without policy, the selected intervention "
+            f"{t['policy_effect_prefix']} "
             f"{direction} unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, "
             f"changed purchases by **{metrics['policy_sales_change']:+,.0f} units**, and changed "
             f"requested-basket fulfilment by **{metrics['policy_fulfillment_change']:+.1%}**. "
             f"Waste changed by **{metrics['policy_waste_change']:+,.0f} units**. These are simulated "
-            "counterfactual effects, not forecasts."
+            f"counterfactual effects, not forecasts. {t['policy_effect_suffix']}"
         )
 
 
@@ -4808,21 +4916,24 @@ def _pt_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
     return bytes(pdf.output())
 
 
-def _pt_download_row(result: dict, config: dict, key: str, report_label: str) -> None:
+def _pt_download_row(
+    result: dict, config: dict, key: str, report_label: str, language: str = "en",
+) -> None:
+    t = _PT_TEXT.get(language, _PT_TEXT["en"])
     report = _pt_report_bytes(result, config, report_label)
     c1, c2, c3 = st.columns(3)
     c1.download_button(
-        "Download PDF report", report,
+        t["pdf"], report,
         file_name=f"GROCERYsim_Portugal_Fruits_{key}.pdf",
         mime="application/pdf", key=f"pt_{key}_pdf", use_container_width=True,
     )
     c2.download_button(
-        "Download daily results (CSV)", result["df"].to_csv(index=False).encode("utf-8"),
+        t["daily_csv"], result["df"].to_csv(index=False).encode("utf-8"),
         file_name=f"GROCERYsim_Portugal_Fruits_{key}_daily.csv",
         mime="text/csv", key=f"pt_{key}_daily", use_container_width=True,
     )
     c3.download_button(
-        "Download product results (CSV)", result["df_prod"].to_csv(index=False).encode("utf-8"),
+        t["product_csv"], result["df_prod"].to_csv(index=False).encode("utf-8"),
         file_name=f"GROCERYsim_Portugal_Fruits_{key}_products.csv",
         mime="text/csv", key=f"pt_{key}_products", use_container_width=True,
     )
@@ -4834,21 +4945,25 @@ def render_portugal_fruits_page() -> None:
         section[data-testid="stSidebar"], header[data-testid="stHeader"],
         #MainMenu, footer { display:none !important; }
     </style>""", unsafe_allow_html=True)
-    back, heading = st.columns([1, 8])
+    back, heading, language_col = st.columns([1, 6, 2])
+    with language_col:
+        language = st.radio(
+            "Language", ["en", "pt"], key="pt_lang", horizontal=True,
+            format_func=lambda code: "English" if code == "en" else "Português",
+            label_visibility="collapsed",
+        )
+    t = _PT_TEXT[language]
     with back:
-        if st.button("Back to case studies", key="pt_back"):
+        if st.button(t["back"], key="pt_back"):
             if "case" in st.query_params:
                 del st.query_params["case"]
             st.session_state["page"] = "case_studies"
             st.rerun()
     with heading:
-        st.markdown("## Portugal — Fruits (Oranges)")
-        st.caption("SecureFood Scenario Simulator · preliminary local-development case study")
+        st.markdown(f"## {t['heading']}")
+        st.caption(t["caption"])
 
-    st.warning(
-        "**Preliminary model:** data collection is ongoing. This local case study is not part "
-        "of the deployed website and its outputs are directional, not population estimates."
-    )
+    st.warning(t["warning"])
     if st.session_state.get("pt_config") is None:
         with st.spinner("Processing the preliminary Portugal cohort..."):
             st.session_state["pt_config"] = _pt_load_config()
@@ -4861,34 +4976,15 @@ def render_portugal_fruits_page() -> None:
     sample = summary["sample"]
     dce = summary["orange_dce"]
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Participants analysed", sample["eligible_profiles"])
-    s2.metric("Participants excluded (Halle)", sample["halle_finished_excluded"])
-    s3.metric("Distinct fruit products", summary["catalogue"]["skus"])
-    s4.metric("Participants in Discrete Choice Experiment", dce.get("n_participants", 0))
-    st.caption(
-        "**Distinct fruit products (18)** means 18 different product names appeared in the "
-        "eligible participants' normal or disrupted shopping baskets—for example bananas, "
-        "apples, kiwis and four orange products. It is a product count, not the number of "
-        "fruit categories or participants. **The orange Discrete Choice Experiment uses 71 "
-        "participants** with complete recorded-price choices; two eligible shopping participants "
-        "had an earlier choice format without the full price/attribute data and are not used to "
-        "estimate the DCE coefficients."
-    )
+    s1.metric(t["participants"], sample["eligible_profiles"])
+    s2.metric(t["excluded"], sample["halle_finished_excluded"])
+    s3.metric(t["products"], summary["catalogue"]["skus"])
+    s4.metric(t["dce_participants"], dce.get("n_participants", 0))
+    st.caption(t["sample_note"])
 
-    st.markdown("### Scenario: climate pressure on Portuguese fruit supply")
-    st.markdown(
-        "A heat-and-water-stress episode reduces Portuguese fruit yields and marketable orange "
-        "quality while interrupting temperature-sensitive deliveries. Retail prices rise and "
-        "selected fruits become unavailable. Households "
-        "start from their observed normal fruit baskets; price retention and substitution "
-        "propensities are estimated from the repeated higher-price/missing-product shopping task. "
-        "The orange DCE contributes pooled price, Portuguese/Algarve origin, size and appearance "
-        "preferences only when choosing among orange alternatives."
-    )
-    st.info(
-        "The retail catalogue does not identify orange size. The DCE size effect is therefore "
-        "reported but not assigned to a retail SKU. This is an explicit data gap, not an imputed attribute."
-    )
+    st.markdown(t["scenario_heading"])
+    st.markdown(t["scenario"])
+    st.info(t["data_gap"])
 
     default_params = {
         "days": 120, "month": 7, "base_con": 200,
@@ -4899,66 +4995,52 @@ def render_portugal_fruits_page() -> None:
         "media_intensity": 0.0, "communication_type": "neutral",
         "stockpile_days": None, "exploratory_behaviour": False,
     }
-    st.markdown("### 1. Run the no-policy preset")
-    with st.expander("View preset parameters", expanded=False):
-        st.markdown(
-            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% fruit-price "
-            "increase; 7-day delivery interruption; 3-day normal lead time; 35% reorder point; "
-            "85% restock target; no assumed panic or hoarding multiplier; no policy intervention; "
-            "paired seed 42. Price retention and substitution come from the two observed fruit "
-            "shopping stages."
-        )
-    if st.button("Run Portugal fruit preset", type="primary", key="pt_run_default"):
-        with st.spinner("Running paired no-crisis and fruit-crisis simulations..."):
+    st.markdown(t["preset_heading"])
+    with st.expander(t["preset_expander"], expanded=False):
+        st.markdown(t["preset"])
+    if st.button(t["run_preset"], type="primary", key="pt_run_default"):
+        with st.spinner(t["preset_spinner"]):
             st.session_state["pt_results_default"] = _pt_run_simulation(config, default_params)
     if st.session_state.get("pt_results_default"):
         _pt_download_row(
             st.session_state["pt_results_default"], config, "default",
-            "No-policy preset generated from this simulation",
+            t["preset_report"], language,
         )
-        _render_pt_results(st.session_state["pt_results_default"], "No-policy preset results")
+        _render_pt_results(st.session_state["pt_results_default"], t["preset_results"], language)
 
     st.divider()
-    st.markdown("### 2. Optional policy analysis")
+    st.markdown(t["policy_heading"])
     enabled = st.checkbox(
-        "Enable additional Portugal fruit policy analysis", key="pt_policy_enabled",
-        help="Policy assumptions are excluded until this control is enabled.",
+        t["enable_policy"], key="pt_policy_enabled", help=t["enable_help"],
     )
     if not enabled:
-        st.caption("Enable this section to reveal scenario and policy controls.")
+        st.caption(t["enable_caption"])
         return
 
     a, b, c = st.columns(3)
     with a:
-        st.markdown("**Crisis and demand**")
-        days = st.slider("Simulation days", 60, 240, 120, 10, key="pt_days",
-                         help="Includes pre-crisis, disruption and recovery periods.")
-        consumers = st.number_input("Shopping visits per day", 50, 1000, 200, 50, key="pt_consumers",
-                                    help="Store traffic; this does not change the empirical sample size.")
-        start = st.slider("Crisis start day", 10, max(11, days - 20), min(30, days - 20), key="pt_start")
-        duration = st.slider("Crisis duration", 5, max(5, days - start), min(45, days - start), 5, key="pt_duration")
-        inflation = st.slider("Fruit price increase (%)", 0, 80, 20, 5, key="pt_inflation",
-                              help="Applied to retail fruit prices during the configured crisis.")
+        st.markdown(t["crisis_demand"])
+        days = st.slider(t["days"], 60, 240, 120, 10, key="pt_days", help=t["days_help"])
+        consumers = st.number_input(t["visits"], 50, 1000, 200, 50, key="pt_consumers", help=t["visits_help"])
+        start = st.slider(t["start"], 10, max(11, days - 20), min(30, days - 20), key="pt_start")
+        duration = st.slider(t["duration"], 5, max(5, days - start), min(45, days - start), 5, key="pt_duration")
+        inflation = st.slider(t["inflation"], 0, 80, 20, 5, key="pt_inflation", help=t["inflation_help"])
     with b:
-        st.markdown("**Logistics and behaviour**")
-        disruption = st.slider("Delivery interruption (days)", 0, 21, 7, key="pt_disruption")
-        lead = st.slider("Normal lead time (days)", 1, 10, 3, key="pt_lead")
-        reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="pt_reorder") / 100
-        target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="pt_target") / 100
-        panic = st.slider("Exploratory scarcity-response sensitivity", 0.0, 0.6, 0.20, 0.05, key="pt_panic",
-                          help="Optional fruit-specific scenario assumption. The questionnaire does not measure panic.")
-        hoard = st.slider("Exploratory extra-purchase factor", 1.0, 1.5, 1.10, 0.05, key="pt_hoard",
-                          help="Kept low for perishable fruit. Only 4.1% of eligible participants increased basket quantity in stage two.")
+        st.markdown(t["logistics"])
+        disruption = st.slider(t["disruption"], 0, 21, 7, key="pt_disruption")
+        lead = st.slider(t["lead"], 1, 10, 3, key="pt_lead")
+        reorder = st.slider(t["reorder"], 15, 60, 35, 5, key="pt_reorder") / 100
+        target = st.slider(t["target"], 65, 100, 85, 5, key="pt_target") / 100
+        panic = st.slider(t["panic"], 0.0, 0.6, 0.20, 0.05, key="pt_panic", help=t["panic_help"])
+        hoard = st.slider(t["hoard"], 1.0, 1.5, 1.10, 0.05, key="pt_hoard", help=t["hoard_help"])
     with c:
-        st.markdown("**Policy levers**")
-        rationing = st.checkbox("Per-fruit quantity limit", key="pt_rationing")
-        limit = st.slider("Maximum units per fruit SKU", 1, 8, 3, key="pt_limit", disabled=not rationing)
-        subsidy = st.checkbox("Orange affordability subsidy", key="pt_subsidy",
-                              help="Reduces prices only for the four observed orange products, not all fruit.")
-        subsidy_rate = st.slider("Orange subsidy rate (%)", 5, 40, 15, 5, key="pt_subsidy_rate", disabled=not subsidy) / 100
-        comm = st.selectbox("Public communication", ["neutral", "calming", "panic"], key="pt_comm",
-                            help="Calming communication reduces the exploratory scarcity-response state; neutral has no effect.")
-        intensity = st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05,
+        st.markdown(t["policy_levers"])
+        rationing = st.checkbox(t["rationing"], key="pt_rationing")
+        limit = st.slider(t["limit"], 1, 8, 3, key="pt_limit", disabled=not rationing)
+        subsidy = st.checkbox(t["subsidy"], key="pt_subsidy", help=t["subsidy_help"])
+        subsidy_rate = st.slider(t["subsidy_rate"], 5, 40, 15, 5, key="pt_subsidy_rate", disabled=not subsidy) / 100
+        comm = st.selectbox(t["communication"], ["neutral", "calming", "panic"], key="pt_comm", help=t["communication_help"])
+        intensity = st.slider(t["intensity"], 0.0, 1.0, 0.30, 0.05,
                               key="pt_comm_intensity", disabled=comm == "neutral") if comm != "neutral" else 0.0
 
     policy_cfg = _sf_no_policy_config(start)
@@ -4980,19 +5062,19 @@ def render_portugal_fruits_page() -> None:
     }
     has_policy = _sf_has_active_policy(params)
     if not has_policy:
-        st.info("Select rationing, an orange affordability subsidy, or non-neutral communication.")
+        st.info(t["select_policy"])
     if st.button(
-        "Run Portugal fruit policy analysis", type="primary", key="pt_run_policy",
+        t["run_policy"], type="primary", key="pt_run_policy",
         disabled=not has_policy,
     ):
-        with st.spinner("Running paired policy and no-policy fruit crises..."):
+        with st.spinner(t["policy_spinner"]):
             st.session_state["pt_results_policy"] = _pt_run_simulation(config, params)
     if st.session_state.get("pt_results_policy"):
         _pt_download_row(
             st.session_state["pt_results_policy"], config, "policy",
-            "Optional policy analysis generated from this simulation",
+            t["policy_report"], language,
         )
-        _render_pt_results(st.session_state["pt_results_policy"], "Policy analysis results")
+        _render_pt_results(st.session_state["pt_results_policy"], t["policy_results"], language)
 
 
 # ===========================================================================
@@ -5018,7 +5100,13 @@ def _gr_result_metrics(result: dict) -> dict:
     return _pt_result_metrics(result)
 
 
-def _render_gr_results(result: dict, title: str) -> None:
+def _case_local(language: str, english: str, local: str) -> str:
+    """Return compact case-study UI copy without coupling it to the global hub."""
+    return local if language in {"pt", "el"} else english
+
+
+def _render_gr_results(result: dict, title: str, language: str = "en") -> None:
+    L = lambda en, el: _case_local(language, en, el)
     df = result["df"]
     prod = result["df_prod"]
     params = result["params"]
@@ -5026,15 +5114,15 @@ def _render_gr_results(result: dict, title: str) -> None:
     st.markdown(f"### {title}")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric(
-        "Dairy units purchased", f"{metrics['crisis_sales']:,.0f}",
-        f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline",
+        L("Dairy units purchased", "Αγορασμένες μονάδες γαλακτοκομικών"), f"{metrics['crisis_sales']:,.0f}",
+        L(f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline", f"{metrics['sales_change_pct']:+.1f}% έναντι βάσης χωρίς κρίση"),
     )
-    k2.metric("Unmet dairy demand", f"{metrics['crisis_unmet']:,.0f} units")
+    k2.metric(L("Unmet dairy demand", "Μη ικανοποιημένη ζήτηση"), L(f"{metrics['crisis_unmet']:,.0f} units", f"{metrics['crisis_unmet']:,.0f} μονάδες"))
     k3.metric(
-        "Dairy waste", f"{metrics['crisis_waste']:,.0f} units",
-        f"{metrics['waste_change']:+,.0f} vs baseline",
+        L("Dairy waste", "Απόβλητα γαλακτοκομικών"), L(f"{metrics['crisis_waste']:,.0f} units", f"{metrics['crisis_waste']:,.0f} μονάδες"),
+        L(f"{metrics['waste_change']:+,.0f} vs baseline", f"{metrics['waste_change']:+,.0f} έναντι βάσης"),
     )
-    k4.metric("Requested-basket fulfilment", f"{metrics['crisis_fulfillment']:.1%}")
+    k4.metric(L("Requested-basket fulfilment", "Ικανοποίηση ζητούμενου καλαθιού"), f"{metrics['crisis_fulfillment']:.1%}")
 
     scenarios = ["Baseline", "Crisis"]
     if "Crisis (No Policy)" in set(df["Scenario"]):
@@ -5046,25 +5134,25 @@ def _render_gr_results(result: dict, title: str) -> None:
     }
     fig_sales = px.line(
         view, x="Day", y="Sales", color="Scenario",
-        title="Daily dairy purchases — paired scenario comparison",
-        labels={"Sales": "Dairy units purchased"}, color_discrete_map=colours,
+        title=L("Daily dairy purchases — paired scenario comparison", "Ημερήσιες αγορές γαλακτοκομικών — σύγκριση σεναρίων"),
+        labels={"Sales": L("Dairy units purchased", "Αγορασμένες μονάδες")}, color_discrete_map=colours,
     )
     _sf_crisis_band(
         fig_sales, params["cri_start"],
         params["cri_start"] + params["cri_duration"], params["days"],
     )
     st.plotly_chart(fig_sales, use_container_width=True)
-    st.caption(
-        "Baseline and crisis use the same synthetic household draws and seed. The gap is caused "
-        "by the configured price and delivery shock—not by a different simulated population."
-    )
+    st.caption(L(
+        "Baseline and crisis use the same synthetic household draws and seed. The gap is caused by the configured price and delivery shock—not by a different simulated population.",
+        "Η βάση και η κρίση χρησιμοποιούν τα ίδια συνθετικά νοικοκυριά και τον ίδιο σπόρο. Η διαφορά οφείλεται στο καθορισμένο σοκ τιμών και παραδόσεων, όχι σε διαφορετικό πληθυσμό."
+    ))
 
     c1, c2 = st.columns(2)
     with c1:
         fig_access = px.line(
             view, x="Day", y="UnmetDemandUnits", color="Scenario",
-            title="Unmet dairy demand",
-            labels={"UnmetDemandUnits": "Requested minus purchased units"},
+            title=L("Unmet dairy demand", "Μη ικανοποιημένη ζήτηση γαλακτοκομικών"),
+            labels={"UnmetDemandUnits": L("Requested minus purchased units", "Ζητούμενες μείον αγορασμένες μονάδες")},
             color_discrete_map=colours,
         )
         _sf_crisis_band(
@@ -5075,8 +5163,8 @@ def _render_gr_results(result: dict, title: str) -> None:
     with c2:
         fig_waste = px.line(
             view, x="Day", y="Waste", color="Scenario",
-            title="Dairy waste from shelf-life expiry",
-            labels={"Waste": "Expired units"}, color_discrete_map=colours,
+            title=L("Dairy waste from shelf-life expiry", "Απόβλητα λόγω λήξης διάρκειας ζωής"),
+            labels={"Waste": L("Expired units", "Ληγμένες μονάδες")}, color_discrete_map=colours,
         )
         _sf_crisis_band(
             fig_waste, params["cri_start"],
@@ -5091,29 +5179,25 @@ def _render_gr_results(result: dict, title: str) -> None:
         )
         fig_stock = px.line(
             shelf, x="Day", y="Shelf", color="Category", line_dash="Scenario",
-            title="Shelf stock by Greek dairy product group",
-            labels={"Shelf": "Units on shelf"},
+            title=L("Shelf stock by Greek dairy product group", "Απόθεμα ραφιού ανά ομάδα γαλακτοκομικών"),
+            labels={"Shelf": L("Units on shelf", "Μονάδες στο ράφι")},
         )
         _sf_crisis_band(
             fig_stock, params["cri_start"],
             params["cri_start"] + params["cri_duration"], params["days"],
         )
         st.plotly_chart(fig_stock, use_container_width=True)
-        st.caption(
-            "Shelf-life assumptions differ by product: fresh milk is the most perishable, "
-            "followed by yogurt and cream, while cheese and butter remain saleable longer."
-        )
+        st.caption(L(
+            "Shelf-life assumptions differ by product: fresh milk is the most perishable, followed by yogurt and cream, while cheese and butter remain saleable longer.",
+            "Οι υποθέσεις διάρκειας ζωής διαφέρουν ανά προϊόν: το φρέσκο γάλα είναι το πιο ευπαθές, ακολουθούν γιαούρτι και κρέμα, ενώ τυρί και βούτυρο διατηρούνται περισσότερο."
+        ))
 
     if "policy_unmet_change" in metrics:
-        direction = "reduced" if metrics["policy_unmet_change"] < 0 else "increased"
-        st.info(
-            f"Relative to the paired synthetic crisis without policy, this intervention "
-            f"{direction} unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, "
-            f"changed purchases by **{metrics['policy_sales_change']:+,.0f} units**, changed "
-            f"fulfilment by **{metrics['policy_fulfillment_change']:+.1%}**, and changed waste "
-            f"by **{metrics['policy_waste_change']:+,.0f} units**. These are synthetic scenario "
-            "differences, not estimated Greek policy effects."
-        )
+        direction = L("reduced", "μείωσε") if metrics["policy_unmet_change"] < 0 else L("increased", "αύξησε")
+        st.info(L(
+            f"Relative to the paired synthetic crisis without policy, this intervention {direction} unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, changed purchases by **{metrics['policy_sales_change']:+,.0f} units**, changed fulfilment by **{metrics['policy_fulfillment_change']:+.1%}**, and changed waste by **{metrics['policy_waste_change']:+,.0f} units**. These are synthetic scenario differences, not estimated Greek policy effects.",
+            f"Σε σχέση με την ίδια συνθετική κρίση χωρίς πολιτική, η παρέμβαση {direction} τη μη ικανοποιημένη ζήτηση κατά **{abs(metrics['policy_unmet_change']):,.0f} μονάδες**, άλλαξε τις αγορές κατά **{metrics['policy_sales_change']:+,.0f} μονάδες**, την ικανοποίηση κατά **{metrics['policy_fulfillment_change']:+.1%}** και τα απόβλητα κατά **{metrics['policy_waste_change']:+,.0f} μονάδες**. Πρόκειται για συνθετικές διαφορές σεναρίων, όχι εκτιμημένες επιδράσεις πολιτικής."
+        ))
 
 
 def _gr_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
@@ -5200,21 +5284,22 @@ def _gr_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
     return bytes(pdf.output())
 
 
-def _gr_download_row(result: dict, config: dict, key: str, report_label: str) -> None:
+def _gr_download_row(result: dict, config: dict, key: str, report_label: str, language: str = "en") -> None:
+    L = lambda en, el: _case_local(language, en, el)
     report = _gr_report_bytes(result, config, report_label)
     c1, c2, c3 = st.columns(3)
     c1.download_button(
-        "Download PDF report", report,
+        L("Download PDF report", "Λήψη αναφοράς PDF"), report,
         file_name=f"GROCERYsim_Greece_Dairy_{key}.pdf",
         mime="application/pdf", key=f"gr_{key}_pdf", use_container_width=True,
     )
     c2.download_button(
-        "Download daily results (CSV)", result["df"].to_csv(index=False).encode("utf-8"),
+        L("Download daily results (CSV)", "Λήψη ημερήσιων αποτελεσμάτων (CSV)"), result["df"].to_csv(index=False).encode("utf-8"),
         file_name=f"GROCERYsim_Greece_Dairy_{key}_daily.csv",
         mime="text/csv", key=f"gr_{key}_daily", use_container_width=True,
     )
     c3.download_button(
-        "Download product results (CSV)", result["df_prod"].to_csv(index=False).encode("utf-8"),
+        L("Download product results (CSV)", "Λήψη αποτελεσμάτων προϊόντων (CSV)"), result["df_prod"].to_csv(index=False).encode("utf-8"),
         file_name=f"GROCERYsim_Greece_Dairy_{key}_products.csv",
         mime="text/csv", key=f"gr_{key}_products", use_container_width=True,
     )
@@ -5226,64 +5311,95 @@ def render_greece_dairy_page() -> None:
         section[data-testid="stSidebar"], header[data-testid="stHeader"],
         #MainMenu, footer { display:none !important; }
     </style>""", unsafe_allow_html=True)
-    back, heading = st.columns([1, 8])
+    back, heading, language_col = st.columns([1, 6, 2])
+    with language_col:
+        language = st.radio(
+            "Language", ["en", "el"], key="gr_lang", horizontal=True,
+            format_func=lambda value: "English" if value == "en" else "Ελληνικά",
+            label_visibility="collapsed",
+        )
+    L = lambda en, el: _case_local(language, en, el)
     with back:
-        if st.button("Back to case studies", key="gr_back"):
+        if st.button(L("Back to case studies", "Πίσω στις μελέτες"), key="gr_back"):
             if "case" in st.query_params:
                 del st.query_params["case"]
             st.session_state["page"] = "case_studies"
             st.rerun()
     with heading:
-        st.markdown("## Greece — Dairy Supply Chain")
-        st.caption("SecureFood Scenario Simulator · synthetic local-development prototype")
+        st.markdown(L("## Greece — Dairy Supply Chain", "## Ελλάδα — Αλυσίδα εφοδιασμού γαλακτοκομικών"))
+        st.caption(L("SecureFood Scenario Simulator · synthetic local-development prototype", "Προσομοιωτής σεναρίων SecureFood · συνθετικό πρωτότυπο τοπικής ανάπτυξης"))
 
-    st.error(
-        "**Synthetic model — no Greek study data are currently available.** The catalogue, "
-        "households, baskets, budgets, price responses and substitution propensities below are "
-        "declared demonstration assumptions. Outputs test the ABM workflow; they are not empirical "
-        "results, forecasts, or evidence about consumers or policies in Greece."
-    )
+    st.error(L(
+        "**Synthetic model — no Greek study data are currently available.** The catalogue, households, baskets, budgets, price responses and substitution propensities below are declared demonstration assumptions. Outputs test the ABM workflow; they are not empirical results, forecasts, or evidence about consumers or policies in Greece.",
+        "**Συνθετικό μοντέλο — δεν υπάρχουν ακόμη δεδομένα από ελληνική μελέτη.** Ο κατάλογος, τα νοικοκυριά, τα καλάθια, οι προϋπολογισμοί, οι αποκρίσεις στις τιμές και οι τάσεις υποκατάστασης αποτελούν δηλωμένες υποθέσεις επίδειξης. Τα αποτελέσματα ελέγχουν τη λειτουργία του ABM· δεν είναι εμπειρικά ευρήματα, προβλέψεις ή στοιχεία για καταναλωτές ή πολιτικές στην Ελλάδα."
+    ))
     if st.session_state.get("gr_config") is None:
         st.session_state["gr_config"] = _gr_build_config()
     config = st.session_state["gr_config"]
     stats = config["stats"]
 
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Empirical participants", "0")
-    s2.metric("Synthetic household templates", stats["n_synthetic_templates"])
-    s3.metric("Simulated household pool", f"{stats['pool_size']:,}")
-    s4.metric("Illustrative dairy SKUs", stats["catalogue_skus"])
-    st.caption(
-        "The 240 templates are reproducible artificial household records used to exercise the "
-        "software. The simulation resamples them into a pool of 1,200 persistent households. "
-        "There is **no Greek Discrete Choice Experiment** in this version."
-    )
+    s1.metric(L("Empirical participants", "Εμπειρικοί συμμετέχοντες"), "0")
+    s2.metric(L("Synthetic household templates", "Συνθετικά πρότυπα νοικοκυριών"), stats["n_synthetic_templates"])
+    s3.metric(L("Simulated household pool", "Πληθυσμός προσομοιωμένων νοικοκυριών"), f"{stats['pool_size']:,}")
+    s4.metric(L("Illustrative dairy SKUs", "Ενδεικτικοί κωδικοί γαλακτοκομικών"), stats["catalogue_skus"])
+    st.caption(L(
+        "The 240 templates are reproducible artificial household records used to exercise the software. The simulation resamples them into a pool of 1,200 persistent households. There is **no Greek Discrete Choice Experiment** in this version.",
+        "Τα 240 πρότυπα είναι αναπαραγώγιμες τεχνητές εγγραφές νοικοκυριών για τον έλεγχο του λογισμικού. Η προσομοίωση τα επαναδειγματοληπτεί σε 1.200 σταθερά νοικοκυριά. **Δεν υπάρχει ελληνικό Πείραμα Διακριτής Επιλογής** σε αυτή την έκδοση."
+    ))
 
-    with st.expander("View synthetic-data assumptions and dairy catalogue", expanded=False):
+    with st.expander(L("View synthetic-data assumptions and dairy catalogue", "Προβολή συνθετικών υποθέσεων και καταλόγου γαλακτοκομικών"), expanded=False):
         assumptions = stats["synthetic_assumptions"]
-        st.markdown(
-            f"- **Prices:** {assumptions['catalogue_prices']}\n"
-            f"- **Baskets:** {assumptions['basket_construction']}\n"
-            f"- **Price response:** {assumptions['price_sensitivity']}\n"
-            f"- **Substitution:** {assumptions['substitution']}\n"
-            f"- **Default behaviour:** {assumptions['panic_and_hoarding']}"
-        )
+        if language == "el":
+            st.markdown(
+                "- **Τιμές:** συνθετικές ενδεικτικές τιμές λιανικής, όχι παρατηρημένες ελληνικές τιμές.\n"
+                "- **Καλάθια:** αναπαραγώγιμα τεχνητά καλάθια νοικοκυριών για έλεγχο του λογισμικού.\n"
+                "- **Απόκριση στις τιμές:** μη επικυρωμένη συνθετική παραμετροποίηση.\n"
+                "- **Υποκατάσταση:** επιτρέπεται μόνο εντός της ίδιας ομάδας γαλακτοκομικών.\n"
+                "- **Βασική συμπεριφορά:** χωρίς πανικό ή επιπλέον αγορές."
+            )
+        else:
+            st.markdown(
+                f"- **Prices:** {assumptions['catalogue_prices']}\n"
+                f"- **Baskets:** {assumptions['basket_construction']}\n"
+                f"- **Price response:** {assumptions['price_sensitivity']}\n"
+                f"- **Substitution:** {assumptions['substitution']}\n"
+                f"- **Default behaviour:** {assumptions['panic_and_hoarding']}"
+            )
         catalogue = pd.DataFrame(config["products"])[
             ["name", "category", "price", "fat_content", "shelf_life_days"]
-        ].rename(columns={
-            "name": "Product", "category": "Group", "price": "Synthetic price (EUR)",
-            "fat_content": "Fat (%)", "shelf_life_days": "Shelf life (days)",
+        ]
+        if language == "el":
+            dairy_groups = {"Milk": "Γάλα", "Yogurt": "Γιαούρτι", "Cheese": "Τυρί", "Cream": "Κρέμα", "Butter": "Βούτυρο"}
+            dairy_names = {
+                "Fresh cow milk 1.5% — 1 L": "Φρέσκο αγελαδινό γάλα 1,5% — 1 L",
+                "Fresh whole cow milk 3.5% — 1 L": "Φρέσκο πλήρες αγελαδινό γάλα 3,5% — 1 L",
+                "Lactose-free milk — 1 L": "Γάλα χωρίς λακτόζη — 1 L",
+                "Organic fresh cow milk — 1 L": "Βιολογικό φρέσκο αγελαδινό γάλα — 1 L",
+                "Greek strained yogurt 2% — 200 g": "Ελληνικό στραγγιστό γιαούρτι 2% — 200 g",
+                "Greek strained yogurt 10% — 200 g": "Ελληνικό στραγγιστό γιαούρτι 10% — 200 g",
+                "Traditional sheep yogurt — 220 g": "Παραδοσιακό πρόβειο γιαούρτι — 220 g",
+                "Feta PDO — 200 g": "Φέτα ΠΟΠ — 200 g",
+                "Reduced-fat feta-style cheese — 200 g": "Λευκό τυρί τύπου φέτας με μειωμένα λιπαρά — 200 g",
+                "Kasseri PDO — 200 g": "Κασέρι ΠΟΠ — 200 g",
+                "Cooking cream — 200 ml": "Κρέμα μαγειρικής — 200 ml",
+                "Cow butter — 250 g": "Αγελαδινό βούτυρο — 250 g",
+            }
+            catalogue["name"] = catalogue["name"].map(dairy_names).fillna(catalogue["name"])
+            catalogue["category"] = catalogue["category"].map(dairy_groups).fillna(catalogue["category"])
+        catalogue = catalogue.rename(columns={
+            "name": L("Product", "Προϊόν"), "category": L("Group", "Ομάδα"),
+            "price": L("Synthetic price (EUR)", "Συνθετική τιμή (EUR)"),
+            "fat_content": L("Fat (%)", "Λιπαρά (%)"),
+            "shelf_life_days": L("Shelf life (days)", "Διάρκεια ζωής (ημέρες)"),
         })
         st.dataframe(catalogue, hide_index=True, use_container_width=True)
 
-    st.markdown("### Scenario: extreme heat and refrigerated dairy disruption")
-    st.markdown(
-        "An extreme-heat episode increases refrigeration pressure and interrupts temperature-"
-        "controlled deliveries to a Greek supermarket. Dairy prices rise while delayed "
-        "replenishment increases stockout and expiry risks. Fresh milk, yogurt, cheese, cream "
-        "and butter retain different shelf lives. With no Greek behavioural observations, the "
-        "default scenario uses the synthetic routine baskets without panic or extra purchasing."
-    )
+    st.markdown(L("### Scenario: extreme heat and refrigerated dairy disruption", "### Σενάριο: ακραία ζέστη και διακοπή ψυχρής αλυσίδας γαλακτοκομικών"))
+    st.markdown(L(
+        "An extreme-heat episode increases refrigeration pressure and interrupts temperature-controlled deliveries to a Greek supermarket. Dairy prices rise while delayed replenishment increases stockout and expiry risks. Fresh milk, yogurt, cheese, cream and butter retain different shelf lives. With no Greek behavioural observations, the default scenario uses the synthetic routine baskets without panic or extra purchasing.",
+        "Ένα επεισόδιο ακραίας ζέστης αυξάνει την πίεση στην ψύξη και διακόπτει τις ελεγχόμενης θερμοκρασίας παραδόσεις σε ελληνικό σούπερ μάρκετ. Οι τιμές αυξάνονται και η καθυστέρηση ανεφοδιασμού εντείνει τον κίνδυνο ελλείψεων και λήξεων. Χωρίς ελληνικές παρατηρήσεις συμπεριφοράς, το βασικό σενάριο χρησιμοποιεί συνθετικά συνήθη καλάθια χωρίς πανικό ή επιπλέον αγορές."
+    ))
 
     default_params = {
         "days": 120, "month": 7, "base_con": 200,
@@ -5294,84 +5410,87 @@ def render_greece_dairy_page() -> None:
         "media_intensity": 0.0, "communication_type": "neutral",
         "stockpile_days": None, "exploratory_behaviour": False,
     }
-    st.markdown("### 1. Run the synthetic no-policy preset")
-    with st.expander("View preset parameters", expanded=False):
-        st.markdown(
-            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 15% synthetic "
-            "dairy-price increase; 7-day refrigerated-delivery interruption; 3-day normal lead "
-            "time; 35% reorder point; 85% restock target; no panic or hoarding; no policy; paired "
-            "seed 42. Every behavioural value is an explicit synthetic assumption."
-        )
-    if st.button("Run Greece dairy synthetic preset", type="primary", key="gr_run_default"):
-        with st.spinner("Running paired synthetic baseline and dairy-crisis simulations..."):
+    st.markdown(L("### 1. Run the synthetic no-policy preset", "### 1. Εκτέλεση συνθετικού προεπιλεγμένου σεναρίου χωρίς πολιτική"))
+    with st.expander(L("View preset parameters", "Προβολή προεπιλεγμένων παραμέτρων"), expanded=False):
+        st.markdown(L(
+            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 15% synthetic dairy-price increase; 7-day refrigerated-delivery interruption; 3-day normal lead time; 35% reorder point; 85% restock target; no panic or hoarding; no policy; paired seed 42. Every behavioural value is an explicit synthetic assumption.",
+            "120 ημέρες· 200 επισκέψεις αγορών/ημέρα· κρίση από την Ημέρα 30 για 45 ημέρες· συνθετική αύξηση τιμών 15%· διακοπή ψυχόμενων παραδόσεων 7 ημερών· κανονικός χρόνος παράδοσης 3 ημερών· σημείο επαναπαραγγελίας 35%· στόχος αναπλήρωσης 85%· χωρίς πανικό, αποθεματοποίηση ή πολιτική· κοινός σπόρος 42. Κάθε συμπεριφορική τιμή είναι ρητή συνθετική υπόθεση."
+        ))
+    if st.button(L("Run Greece dairy synthetic preset", "Εκτέλεση συνθετικού σεναρίου γαλακτοκομικών"), type="primary", key="gr_run_default"):
+        with st.spinner(L("Running paired synthetic baseline and dairy-crisis simulations...", "Εκτέλεση συνθετικής βάσης και κρίσης γαλακτοκομικών...")):
             st.session_state["gr_results_default"] = _gr_run_simulation(config, default_params)
     if st.session_state.get("gr_results_default"):
         _gr_download_row(
             st.session_state["gr_results_default"], config, "default",
-            "Synthetic no-policy preset generated from this run",
+            "Synthetic no-policy preset generated from this run", language,
         )
-        _render_gr_results(st.session_state["gr_results_default"], "Synthetic no-policy results")
+        _render_gr_results(st.session_state["gr_results_default"], L("Synthetic no-policy results", "Συνθετικά αποτελέσματα χωρίς πολιτική"), language)
 
     st.divider()
-    st.markdown("### 2. Optional synthetic policy analysis")
+    st.markdown(L("### 2. Optional synthetic policy analysis", "### 2. Προαιρετική συνθετική ανάλυση πολιτικής"))
     enabled = st.checkbox(
-        "Enable additional Greece dairy policy analysis", key="gr_policy_enabled",
-        help="Policy controls are hidden and excluded until enabled.",
+        L("Enable additional Greece dairy policy analysis", "Ενεργοποίηση πρόσθετης ανάλυσης πολιτικής γαλακτοκομικών"), key="gr_policy_enabled",
+        help=L("Policy controls are hidden and excluded until enabled.", "Οι ρυθμίσεις πολιτικής παραμένουν κρυφές και ανενεργές έως την ενεργοποίηση."),
     )
     if not enabled:
-        st.caption("Enable this section to reveal scenario and policy controls.")
+        st.caption(L("Enable this section to reveal scenario and policy controls.", "Ενεργοποιήστε την ενότητα για να εμφανιστούν οι ρυθμίσεις σεναρίου και πολιτικής."))
         return
 
     a, b, c = st.columns(3)
     with a:
-        st.markdown("**Crisis and demand**")
-        days = st.slider("Simulation days", 60, 240, 120, 10, key="gr_days")
+        st.markdown(L("**Crisis and demand**", "**Κρίση και ζήτηση**"))
+        days = st.slider(L("Simulation days", "Ημέρες προσομοίωσης"), 60, 240, 120, 10, key="gr_days")
         consumers = st.number_input(
-            "Shopping visits per day", 50, 1000, 200, 50, key="gr_consumers",
-            help="Synthetic store traffic; it is not a measured Greek footfall value.",
+            L("Shopping visits per day", "Επισκέψεις αγορών ανά ημέρα"), 50, 1000, 200, 50, key="gr_consumers",
+            help=L("Synthetic store traffic; it is not a measured Greek footfall value.", "Συνθετική επισκεψιμότητα· δεν αποτελεί μετρημένη ελληνική τιμή."),
         )
-        start = st.slider("Crisis start day", 10, max(11, days - 20), min(30, days - 20), key="gr_start")
-        duration = st.slider("Crisis duration", 5, max(5, days - start), min(45, days - start), 5, key="gr_duration")
+        start = st.slider(L("Crisis start day", "Ημέρα έναρξης κρίσης"), 10, max(11, days - 20), min(30, days - 20), key="gr_start")
+        duration = st.slider(L("Crisis duration", "Διάρκεια κρίσης"), 5, max(5, days - start), min(45, days - start), 5, key="gr_duration")
         inflation = st.slider(
-            "Dairy price increase (%)", 0, 80, 15, 5, key="gr_inflation",
-            help="Analyst-defined crisis price shock applied to all dairy SKUs.",
+            L("Dairy price increase (%)", "Αύξηση τιμών γαλακτοκομικών (%)"), 0, 80, 15, 5, key="gr_inflation",
+            help=L("Analyst-defined crisis price shock applied to all dairy SKUs.", "Σοκ τιμών που ορίζει ο αναλυτής και εφαρμόζεται σε όλα τα γαλακτοκομικά."),
         )
     with b:
-        st.markdown("**Cold chain and behaviour**")
+        st.markdown(L("**Cold chain and behaviour**", "**Ψυχρή αλυσίδα και συμπεριφορά**"))
         disruption = st.slider(
-            "Refrigerated-delivery interruption (days)", 0, 21, 7, key="gr_disruption",
-            help="Number of crisis days on which scheduled deliveries are blocked.",
+            L("Refrigerated-delivery interruption (days)", "Διακοπή ψυχόμενων παραδόσεων (ημέρες)"), 0, 21, 7, key="gr_disruption",
+            help=L("Number of crisis days on which scheduled deliveries are blocked.", "Αριθμός ημερών κρίσης κατά τις οποίες μπλοκάρονται οι προγραμματισμένες παραδόσεις."),
         )
-        lead = st.slider("Normal dairy lead time (days)", 1, 10, 3, key="gr_lead")
-        reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="gr_reorder") / 100
-        target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="gr_target") / 100
+        lead = st.slider(L("Normal dairy lead time (days)", "Κανονικός χρόνος παράδοσης (ημέρες)"), 1, 10, 3, key="gr_lead")
+        reorder = st.slider(L("Reorder point (% capacity)", "Σημείο επαναπαραγγελίας (% χωρητικότητας)"), 15, 60, 35, 5, key="gr_reorder") / 100
+        target = st.slider(L("Restock target (% capacity)", "Στόχος αναπλήρωσης (% χωρητικότητας)"), 65, 100, 85, 5, key="gr_target") / 100
+        exploratory = st.checkbox(
+            L("Enable exploratory scarcity behaviour", "Ενεργοποίηση διερευνητικής συμπεριφοράς έλλειψης"), key="gr_exploratory",
+            help=L("Off by default because panic and extra purchasing have not been estimated from Greek dairy data.", "Απενεργοποιημένο εξ ορισμού, επειδή ο πανικός και οι επιπλέον αγορές δεν έχουν εκτιμηθεί από ελληνικά δεδομένα γαλακτοκομικών."),
+        )
         panic = st.slider(
-            "Exploratory scarcity-response sensitivity", 0.0, 0.8, 0.20, 0.05, key="gr_panic",
-            help="Unvalidated synthetic assumption; no Greek questionnaire currently estimates it.",
+            L("Exploratory scarcity-response sensitivity", "Διερευνητική ευαισθησία στην έλλειψη"), 0.0, 0.8, 0.20, 0.05, key="gr_panic",
+            help=L("Unvalidated synthetic assumption; no Greek questionnaire currently estimates it.", "Μη επικυρωμένη συνθετική υπόθεση· δεν υπάρχει ελληνικό ερωτηματολόγιο που να την εκτιμά."), disabled=not exploratory,
         )
         hoard = st.slider(
-            "Exploratory extra-purchase factor", 1.0, 2.0, 1.15, 0.05, key="gr_hoard",
-            help="Unvalidated synthetic multiplier, active only in this optional exploratory analysis.",
+            L("Exploratory extra-purchase factor", "Διερευνητικός συντελεστής επιπλέον αγορών"), 1.0, 2.0, 1.15, 0.05, key="gr_hoard",
+            help=L("Unvalidated synthetic multiplier, active only in this optional exploratory analysis.", "Μη επικυρωμένος συνθετικός πολλαπλασιαστής, ενεργός μόνο στην προαιρετική διερεύνηση."), disabled=not exploratory,
         )
     with c:
-        st.markdown("**Dairy policy levers**")
-        rationing = st.checkbox("Per-SKU dairy quantity limit", key="gr_rationing")
-        limit = st.slider("Maximum units per dairy SKU", 1, 8, 3, key="gr_limit", disabled=not rationing)
+        st.markdown(L("**Dairy policy levers**", "**Μοχλοί πολιτικής γαλακτοκομικών**"))
+        rationing = st.checkbox(L("Per-SKU dairy quantity limit", "Όριο ποσότητας ανά κωδικό γαλακτοκομικού"), key="gr_rationing")
+        limit = st.slider(L("Maximum units per dairy SKU", "Μέγιστες μονάδες ανά κωδικό"), 1, 8, 3, key="gr_limit", disabled=not rationing)
         subsidy = st.checkbox(
-            "Essential milk and yogurt subsidy", key="gr_subsidy",
-            help="Reduces modeled prices for Milk and Yogurt only; cheese, cream and butter are unchanged.",
+            L("Essential milk and yogurt subsidy", "Επιδότηση βασικού γάλακτος και γιαουρτιού"), key="gr_subsidy",
+            help=L("Reduces modeled prices for Milk and Yogurt only; cheese, cream and butter are unchanged.", "Μειώνει τις προσομοιωμένες τιμές μόνο για γάλα και γιαούρτι."),
         )
         subsidy_rate = st.slider(
-            "Essential dairy subsidy rate (%)", 5, 40, 15, 5,
+            L("Essential dairy subsidy rate (%)", "Ποσοστό επιδότησης βασικών γαλακτοκομικών (%)"), 5, 40, 15, 5,
             key="gr_subsidy_rate", disabled=not subsidy,
         ) / 100
         comm = st.selectbox(
-            "Public scarcity communication", ["neutral", "calming", "panic"], key="gr_comm",
-            help="An exploratory behavioural scenario—not a measured communication effect.",
+            L("Public scarcity communication", "Δημόσια επικοινωνία για την έλλειψη"), ["neutral", "calming", "panic"], key="gr_comm",
+            help=L("An exploratory behavioural scenario—not a measured communication effect.", "Διερευνητικό σενάριο συμπεριφοράς, όχι μετρημένη επίδραση επικοινωνίας."), disabled=not exploratory,
+            format_func=lambda value: ({"neutral": "Ουδέτερη", "calming": "Καθησυχαστική", "panic": "Πανικού"}.get(value, value) if language == "el" else value),
         )
         intensity = (
-            st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05, key="gr_comm_intensity")
-            if comm != "neutral" else 0.0
+            st.slider(L("Communication intensity", "Ένταση επικοινωνίας"), 0.0, 1.0, 0.30, 0.05, key="gr_comm_intensity")
+            if exploratory and comm != "neutral" else 0.0
         )
 
     policy_cfg = _sf_no_policy_config(start)
@@ -5386,29 +5505,36 @@ def render_greece_dairy_page() -> None:
         "reorder": reorder, "target": target, "lead": lead,
         "cri_start": start, "cri_duration": duration,
         "inf": float(inflation), "dis": disruption,
-        "panic": panic, "hoard": hoard, "mc_runs": 1,
+        "panic": panic if exploratory else 0.0, "hoard": hoard if exploratory else 1.0, "mc_runs": 1,
         "policy_cfg": policy_cfg,
         "purchase_limit": limit if rationing else None,
         "media_intensity": intensity,
-        "communication_type": comm,
+        "communication_type": comm if exploratory else "neutral",
         "stockpile_days": None,
-        "exploratory_behaviour": True,
+        "exploratory_behaviour": exploratory,
     }
     has_policy = _sf_has_active_policy(params)
     if not has_policy:
-        st.info("Select a quantity limit, essential dairy subsidy, or non-neutral communication.")
+        st.info(L("Select a quantity limit, essential dairy subsidy, or non-neutral communication.", "Επιλέξτε όριο ποσότητας, επιδότηση βασικών γαλακτοκομικών ή μη ουδέτερη επικοινωνία."))
     if st.button(
-        "Run Greece dairy policy analysis", type="primary", key="gr_run_policy",
+        L("Run Greece dairy policy analysis", "Εκτέλεση ανάλυσης πολιτικής γαλακτοκομικών"), type="primary", key="gr_run_policy",
         disabled=not has_policy,
     ):
-        with st.spinner("Running paired synthetic policy and no-policy dairy crises..."):
+        with st.spinner(L("Running paired synthetic policy and no-policy dairy crises...", "Εκτέλεση συνθετικής κρίσης με και χωρίς πολιτική...")):
             st.session_state["gr_results_policy"] = _gr_run_simulation(config, params)
-    if st.session_state.get("gr_results_policy"):
+            st.session_state["gr_results_policy_signature"] = _sf_param_signature(params)
+    policy_result_is_current = bool(
+        st.session_state.get("gr_results_policy")
+        and st.session_state.get("gr_results_policy_signature") == _sf_param_signature(params)
+    )
+    if policy_result_is_current:
         _gr_download_row(
             st.session_state["gr_results_policy"], config, "policy",
-            "Synthetic policy analysis generated from this run",
+            "Synthetic policy analysis generated from this run", language,
         )
-        _render_gr_results(st.session_state["gr_results_policy"], "Synthetic policy-analysis results")
+        _render_gr_results(st.session_state["gr_results_policy"], L("Synthetic policy-analysis results", "Αποτελέσματα συνθετικής ανάλυσης πολιτικής"), language)
+    elif st.session_state.get("gr_results_policy"):
+        st.caption(L("Policy settings changed. Run the analysis again to refresh its report and CSV files.", "Οι ρυθμίσεις πολιτικής άλλαξαν. Εκτελέστε ξανά την ανάλυση για ανανέωση της αναφοράς και των CSV."))
 
 
 # ===========================================================================
@@ -5430,7 +5556,8 @@ def _gf_run_simulation(config: dict, params: dict) -> dict | None:
         st.session_state["config_data"] = previous
 
 
-def _render_gf_results(result: dict, title: str) -> None:
+def _render_gf_results(result: dict, title: str, language: str = "en") -> None:
+    L = lambda en, el: _case_local(language, en, el)
     df = result["df"]
     prod = result["df_prod"]
     params = result["params"]
@@ -5438,15 +5565,15 @@ def _render_gf_results(result: dict, title: str) -> None:
     st.markdown(f"### {title}")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric(
-        "Fish units purchased", f"{metrics['crisis_sales']:,.0f}",
-        f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline",
+        L("Fish units purchased", "Αγορασμένες μονάδες ψαριών"), f"{metrics['crisis_sales']:,.0f}",
+        L(f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline", f"{metrics['sales_change_pct']:+.1f}% έναντι βάσης χωρίς κρίση"),
     )
-    k2.metric("Unmet fish demand", f"{metrics['crisis_unmet']:,.0f} units")
+    k2.metric(L("Unmet fish demand", "Μη ικανοποιημένη ζήτηση ψαριών"), L(f"{metrics['crisis_unmet']:,.0f} units", f"{metrics['crisis_unmet']:,.0f} μονάδες"))
     k3.metric(
-        "Fish waste", f"{metrics['crisis_waste']:,.0f} units",
-        f"{metrics['waste_change']:+,.0f} vs baseline",
+        L("Fish waste", "Απόβλητα ψαριών"), L(f"{metrics['crisis_waste']:,.0f} units", f"{metrics['crisis_waste']:,.0f} μονάδες"),
+        L(f"{metrics['waste_change']:+,.0f} vs baseline", f"{metrics['waste_change']:+,.0f} έναντι βάσης"),
     )
-    k4.metric("Requested-basket fulfilment", f"{metrics['crisis_fulfillment']:.1%}")
+    k4.metric(L("Requested-basket fulfilment", "Ικανοποίηση ζητούμενου καλαθιού"), f"{metrics['crisis_fulfillment']:.1%}")
 
     scenarios = ["Baseline", "Crisis"]
     if "Crisis (No Policy)" in set(df["Scenario"]):
@@ -5458,25 +5585,25 @@ def _render_gf_results(result: dict, title: str) -> None:
     }
     fig_sales = px.line(
         view, x="Day", y="Sales", color="Scenario",
-        title="Daily fish purchases — paired scenario comparison",
-        labels={"Sales": "Fish units purchased"}, color_discrete_map=colours,
+        title=L("Daily fish purchases — paired scenario comparison", "Ημερήσιες αγορές ψαριών — σύγκριση σεναρίων"),
+        labels={"Sales": L("Fish units purchased", "Αγορασμένες μονάδες ψαριών")}, color_discrete_map=colours,
     )
     _sf_crisis_band(
         fig_sales, params["cri_start"],
         params["cri_start"] + params["cri_duration"], params["days"],
     )
     st.plotly_chart(fig_sales, use_container_width=True)
-    st.caption(
-        "Baseline and crisis runs use the same synthetic households and paired seed. The gap "
-        "therefore reflects the configured price and delivery shock, not a different population."
-    )
+    st.caption(L(
+        "Baseline and crisis runs use the same synthetic households and paired seed. The gap therefore reflects the configured price and delivery shock, not a different population.",
+        "Η βάση και η κρίση χρησιμοποιούν τα ίδια συνθετικά νοικοκυριά και τον ίδιο σπόρο. Η διαφορά αντανακλά το καθορισμένο σοκ τιμών και παραδόσεων, όχι διαφορετικό πληθυσμό."
+    ))
 
     c1, c2 = st.columns(2)
     with c1:
         fig_access = px.line(
             view, x="Day", y="UnmetDemandUnits", color="Scenario",
-            title="Unmet fish demand",
-            labels={"UnmetDemandUnits": "Requested minus purchased units"},
+            title=L("Unmet fish demand", "Μη ικανοποιημένη ζήτηση ψαριών"),
+            labels={"UnmetDemandUnits": L("Requested minus purchased units", "Ζητούμενες μείον αγορασμένες μονάδες")},
             color_discrete_map=colours,
         )
         _sf_crisis_band(
@@ -5487,8 +5614,8 @@ def _render_gf_results(result: dict, title: str) -> None:
     with c2:
         fig_waste = px.line(
             view, x="Day", y="Waste", color="Scenario",
-            title="Fish waste from shelf-life expiry",
-            labels={"Waste": "Expired units"}, color_discrete_map=colours,
+            title=L("Fish waste from shelf-life expiry", "Απόβλητα ψαριών λόγω λήξης"),
+            labels={"Waste": L("Expired units", "Ληγμένες μονάδες")}, color_discrete_map=colours,
         )
         _sf_crisis_band(
             fig_waste, params["cri_start"],
@@ -5503,30 +5630,25 @@ def _render_gf_results(result: dict, title: str) -> None:
         )
         fig_stock = px.line(
             shelf, x="Day", y="Shelf", color="Category", line_dash="Scenario",
-            title="Shelf stock by fish product group",
-            labels={"Shelf": "Units on shelf"},
+            title=L("Shelf stock by fish product group", "Απόθεμα ραφιού ανά ομάδα προϊόντων ψαριού"),
+            labels={"Shelf": L("Units on shelf", "Μονάδες στο ράφι")},
         )
         _sf_crisis_band(
             fig_stock, params["cri_start"],
             params["cri_start"] + params["cri_duration"], params["days"],
         )
         st.plotly_chart(fig_stock, use_container_width=True)
-        st.caption(
-            "Fresh fish uses short synthetic shelf lives, whereas frozen and canned fish act as "
-            "longer-life alternatives. Substitution remains within the same product group because "
-            "cross-group Greek choice behaviour has not been observed."
-        )
+        st.caption(L(
+            "Fresh fish uses short synthetic shelf lives, whereas frozen and canned fish act as longer-life alternatives. Substitution remains within the same product group because cross-group Greek choice behaviour has not been observed.",
+            "Τα φρέσκα ψάρια έχουν μικρή συνθετική διάρκεια ζωής, ενώ τα κατεψυγμένα και κονσερβοποιημένα αποτελούν επιλογές μεγαλύτερης διάρκειας. Η υποκατάσταση παραμένει εντός ομάδας επειδή δεν έχει παρατηρηθεί ελληνική συμπεριφορά επιλογής μεταξύ ομάδων."
+        ))
 
     if "policy_unmet_change" in metrics:
-        direction = "reduced" if metrics["policy_unmet_change"] < 0 else "increased"
-        st.info(
-            f"Against the paired synthetic crisis without policy, the intervention {direction} "
-            f"unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, changed purchases "
-            f"by **{metrics['policy_sales_change']:+,.0f} units**, changed fulfilment by "
-            f"**{metrics['policy_fulfillment_change']:+.1%}**, and changed waste by "
-            f"**{metrics['policy_waste_change']:+,.0f} units**. These are synthetic scenario "
-            "differences, not estimated Greek fisheries-policy effects."
-        )
+        direction = L("reduced", "μείωσε") if metrics["policy_unmet_change"] < 0 else L("increased", "αύξησε")
+        st.info(L(
+            f"Against the paired synthetic crisis without policy, the intervention {direction} unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, changed purchases by **{metrics['policy_sales_change']:+,.0f} units**, changed fulfilment by **{metrics['policy_fulfillment_change']:+.1%}**, and changed waste by **{metrics['policy_waste_change']:+,.0f} units**. These are synthetic scenario differences, not estimated Greek fisheries-policy effects.",
+            f"Σε σχέση με την ίδια συνθετική κρίση χωρίς πολιτική, η παρέμβαση {direction} τη μη ικανοποιημένη ζήτηση κατά **{abs(metrics['policy_unmet_change']):,.0f} μονάδες**, άλλαξε τις αγορές κατά **{metrics['policy_sales_change']:+,.0f} μονάδες**, την ικανοποίηση κατά **{metrics['policy_fulfillment_change']:+.1%}** και τα απόβλητα κατά **{metrics['policy_waste_change']:+,.0f} μονάδες**. Πρόκειται για συνθετικές διαφορές, όχι εκτιμημένες επιδράσεις πολιτικής."
+        ))
 
 
 def _gf_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
@@ -5613,21 +5735,22 @@ def _gf_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
     return bytes(pdf.output())
 
 
-def _gf_download_row(result: dict, config: dict, key: str, report_label: str) -> None:
+def _gf_download_row(result: dict, config: dict, key: str, report_label: str, language: str = "en") -> None:
+    L = lambda en, el: _case_local(language, en, el)
     report = _gf_report_bytes(result, config, report_label)
     c1, c2, c3 = st.columns(3)
     c1.download_button(
-        "Download PDF report", report,
+        L("Download PDF report", "Λήψη αναφοράς PDF"), report,
         file_name=f"GROCERYsim_Greece_Fish_{key}.pdf",
         mime="application/pdf", key=f"gf_{key}_pdf", use_container_width=True,
     )
     c2.download_button(
-        "Download daily results (CSV)", result["df"].to_csv(index=False).encode("utf-8"),
+        L("Download daily results (CSV)", "Λήψη ημερήσιων αποτελεσμάτων (CSV)"), result["df"].to_csv(index=False).encode("utf-8"),
         file_name=f"GROCERYsim_Greece_Fish_{key}_daily.csv",
         mime="text/csv", key=f"gf_{key}_daily", use_container_width=True,
     )
     c3.download_button(
-        "Download product results (CSV)", result["df_prod"].to_csv(index=False).encode("utf-8"),
+        L("Download product results (CSV)", "Λήψη αποτελεσμάτων προϊόντων (CSV)"), result["df_prod"].to_csv(index=False).encode("utf-8"),
         file_name=f"GROCERYsim_Greece_Fish_{key}_products.csv",
         mime="text/csv", key=f"gf_{key}_products", use_container_width=True,
     )
@@ -5639,67 +5762,99 @@ def render_greece_fish_page() -> None:
         section[data-testid="stSidebar"], header[data-testid="stHeader"],
         #MainMenu, footer { display:none !important; }
     </style>""", unsafe_allow_html=True)
-    back, heading = st.columns([1, 8])
+    back, heading, language_col = st.columns([1, 6, 2])
+    with language_col:
+        language = st.radio(
+            "Language", ["en", "el"], key="gf_lang", horizontal=True,
+            format_func=lambda value: "English" if value == "en" else "Ελληνικά",
+            label_visibility="collapsed",
+        )
+    L = lambda en, el: _case_local(language, en, el)
     with back:
-        if st.button("Back to case studies", key="gf_back"):
+        if st.button(L("Back to case studies", "Πίσω στις μελέτες"), key="gf_back"):
             if "case" in st.query_params:
                 del st.query_params["case"]
             st.session_state["page"] = "case_studies"
             st.rerun()
     with heading:
-        st.markdown("## Greece — Fish Supply Chain")
-        st.caption("SecureFood Scenario Simulator · synthetic local-development prototype")
+        st.markdown(L("## Greece — Fish Supply Chain", "## Ελλάδα — Αλυσίδα εφοδιασμού ψαριών"))
+        st.caption(L("SecureFood Scenario Simulator · synthetic local-development prototype", "Προσομοιωτής σεναρίων SecureFood · συνθετικό πρωτότυπο τοπικής ανάπτυξης"))
 
-    st.error(
-        "**Synthetic model — no Greek fish case-study data are currently available.** The "
-        "catalogue, households, baskets, budgets, shelf lives, price responses and substitution "
-        "propensities are declared demonstration assumptions. Outputs test the ABM workflow; "
-        "they are not empirical results, forecasts, or evidence about Greek consumers, fisheries, "
-        "aquaculture, retailers, or policies."
-    )
+    st.error(L(
+        "**Synthetic model — no Greek fish case-study data are currently available.** The catalogue, households, baskets, budgets, shelf lives, price responses and substitution propensities are declared demonstration assumptions. Outputs test the ABM workflow; they are not empirical results, forecasts, or evidence about Greek consumers, fisheries, aquaculture, retailers, or policies.",
+        "**Συνθετικό μοντέλο — δεν υπάρχουν ακόμη δεδομένα από ελληνική μελέτη ψαριών.** Ο κατάλογος, τα νοικοκυριά, τα καλάθια, οι προϋπολογισμοί, οι διάρκειες ζωής, οι αποκρίσεις στις τιμές και η υποκατάσταση αποτελούν υποθέσεις επίδειξης. Τα αποτελέσματα ελέγχουν τη λειτουργία του ABM· δεν είναι εμπειρικά ευρήματα ή προβλέψεις για καταναλωτές, αλιεία, υδατοκαλλιέργεια, λιανεμπόριο ή πολιτικές στην Ελλάδα."
+    ))
     if st.session_state.get("gf_config") is None:
         st.session_state["gf_config"] = _gf_build_config()
     config = st.session_state["gf_config"]
     stats = config["stats"]
 
     s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Empirical participants", "0")
-    s2.metric("Synthetic household templates", stats["n_synthetic_templates"])
-    s3.metric("Simulated household pool", f"{stats['pool_size']:,}")
-    s4.metric("Illustrative fish SKUs", stats["catalogue_skus"])
-    st.caption(
-        "The 240 templates are reproducible artificial household records resampled into 1,200 "
-        "persistent simulated households. There is **no Greek fish Discrete Choice Experiment** "
-        "in this version."
-    )
+    s1.metric(L("Empirical participants", "Εμπειρικοί συμμετέχοντες"), "0")
+    s2.metric(L("Synthetic household templates", "Συνθετικά πρότυπα νοικοκυριών"), stats["n_synthetic_templates"])
+    s3.metric(L("Simulated household pool", "Πληθυσμός προσομοιωμένων νοικοκυριών"), f"{stats['pool_size']:,}")
+    s4.metric(L("Illustrative fish SKUs", "Ενδεικτικοί κωδικοί ψαριών"), stats["catalogue_skus"])
+    st.caption(L(
+        "The 240 templates are reproducible artificial household records resampled into 1,200 persistent simulated households. There is **no Greek fish Discrete Choice Experiment** in this version.",
+        "Τα 240 πρότυπα είναι αναπαραγώγιμες τεχνητές εγγραφές που επαναδειγματοληπτούνται σε 1.200 σταθερά προσομοιωμένα νοικοκυριά. **Δεν υπάρχει ελληνικό Πείραμα Διακριτής Επιλογής για ψάρια** σε αυτή την έκδοση."
+    ))
 
-    with st.expander("View synthetic-data assumptions and fish catalogue", expanded=False):
+    with st.expander(L("View synthetic-data assumptions and fish catalogue", "Προβολή συνθετικών υποθέσεων και καταλόγου ψαριών"), expanded=False):
         assumptions = stats["synthetic_assumptions"]
-        st.markdown(
-            f"- **Prices:** {assumptions['catalogue_prices']}\n"
-            f"- **Baskets:** {assumptions['basket_construction']}\n"
-            f"- **Price response:** {assumptions['price_sensitivity']}\n"
-            f"- **Substitution:** {assumptions['substitution']}\n"
-            f"- **Shelf lives:** {assumptions['shelf_life']}\n"
-            f"- **Default behaviour:** {assumptions['panic_and_hoarding']}"
-        )
+        if language == "el":
+            st.markdown(
+                "- **Τιμές:** συνθετικές ενδεικτικές τιμές λιανικής, όχι παρατηρημένες ελληνικές τιμές.\n"
+                "- **Καλάθια:** αναπαραγώγιμα τεχνητά καλάθια νοικοκυριών για έλεγχο του λογισμικού.\n"
+                "- **Απόκριση στις τιμές:** μη επικυρωμένη συνθετική παραμετροποίηση.\n"
+                "- **Υποκατάσταση:** επιτρέπεται μόνο εντός της ίδιας ομάδας προϊόντων ψαριού.\n"
+                "- **Διάρκεια ζωής:** συνθετική και διαφορετική για φρέσκα, κατεψυγμένα και κονσερβοποιημένα προϊόντα.\n"
+                "- **Βασική συμπεριφορά:** χωρίς πανικό ή επιπλέον αγορές."
+            )
+        else:
+            st.markdown(
+                f"- **Prices:** {assumptions['catalogue_prices']}\n"
+                f"- **Baskets:** {assumptions['basket_construction']}\n"
+                f"- **Price response:** {assumptions['price_sensitivity']}\n"
+                f"- **Substitution:** {assumptions['substitution']}\n"
+                f"- **Shelf lives:** {assumptions['shelf_life']}\n"
+                f"- **Default behaviour:** {assumptions['panic_and_hoarding']}"
+            )
         catalogue = pd.DataFrame(config["products"])[
             ["name", "category", "price", "origin", "shelf_life_days"]
-        ].rename(columns={
-            "name": "Product", "category": "Group", "price": "Synthetic price (EUR)",
-            "origin": "Synthetic origin", "shelf_life_days": "Shelf life (days)",
+        ]
+        if language == "el":
+            fish_groups = {"Fresh farmed fish": "Φρέσκα ψάρια υδατοκαλλιέργειας", "Small pelagic fish": "Μικρά πελαγικά ψάρια", "Frozen fish": "Κατεψυγμένα ψάρια", "Canned fish": "Κονσερβοποιημένα ψάρια"}
+            origins = {"Greece": "Ελλάδα", "Imported": "Εισαγόμενο"}
+            fish_names = {
+                "Greek farmed sea bream — 500 g": "Ελληνική τσιπούρα υδατοκαλλιέργειας — 500 g",
+                "Greek farmed sea bass — 500 g": "Ελληνικό λαβράκι υδατοκαλλιέργειας — 500 g",
+                "Greek freshwater trout — 500 g": "Ελληνική πέστροφα γλυκού νερού — 500 g",
+                "Fresh sardines — 500 g": "Φρέσκες σαρδέλες — 500 g",
+                "Fresh anchovies — 500 g": "Φρέσκος γαύρος — 500 g",
+                "Fresh mackerel — 500 g": "Φρέσκο σκουμπρί — 500 g",
+                "Frozen hake fillets — 500 g": "Κατεψυγμένα φιλέτα μπακαλιάρου — 500 g",
+                "Frozen cod fillets — 500 g": "Κατεψυγμένα φιλέτα βακαλάου — 500 g",
+                "Frozen salmon portions — 400 g": "Κατεψυγμένες μερίδες σολομού — 400 g",
+                "Canned tuna in water — 160 g": "Τόνος σε νερό κονσέρβα — 160 g",
+                "Canned sardines in olive oil — 120 g": "Σαρδέλες σε ελαιόλαδο κονσέρβα — 120 g",
+                "Canned mackerel — 160 g": "Σκουμπρί κονσέρβα — 160 g",
+            }
+            catalogue["name"] = catalogue["name"].map(fish_names).fillna(catalogue["name"])
+            catalogue["category"] = catalogue["category"].map(fish_groups).fillna(catalogue["category"])
+            catalogue["origin"] = catalogue["origin"].map(origins).fillna(catalogue["origin"])
+        catalogue = catalogue.rename(columns={
+            "name": L("Product", "Προϊόν"), "category": L("Group", "Ομάδα"),
+            "price": L("Synthetic price (EUR)", "Συνθετική τιμή (EUR)"),
+            "origin": L("Synthetic origin", "Συνθετική προέλευση"),
+            "shelf_life_days": L("Shelf life (days)", "Διάρκεια ζωής (ημέρες)"),
         })
         st.dataframe(catalogue, hide_index=True, use_container_width=True)
 
-    st.markdown("### Scenario: marine disruption and fish cold-chain interruption")
-    st.markdown(
-        "A severe marine-heat and storm sequence disrupts landings, aquaculture output and "
-        "temperature-controlled deliveries to a Greek supermarket. Fish prices rise and "
-        "replenishment is delayed. Fresh farmed fish and small pelagic fish are highly "
-        "perishable, while frozen and canned products provide longer-life inventory. With no "
-        "Greek behavioural observations, the default uses synthetic routine baskets without "
-        "panic or extra purchasing."
-    )
+    st.markdown(L("### Scenario: marine disruption and fish cold-chain interruption", "### Σενάριο: θαλάσσια διαταραχή και διακοπή ψυχρής αλυσίδας ψαριών"))
+    st.markdown(L(
+        "A severe marine-heat and storm sequence disrupts landings, aquaculture output and temperature-controlled deliveries to a Greek supermarket. Fish prices rise and replenishment is delayed. Fresh farmed fish and small pelagic fish are highly perishable, while frozen and canned products provide longer-life inventory. With no Greek behavioural observations, the default uses synthetic routine baskets without panic or extra purchasing.",
+        "Μια ακολουθία θαλάσσιου καύσωνα και καταιγίδων διαταράσσει τις εκφορτώσεις, την παραγωγή υδατοκαλλιέργειας και τις ελεγχόμενης θερμοκρασίας παραδόσεις. Οι τιμές αυξάνονται και ο ανεφοδιασμός καθυστερεί. Τα φρέσκα και μικρά πελαγικά ψάρια είναι ιδιαίτερα ευπαθή, ενώ τα κατεψυγμένα και κονσερβοποιημένα διατηρούνται περισσότερο. Χωρίς ελληνικές παρατηρήσεις συμπεριφοράς, το βασικό σενά δεν περιλαμβάνει πανικό ή επιπλέον αγορές."
+    ))
 
     default_params = {
         "days": 120, "month": 7, "base_con": 200,
@@ -5710,90 +5865,89 @@ def render_greece_fish_page() -> None:
         "media_intensity": 0.0, "communication_type": "neutral",
         "stockpile_days": None, "exploratory_behaviour": False,
     }
-    st.markdown("### 1. Run the synthetic no-policy preset")
-    with st.expander("View preset parameters", expanded=False):
-        st.markdown(
-            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% synthetic fish-"
-            "price increase; 7-day cold-chain delivery interruption; 3-day normal lead time; "
-            "35% reorder point; 85% restock target; no panic or hoarding; no policy; paired seed "
-            "42. Every behavioural and fisheries value is an explicit synthetic assumption."
-        )
-    if st.button("Run Greece fish synthetic preset", type="primary", key="gf_run_default"):
-        with st.spinner("Running paired synthetic baseline and fish-crisis simulations..."):
+    st.markdown(L("### 1. Run the synthetic no-policy preset", "### 1. Εκτέλεση συνθετικού προεπιλεγμένου σεναρίου χωρίς πολιτική"))
+    with st.expander(L("View preset parameters", "Προβολή προεπιλεγμένων παραμέτρων"), expanded=False):
+        st.markdown(L(
+            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 20% synthetic fish-price increase; 7-day cold-chain delivery interruption; 3-day normal lead time; 35% reorder point; 85% restock target; no panic or hoarding; no policy; paired seed 42. Every behavioural and fisheries value is an explicit synthetic assumption.",
+            "120 ημέρες· 200 επισκέψεις αγορών/ημέρα· κρίση από την Ημέρα 30 για 45 ημέρες· συνθετική αύξηση τιμών ψαριών 20%· διακοπή ψυχρής αλυσίδας 7 ημερών· χρόνος παράδοσης 3 ημερών· σημείο επαναπαραγγελίας 35%· στόχος αναπλήρωσης 85%· χωρίς πανικό, αποθεματοποίηση ή πολιτική· κοινός σπόρος 42. Κάθε συμπεριφορική και αλιευτική τιμή είναι ρητή συνθετική υπόθεση."
+        ))
+    if st.button(L("Run Greece fish synthetic preset", "Εκτέλεση συνθετικού σεναρίου ψαριών"), type="primary", key="gf_run_default"):
+        with st.spinner(L("Running paired synthetic baseline and fish-crisis simulations...", "Εκτέλεση συνθετικής βάσης και κρίσης ψαριών...")):
             st.session_state["gf_results_default"] = _gf_run_simulation(config, default_params)
     if st.session_state.get("gf_results_default"):
         _gf_download_row(
             st.session_state["gf_results_default"], config, "default",
-            "Synthetic no-policy preset generated from this run",
+            "Synthetic no-policy preset generated from this run", language,
         )
-        _render_gf_results(st.session_state["gf_results_default"], "Synthetic no-policy results")
+        _render_gf_results(st.session_state["gf_results_default"], L("Synthetic no-policy results", "Συνθετικά αποτελέσματα χωρίς πολιτική"), language)
 
     st.divider()
-    st.markdown("### 2. Optional synthetic policy analysis")
+    st.markdown(L("### 2. Optional synthetic policy analysis", "### 2. Προαιρετική συνθετική ανάλυση πολιτικής"))
     enabled = st.checkbox(
-        "Enable additional Greece fish policy analysis", key="gf_policy_enabled",
-        help="Policy controls are hidden and excluded until enabled.",
+        L("Enable additional Greece fish policy analysis", "Ενεργοποίηση πρόσθετης ανάλυσης πολιτικής ψαριών"), key="gf_policy_enabled",
+        help=L("Policy controls are hidden and excluded until enabled.", "Οι ρυθμίσεις πολιτικής παραμένουν κρυφές και ανενεργές έως την ενεργοποίηση."),
     )
     if not enabled:
-        st.caption("Enable this section to reveal scenario and fish-policy controls.")
+        st.caption(L("Enable this section to reveal scenario and fish-policy controls.", "Ενεργοποιήστε την ενότητα για να εμφανιστούν οι ρυθμίσεις σεναρίου και πολιτικής ψαριών."))
         return
 
     a, b, c = st.columns(3)
     with a:
-        st.markdown("**Crisis and demand**")
-        days = st.slider("Simulation days", 60, 240, 120, 10, key="gf_days")
+        st.markdown(L("**Crisis and demand**", "**Κρίση και ζήτηση**"))
+        days = st.slider(L("Simulation days", "Ημέρες προσομοίωσης"), 60, 240, 120, 10, key="gf_days")
         consumers = st.number_input(
-            "Shopping visits per day", 50, 1000, 200, 50, key="gf_consumers",
-            help="Synthetic store traffic; it is not measured Greek footfall.",
+            L("Shopping visits per day", "Επισκέψεις αγορών ανά ημέρα"), 50, 1000, 200, 50, key="gf_consumers",
+            help=L("Synthetic store traffic; it is not measured Greek footfall.", "Συνθετική επισκεψιμότητα· δεν αποτελεί μετρημένη ελληνική τιμή."),
         )
-        start = st.slider("Crisis start day", 10, max(11, days - 20), min(30, days - 20), key="gf_start")
-        duration = st.slider("Crisis duration", 5, max(5, days - start), min(45, days - start), 5, key="gf_duration")
+        start = st.slider(L("Crisis start day", "Ημέρα έναρξης κρίσης"), 10, max(11, days - 20), min(30, days - 20), key="gf_start")
+        duration = st.slider(L("Crisis duration", "Διάρκεια κρίσης"), 5, max(5, days - start), min(45, days - start), 5, key="gf_duration")
         inflation = st.slider(
-            "Fish price increase (%)", 0, 80, 20, 5, key="gf_inflation",
-            help="Analyst-defined crisis price shock applied to every fish SKU.",
+            L("Fish price increase (%)", "Αύξηση τιμών ψαριών (%)"), 0, 80, 20, 5, key="gf_inflation",
+            help=L("Analyst-defined crisis price shock applied to every fish SKU.", "Σοκ τιμών που ορίζει ο αναλυτής και εφαρμόζεται σε όλους τους κωδικούς ψαριών."),
         )
     with b:
-        st.markdown("**Cold chain and behaviour**")
+        st.markdown(L("**Cold chain and behaviour**", "**Ψυχρή αλυσίδα και συμπεριφορά**"))
         disruption = st.slider(
-            "Fish delivery interruption (days)", 0, 21, 7, key="gf_disruption",
-            help="Number of crisis days on which scheduled fish deliveries are blocked.",
+            L("Fish delivery interruption (days)", "Διακοπή παραδόσεων ψαριών (ημέρες)"), 0, 21, 7, key="gf_disruption",
+            help=L("Number of crisis days on which scheduled fish deliveries are blocked.", "Αριθμός ημερών κρίσης κατά τις οποίες μπλοκάρονται οι παραδόσεις ψαριών."),
         )
-        lead = st.slider("Normal fish lead time (days)", 1, 10, 3, key="gf_lead")
-        reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="gf_reorder") / 100
-        target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="gf_target") / 100
+        lead = st.slider(L("Normal fish lead time (days)", "Κανονικός χρόνος παράδοσης ψαριών (ημέρες)"), 1, 10, 3, key="gf_lead")
+        reorder = st.slider(L("Reorder point (% capacity)", "Σημείο επαναπαραγγελίας (% χωρητικότητας)"), 15, 60, 35, 5, key="gf_reorder") / 100
+        target = st.slider(L("Restock target (% capacity)", "Στόχος αναπλήρωσης (% χωρητικότητας)"), 65, 100, 85, 5, key="gf_target") / 100
         exploratory = st.checkbox(
-            "Enable exploratory scarcity behaviour", key="gf_exploratory",
-            help="Off by default because panic and extra purchasing have not been estimated from Greek fish data.",
+            L("Enable exploratory scarcity behaviour", "Ενεργοποίηση διερευνητικής συμπεριφοράς έλλειψης"), key="gf_exploratory",
+            help=L("Off by default because panic and extra purchasing have not been estimated from Greek fish data.", "Απενεργοποιημένο εξ ορισμού, επειδή ο πανικός και οι επιπλέον αγορές δεν έχουν εκτιμηθεί από ελληνικά δεδομένα ψαριών."),
         )
         panic = st.slider(
-            "Exploratory scarcity-response sensitivity", 0.0, 0.8, 0.20, 0.05, key="gf_panic",
-            help="Unvalidated synthetic assumption; no Greek fish questionnaire estimates it.",
+            L("Exploratory scarcity-response sensitivity", "Διερευνητική ευαισθησία στην έλλειψη"), 0.0, 0.8, 0.20, 0.05, key="gf_panic",
+            help=L("Unvalidated synthetic assumption; no Greek fish questionnaire estimates it.", "Μη επικυρωμένη συνθετική υπόθεση· δεν υπάρχει ελληνικό ερωτηματολόγιο ψαριών που να την εκτιμά."),
             disabled=not exploratory,
         )
         hoard = st.slider(
-            "Exploratory extra-purchase factor", 1.0, 1.6, 1.10, 0.05, key="gf_hoard",
-            help="Kept low because fresh fish is highly perishable; this multiplier is not estimated.",
+            L("Exploratory extra-purchase factor", "Διερευνητικός συντελεστής επιπλέον αγορών"), 1.0, 1.6, 1.10, 0.05, key="gf_hoard",
+            help=L("Kept low because fresh fish is highly perishable; this multiplier is not estimated.", "Διατηρείται χαμηλός επειδή τα φρέσκα ψάρια είναι πολύ ευπαθή· δεν αποτελεί εκτιμημένη τιμή."),
             disabled=not exploratory,
         )
     with c:
-        st.markdown("**Fish policy levers**")
-        rationing = st.checkbox("Per-SKU fish quantity limit", key="gf_rationing")
-        limit = st.slider("Maximum units per fish SKU", 1, 8, 3, key="gf_limit", disabled=not rationing)
+        st.markdown(L("**Fish policy levers**", "**Μοχλοί πολιτικής ψαριών**"))
+        rationing = st.checkbox(L("Per-SKU fish quantity limit", "Όριο ποσότητας ανά κωδικό ψαριού"), key="gf_rationing")
+        limit = st.slider(L("Maximum units per fish SKU", "Μέγιστες μονάδες ανά κωδικό ψαριού"), 1, 8, 3, key="gf_limit", disabled=not rationing)
         subsidy = st.checkbox(
-            "Affordable fish-protein subsidy", key="gf_subsidy",
-            help="Reduces modeled prices only for small pelagic and canned fish, not premium fresh or frozen products.",
+            L("Affordable fish-protein subsidy", "Επιδότηση προσιτής πρωτεΐνης ψαριού"), key="gf_subsidy",
+            help=L("Reduces modeled prices only for small pelagic and canned fish, not premium fresh or frozen products.", "Μειώνει τις τιμές μόνο για μικρά πελαγικά και κονσερβοποιημένα ψάρια."),
         )
         subsidy_rate = st.slider(
-            "Affordable fish subsidy rate (%)", 5, 40, 15, 5,
+            L("Affordable fish subsidy rate (%)", "Ποσοστό επιδότησης προσιτών ψαριών (%)"), 5, 40, 15, 5,
             key="gf_subsidy_rate", disabled=not subsidy,
         ) / 100
         comm = st.selectbox(
-            "Public scarcity communication", ["neutral", "calming", "panic"], key="gf_comm",
-            help="Exploratory behavioural scenario; it is not a measured communication effect.",
+            L("Public scarcity communication", "Δημόσια επικοινωνία για την έλλειψη"), ["neutral", "calming", "panic"], key="gf_comm",
+            help=L("Exploratory behavioural scenario; it is not a measured communication effect.", "Διερευνητικό σενάριο συμπεριφοράς, όχι μετρημένη επίδραση επικοινωνίας."),
             disabled=not exploratory,
+            format_func=lambda value: ({"neutral": "Ουδέτερη", "calming": "Καθησυχαστική", "panic": "Πανικού"}.get(value, value) if language == "el" else value),
         )
         intensity = (
-            st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05, key="gf_comm_intensity")
+            st.slider(L("Communication intensity", "Ένταση επικοινωνίας"), 0.0, 1.0, 0.30, 0.05, key="gf_comm_intensity")
             if exploratory and comm != "neutral" else 0.0
         )
 
@@ -5820,12 +5974,12 @@ def render_greece_fish_page() -> None:
     }
     has_policy = _sf_has_active_policy(params)
     if not has_policy:
-        st.info("Select a quantity limit, affordable fish subsidy, or non-neutral communication.")
+        st.info(L("Select a quantity limit, affordable fish subsidy, or non-neutral communication.", "Επιλέξτε όριο ποσότητας, επιδότηση προσιτών ψαριών ή μη ουδέτερη επικοινωνία."))
     if st.button(
-        "Run Greece fish policy analysis", type="primary", key="gf_run_policy",
+        L("Run Greece fish policy analysis", "Εκτέλεση ανάλυσης πολιτικής ψαριών"), type="primary", key="gf_run_policy",
         disabled=not has_policy,
     ):
-        with st.spinner("Running paired synthetic policy and no-policy fish crises..."):
+        with st.spinner(L("Running paired synthetic policy and no-policy fish crises...", "Εκτέλεση συνθετικής κρίσης ψαριών με και χωρίς πολιτική...")):
             st.session_state["gf_results_policy"] = _gf_run_simulation(config, params)
             st.session_state["gf_results_policy_signature"] = _sf_param_signature(params)
     policy_result_is_current = bool(
@@ -5835,11 +5989,11 @@ def render_greece_fish_page() -> None:
     if policy_result_is_current:
         _gf_download_row(
             st.session_state["gf_results_policy"], config, "policy",
-            "Synthetic policy analysis generated from this run",
+            "Synthetic policy analysis generated from this run", language,
         )
-        _render_gf_results(st.session_state["gf_results_policy"], "Synthetic policy-analysis results")
+        _render_gf_results(st.session_state["gf_results_policy"], L("Synthetic policy-analysis results", "Αποτελέσματα συνθετικής ανάλυσης πολιτικής"), language)
     elif st.session_state.get("gf_results_policy"):
-        st.caption("Policy settings changed. Run the analysis again to refresh its report and CSV files.")
+        st.caption(L("Policy settings changed. Run the analysis again to refresh its report and CSV files.", "Οι ρυθμίσεις πολιτικής άλλαξαν. Εκτελέστε ξανά την ανάλυση για ανανέωση της αναφοράς και των CSV."))
 
 
 # ===========================================================================
@@ -5861,15 +6015,19 @@ defaults = {
     "pt_config": None,
     "pt_results_default": None,
     "pt_results_policy": None,
+    "pt_lang": "en",
     # Greece dairy synthetic local-development case study
     "gr_config": None,
     "gr_results_default": None,
     "gr_results_policy": None,
+    "gr_results_policy_signature": None,
+    "gr_lang": "en",
     # Greece fish synthetic local-development case study
     "gf_config": None,
     "gf_results_default": None,
     "gf_results_policy": None,
     "gf_results_policy_signature": None,
+    "gf_lang": "en",
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
