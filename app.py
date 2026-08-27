@@ -24,6 +24,7 @@ Deployment (online access)
 import base64
 import csv
 import copy
+import functools
 import io
 import json
 import math
@@ -90,6 +91,7 @@ _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # scientific model change can alter report outputs.
 SF_REPORT_MODEL_REVISION = "inventory-age-cohorts-v3-uncached"
 
+@functools.lru_cache(maxsize=24)
 def _logo_uri(filename: str) -> str:
     """Read a file from static/ and return a base64 data URI, or '' if missing."""
     path = os.path.join(_STATIC_DIR, filename)
@@ -1763,11 +1765,11 @@ def render_landing_page():
     """, unsafe_allow_html=True)
 
     _lu = {
-        "header":   _logo_uri("GROCERYsim.png"),
-        "hero0":    _logo_uri("EU.png"),
+        "header":   _logo_uri("GROCERYsim_web.png"),
+        "hero0":    _logo_uri("EU_web.png"),
         "hero1":    _logo_uri("SecureFood.png"),
-        "hero2":    _logo_uri("IAMO.png"),
-        "hero3":    _logo_uri("Logo_lab.png"),
+        "hero2":    _logo_uri("IAMO_web.png"),
+        "hero3":    _logo_uri("Logo_lab_web.png"),
     }
     _pdf_uri = _logo_uri("GROCERYsim_User_Manual.pdf")  # reuses same base64 helper
 
@@ -1791,8 +1793,8 @@ def render_landing_page():
     }};
     var PDF_URI = "{_pdf_uri}";
   </script>
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
   <script type="text/babel">
     {_GROCERY_SIM_JSX}
@@ -1890,9 +1892,9 @@ def render_case_studies_page():
 </head>
 <body>
   <div id="root"></div>
-  <script>var INITIAL_LANG = 'en'; var CS_HEADER_URI = "{_logo_uri('GROCERYsim.png')}";</script>
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script>var INITIAL_LANG = 'en'; var CS_HEADER_URI = "{_logo_uri('GROCERYsim_web.png')}";</script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
   <script type="text/babel">
     {_CASE_STUDIES_JSX}
