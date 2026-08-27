@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -10,9 +11,8 @@ from portugal_fruits import (
 )
 
 
-EXPORT = Path(
-    "/Users/itiamo/Downloads/grocerysim-portugal-light-default-rtdb-users-export.json"
-)
+EXPORT = Path(os.environ["PORTUGAL_FRUITS_RAW_EXPORT"]) if os.environ.get("PORTUGAL_FRUITS_RAW_EXPORT") else None
+BUNDLED_CONFIG = Path(__file__).parents[1] / "data" / "portugal_fruits_preliminary_config.json"
 
 
 def test_carrot_material_is_detected_recursively():
@@ -25,10 +25,25 @@ def test_carrot_material_is_detected_recursively():
 
 @pytest.fixture(scope="module")
 def portugal_config():
-    if not EXPORT.exists():
-        pytest.skip("Local preliminary Portugal export is not attached")
-    return build_portugal_fruit_config(
-        json.loads(EXPORT.read_text(encoding="utf-8")), pool_size=200
+    if EXPORT is not None and EXPORT.exists():
+        return build_portugal_fruit_config(
+            json.loads(EXPORT.read_text(encoding="utf-8")), pool_size=200
+        )
+    return json.loads(BUNDLED_CONFIG.read_text(encoding="utf-8"))
+
+
+def test_bundled_deployment_config_is_present_and_deidentified():
+    config = json.loads(BUNDLED_CONFIG.read_text(encoding="utf-8"))
+    assert len(config["population"]) == 73
+    assert len(config["products"]) == 18
+    assert all(
+        profile["source_id"].startswith("pt_preliminary_")
+        and profile["empirical_source_id"] == profile["source_id"]
+        for profile in config["population"]
+    )
+    forbidden_keys = {"email", "name", "participantid", "firebaseid", "sessionid"}
+    assert not forbidden_keys.intersection(
+        key.casefold() for profile in config["population"] for key in profile
     )
 
 
