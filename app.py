@@ -78,6 +78,7 @@ from portugal_fruits import (
     build_portugal_fruit_config,
     deidentified_calibration_summary,
 )
+from greece_dairy import build_greece_dairy_synthetic_config
 
 plt.switch_backend("Agg")
 
@@ -1393,8 +1394,8 @@ const CS_TRANS = {
         desc: 'Simulate dairy product availability, panic-buying dynamics and supply disruptions in the Finnish grocery market.',
         tag: 'DAIRY · NORTHERN EU', status: 'active' },
       { title: 'Greece — Dairy Supply Chain',
-        desc: 'Simulate dairy product availability, panic-buying dynamics and supply disruptions in the Greek grocery market.',
-        tag: 'DAIRY · SOUTH EU', status: 'soon' },
+        desc: 'Test a synthetic Greek dairy supply-disruption scenario while empirical data collection is pending.',
+        tag: 'DAIRY · SOUTH EU · SYNTHETIC', status: 'active' },
       { title: 'Portugal — Fruits',
         desc: 'Simulate fruit product availability, panic-buying dynamics and supply disruptions in the Portuguese grocery market.',
         tag: 'FRUITS · WEST EU · PRELIMINARY', status: 'active' },
@@ -1415,8 +1416,8 @@ const CS_TRANS = {
         desc: 'Simuloi maitotuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä suomalaisessa ruokakaupassa.',
         tag: 'MAITOTUOTTEET · POHJ. EU', status: 'active' },
       { title: 'Kreikka — Maitotuoteketju',
-        desc: 'Simuloi maitotuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä kreikkalaisessa ruokakaupassa.',
-        tag: 'MAITOTUOTTEET · ET. EU', status: 'soon' },
+        desc: 'Testaa synteettistä Kreikan maitotuotteiden toimitushäiriöskenaariota empiirisen aineiston keruuta odotettaessa.',
+        tag: 'MAITOTUOTTEET · ET. EU · SYNTEETTINEN', status: 'active' },
       { title: 'Portugali — Hedelmät',
         desc: 'Simuloi hedelmätuotteiden saatavuutta, paniikkiostoksia ja toimitushäiriöitä portugalilaisessa ruokakaupassa.',
         tag: 'HEDELMÄT · LÄNSI-EU · ALUSTAVA', status: 'active' },
@@ -1437,8 +1438,8 @@ const CS_TRANS = {
         desc: 'Προσομοιώστε διαθεσιμότητα γαλακτοκομικών, αγορές πανικού και διαταραχές στη φινλανδική αγορά.',
         tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΒΟΡΕΙΑ ΕΕ', status: 'active' },
       { title: 'Ελλάδα — Αλυσίδα Γαλακτοκομικών',
-        desc: 'Προσομοιώστε τη διαθεσιμότητα γαλακτοκομικών, αγορές πανικού και διαταραχές στην ελληνική αγορά.',
-        tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΝΟΤΙΑ ΕΕ', status: 'soon' },
+        desc: 'Δοκιμάστε ένα συνθετικό σενάριο διαταραχής γαλακτοκομικών έως τη συλλογή εμπειρικών δεδομένων.',
+        tag: 'ΓΑΛΑΚΤΟΚΟΜΙΚΑ · ΝΟΤΙΑ ΕΕ · ΣΥΝΘΕΤΙΚΟ', status: 'active' },
       { title: 'Πορτογαλία — Φρούτα',
         desc: 'Προσομοιώστε τη διαθεσιμότητα φρούτων, αγορές πανικού και διαταραχές στην πορτογαλική αγορά.',
         tag: 'ΦΡΟΥΤΑ · ΔΥΤΙΚΗ ΕΕ · ΠΡΟΚΑΤΑΡΚΤΙΚΟ', status: 'active' },
@@ -1459,8 +1460,8 @@ const CS_TRANS = {
         desc: 'Simule disponibilidade de laticínios, compras em pânico e perturbações logísticas no mercado finlandês.',
         tag: 'LATICÍNIOS · NORTE UE', status: 'active' },
       { title: 'Grécia — Cadeia de Laticínios',
-        desc: 'Simule disponibilidade de laticínios, compras em pânico e perturbações logísticas no mercado grego.',
-        tag: 'LATICÍNIOS · SUL UE', status: 'soon' },
+        desc: 'Teste um cenário sintético de perturbação de laticínios enquanto se aguarda a recolha de dados empíricos.',
+        tag: 'LATICÍNIOS · SUL UE · SINTÉTICO', status: 'active' },
       { title: 'Portugal — Frutas',
         desc: 'Simule disponibilidade de frutas, compras em pânico e perturbações logísticas no mercado português.',
         tag: 'FRUTAS · OESTE UE · PRELIMINAR', status: 'active' },
@@ -1909,6 +1910,9 @@ def render_case_studies_page():
     if st.button("→portugal_fruits", key="portugal_fruits_nav"):
         st.session_state["page"] = "portugal_fruits"
         st.rerun()
+    if st.button("→greece_dairy", key="greece_dairy_nav"):
+        st.session_state["page"] = "greece_dairy"
+        st.rerun()
     if st.button("→back", key="back_nav_btn"):
         st.session_state["page"] = "landing"
         st.rerun()
@@ -1918,7 +1922,7 @@ def render_case_studies_page():
     # JS bridge: hide trigger buttons and route React postMessages to them
     components.html("""<script>
 (function(){
-  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits','→back'];
+  var HIDE = ['→main_en','→main_fi','→main_el','→main_pt','→portugal_fruits','→greece_dairy','→back'];
   var obs = new MutationObserver(function(){
     window.parent.document.querySelectorAll('[data-testid="stButton"]').forEach(function(c){
       var lbl = (c.querySelector('button p, button') || {}).textContent || '';
@@ -1930,6 +1934,12 @@ def render_case_studies_page():
   window.parent.addEventListener('message', function(e){
     if(!e.data) return;
     if(e.data.type === 'launch_case_study'){
+      if(Number(e.data.caseIndex) === 1){
+        window.parent.document.querySelectorAll('button').forEach(function(b){
+          if((b.textContent || '').trim() === '→greece_dairy') b.click();
+        });
+        return;
+      }
       if(Number(e.data.caseIndex) === 2){
         window.parent.document.querySelectorAll('button').forEach(function(b){
           if((b.textContent || '').trim() === '→portugal_fruits') b.click();
@@ -4976,6 +4986,422 @@ def render_portugal_fruits_page() -> None:
 
 
 # ===========================================================================
+# GREECE — DAIRY, SYNTHETIC LOCAL-DEVELOPMENT CASE STUDY
+# ===========================================================================
+
+@st.cache_data(show_spinner=False)
+def _gr_build_config() -> dict:
+    return build_greece_dairy_synthetic_config()
+
+
+def _gr_run_simulation(config: dict, params: dict) -> dict | None:
+    """Run the shared engine while preserving the active Finland configuration."""
+    previous = st.session_state.get("config_data")
+    try:
+        st.session_state["config_data"] = config
+        return _sf_run_simulation(params)
+    finally:
+        st.session_state["config_data"] = previous
+
+
+def _gr_result_metrics(result: dict) -> dict:
+    return _pt_result_metrics(result)
+
+
+def _render_gr_results(result: dict, title: str) -> None:
+    df = result["df"]
+    prod = result["df_prod"]
+    params = result["params"]
+    metrics = _gr_result_metrics(result)
+    st.markdown(f"### {title}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric(
+        "Dairy units purchased", f"{metrics['crisis_sales']:,.0f}",
+        f"{metrics['sales_change_pct']:+.1f}% vs no-crisis baseline",
+    )
+    k2.metric("Unmet dairy demand", f"{metrics['crisis_unmet']:,.0f} units")
+    k3.metric(
+        "Dairy waste", f"{metrics['crisis_waste']:,.0f} units",
+        f"{metrics['waste_change']:+,.0f} vs baseline",
+    )
+    k4.metric("Requested-basket fulfilment", f"{metrics['crisis_fulfillment']:.1%}")
+
+    scenarios = ["Baseline", "Crisis"]
+    if "Crisis (No Policy)" in set(df["Scenario"]):
+        scenarios.append("Crisis (No Policy)")
+    view = df[df["Scenario"].isin(scenarios)]
+    colours = {
+        "Baseline": "#2980b9", "Crisis": "#e67e22",
+        "Crisis (No Policy)": "#7f8c8d",
+    }
+    fig_sales = px.line(
+        view, x="Day", y="Sales", color="Scenario",
+        title="Daily dairy purchases — paired scenario comparison",
+        labels={"Sales": "Dairy units purchased"}, color_discrete_map=colours,
+    )
+    _sf_crisis_band(
+        fig_sales, params["cri_start"],
+        params["cri_start"] + params["cri_duration"], params["days"],
+    )
+    st.plotly_chart(fig_sales, use_container_width=True)
+    st.caption(
+        "Baseline and crisis use the same synthetic household draws and seed. The gap is caused "
+        "by the configured price and delivery shock—not by a different simulated population."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fig_access = px.line(
+            view, x="Day", y="UnmetDemandUnits", color="Scenario",
+            title="Unmet dairy demand",
+            labels={"UnmetDemandUnits": "Requested minus purchased units"},
+            color_discrete_map=colours,
+        )
+        _sf_crisis_band(
+            fig_access, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_access, use_container_width=True)
+    with c2:
+        fig_waste = px.line(
+            view, x="Day", y="Waste", color="Scenario",
+            title="Dairy waste from shelf-life expiry",
+            labels={"Waste": "Expired units"}, color_discrete_map=colours,
+        )
+        _sf_crisis_band(
+            fig_waste, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_waste, use_container_width=True)
+
+    if not prod.empty:
+        shelf = (
+            prod[prod["Scenario"].isin(scenarios)]
+            .groupby(["Day", "Scenario", "Category"], as_index=False)["Shelf"].sum()
+        )
+        fig_stock = px.line(
+            shelf, x="Day", y="Shelf", color="Category", line_dash="Scenario",
+            title="Shelf stock by Greek dairy product group",
+            labels={"Shelf": "Units on shelf"},
+        )
+        _sf_crisis_band(
+            fig_stock, params["cri_start"],
+            params["cri_start"] + params["cri_duration"], params["days"],
+        )
+        st.plotly_chart(fig_stock, use_container_width=True)
+        st.caption(
+            "Shelf-life assumptions differ by product: fresh milk is the most perishable, "
+            "followed by yogurt and cream, while cheese and butter remain saleable longer."
+        )
+
+    if "policy_unmet_change" in metrics:
+        direction = "reduced" if metrics["policy_unmet_change"] < 0 else "increased"
+        st.info(
+            f"Relative to the paired synthetic crisis without policy, this intervention "
+            f"{direction} unmet demand by **{abs(metrics['policy_unmet_change']):,.0f} units**, "
+            f"changed purchases by **{metrics['policy_sales_change']:+,.0f} units**, changed "
+            f"fulfilment by **{metrics['policy_fulfillment_change']:+.1%}**, and changed waste "
+            f"by **{metrics['policy_waste_change']:+,.0f} units**. These are synthetic scenario "
+            "differences, not estimated Greek policy effects."
+        )
+
+
+def _gr_report_bytes(result: dict, config: dict, report_label: str) -> bytes:
+    metrics = _gr_result_metrics(result)
+    params = result["params"]
+    stats = config["stats"]
+
+    def safe(value: object) -> str:
+        text = str(value).replace("—", "-").replace("–", "-").replace("€", "EUR ")
+        return text.encode("latin-1", "replace").decode("latin-1")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_page()
+
+    def paragraph(value: object, height: float = 6, align: str = "L") -> None:
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, height, safe(value), align=align,
+                       new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "B", 19)
+    paragraph("GROCERYsim SecureFood - Greece Dairy", 9, "C")
+    pdf.set_font("Helvetica", "", 12)
+    paragraph("Synthetic dairy cold-chain disruption prototype", 7, "C")
+    pdf.ln(5)
+    pdf.set_fill_color(255, 235, 205)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, safe(report_label), new_x="LMARGIN", new_y="NEXT", fill=True)
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+        "SYNTHETIC DEVELOPMENT REPORT. Greece-specific participant, DCE, retail, inventory, "
+        "delivery and waste data are not available. Results are software-test scenario outputs "
+        "and must not be presented as Greek estimates, forecasts, or policy evidence."
+    )
+
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "1. Synthetic basis", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+        f"Empirical participants: 0; synthetic household templates: "
+        f"{stats['n_synthetic_templates']}; simulated household pool: {stats['pool_size']}; "
+        f"illustrative dairy SKUs: {stats['catalogue_skus']}; estimated DCE: none."
+    )
+    assumptions = stats["synthetic_assumptions"]
+    for key in ("catalogue_prices", "basket_construction", "price_sensitivity", "substitution", "panic_and_hoarding"):
+        paragraph(f"- {key.replace('_', ' ').title()}: {assumptions[key]}")
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "2. Scenario specification", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    paragraph(
+        f"{params['days']} days; {params['base_con']} visits/day; crisis starts Day "
+        f"{params['cri_start']} for {params['cri_duration']} days; dairy-price increase "
+        f"{params['inf']:.0f}%; delivery interruption {params['dis']} days; normal lead time "
+        f"{params['lead']} days; reorder point {params['reorder']:.0%}; restock target "
+        f"{params['target']:.0%}."
+    )
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "3. Results generated by this run", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    lines = [
+        f"Crisis dairy purchases: {metrics['crisis_sales']:,.0f} units ({metrics['sales_change_pct']:+.1f}% versus baseline).",
+        f"Crisis unmet demand: {metrics['crisis_unmet']:,.0f} units.",
+        f"Crisis dairy waste: {metrics['crisis_waste']:,.0f} units ({metrics['waste_change']:+,.0f} versus baseline).",
+        f"Mean requested-basket fulfilment: {metrics['crisis_fulfillment']:.1%}.",
+    ]
+    if "policy_unmet_change" in metrics:
+        lines.extend([
+            f"Policy difference in unmet demand: {metrics['policy_unmet_change']:+,.0f} units versus paired no-policy crisis.",
+            f"Policy difference in purchases: {metrics['policy_sales_change']:+,.0f} units.",
+            f"Policy difference in waste: {metrics['policy_waste_change']:+,.0f} units.",
+            f"Policy difference in fulfilment: {metrics['policy_fulfillment_change']:+.1%}.",
+        ])
+    for line in lines:
+        paragraph(f"- {line}")
+
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.cell(0, 8, "4. Required next validation steps", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    for caution in stats["scientific_cautions"]:
+        paragraph(f"- {caution}")
+    return bytes(pdf.output())
+
+
+def _gr_download_row(result: dict, config: dict, key: str, report_label: str) -> None:
+    report = _gr_report_bytes(result, config, report_label)
+    c1, c2, c3 = st.columns(3)
+    c1.download_button(
+        "Download PDF report", report,
+        file_name=f"GROCERYsim_Greece_Dairy_{key}.pdf",
+        mime="application/pdf", key=f"gr_{key}_pdf", use_container_width=True,
+    )
+    c2.download_button(
+        "Download daily results (CSV)", result["df"].to_csv(index=False).encode("utf-8"),
+        file_name=f"GROCERYsim_Greece_Dairy_{key}_daily.csv",
+        mime="text/csv", key=f"gr_{key}_daily", use_container_width=True,
+    )
+    c3.download_button(
+        "Download product results (CSV)", result["df_prod"].to_csv(index=False).encode("utf-8"),
+        file_name=f"GROCERYsim_Greece_Dairy_{key}_products.csv",
+        mime="text/csv", key=f"gr_{key}_products", use_container_width=True,
+    )
+
+
+def render_greece_dairy_page() -> None:
+    """SecureFood-only synthetic Greece dairy case study for local development."""
+    st.markdown("""<style>
+        section[data-testid="stSidebar"], header[data-testid="stHeader"],
+        #MainMenu, footer { display:none !important; }
+    </style>""", unsafe_allow_html=True)
+    back, heading = st.columns([1, 8])
+    with back:
+        if st.button("Back to case studies", key="gr_back"):
+            if "case" in st.query_params:
+                del st.query_params["case"]
+            st.session_state["page"] = "case_studies"
+            st.rerun()
+    with heading:
+        st.markdown("## Greece — Dairy Supply Chain")
+        st.caption("SecureFood Scenario Simulator · synthetic local-development prototype")
+
+    st.error(
+        "**Synthetic model — no Greek study data are currently available.** The catalogue, "
+        "households, baskets, budgets, price responses and substitution propensities below are "
+        "declared demonstration assumptions. Outputs test the ABM workflow; they are not empirical "
+        "results, forecasts, or evidence about consumers or policies in Greece."
+    )
+    if st.session_state.get("gr_config") is None:
+        st.session_state["gr_config"] = _gr_build_config()
+    config = st.session_state["gr_config"]
+    stats = config["stats"]
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Empirical participants", "0")
+    s2.metric("Synthetic household templates", stats["n_synthetic_templates"])
+    s3.metric("Simulated household pool", f"{stats['pool_size']:,}")
+    s4.metric("Illustrative dairy SKUs", stats["catalogue_skus"])
+    st.caption(
+        "The 240 templates are reproducible artificial household records used to exercise the "
+        "software. The simulation resamples them into a pool of 1,200 persistent households. "
+        "There is **no Greek Discrete Choice Experiment** in this version."
+    )
+
+    with st.expander("View synthetic-data assumptions and dairy catalogue", expanded=False):
+        assumptions = stats["synthetic_assumptions"]
+        st.markdown(
+            f"- **Prices:** {assumptions['catalogue_prices']}\n"
+            f"- **Baskets:** {assumptions['basket_construction']}\n"
+            f"- **Price response:** {assumptions['price_sensitivity']}\n"
+            f"- **Substitution:** {assumptions['substitution']}\n"
+            f"- **Default behaviour:** {assumptions['panic_and_hoarding']}"
+        )
+        catalogue = pd.DataFrame(config["products"])[
+            ["name", "category", "price", "fat_content", "shelf_life_days"]
+        ].rename(columns={
+            "name": "Product", "category": "Group", "price": "Synthetic price (EUR)",
+            "fat_content": "Fat (%)", "shelf_life_days": "Shelf life (days)",
+        })
+        st.dataframe(catalogue, hide_index=True, use_container_width=True)
+
+    st.markdown("### Scenario: extreme heat and refrigerated dairy disruption")
+    st.markdown(
+        "An extreme-heat episode increases refrigeration pressure and interrupts temperature-"
+        "controlled deliveries to a Greek supermarket. Dairy prices rise while delayed "
+        "replenishment increases stockout and expiry risks. Fresh milk, yogurt, cheese, cream "
+        "and butter retain different shelf lives. With no Greek behavioural observations, the "
+        "default scenario uses the synthetic routine baskets without panic or extra purchasing."
+    )
+
+    default_params = {
+        "days": 120, "month": 7, "base_con": 200,
+        "reorder": 0.35, "target": 0.85, "lead": 3,
+        "cri_start": 30, "cri_duration": 45, "inf": 15.0, "dis": 7,
+        "panic": 0.0, "hoard": 1.0, "mc_runs": 1,
+        "policy_cfg": _sf_no_policy_config(30), "purchase_limit": None,
+        "media_intensity": 0.0, "communication_type": "neutral",
+        "stockpile_days": None, "exploratory_behaviour": False,
+    }
+    st.markdown("### 1. Run the synthetic no-policy preset")
+    with st.expander("View preset parameters", expanded=False):
+        st.markdown(
+            "120 days; 200 shopping visits/day; crisis Day 30 for 45 days; 15% synthetic "
+            "dairy-price increase; 7-day refrigerated-delivery interruption; 3-day normal lead "
+            "time; 35% reorder point; 85% restock target; no panic or hoarding; no policy; paired "
+            "seed 42. Every behavioural value is an explicit synthetic assumption."
+        )
+    if st.button("Run Greece dairy synthetic preset", type="primary", key="gr_run_default"):
+        with st.spinner("Running paired synthetic baseline and dairy-crisis simulations..."):
+            st.session_state["gr_results_default"] = _gr_run_simulation(config, default_params)
+    if st.session_state.get("gr_results_default"):
+        _gr_download_row(
+            st.session_state["gr_results_default"], config, "default",
+            "Synthetic no-policy preset generated from this run",
+        )
+        _render_gr_results(st.session_state["gr_results_default"], "Synthetic no-policy results")
+
+    st.divider()
+    st.markdown("### 2. Optional synthetic policy analysis")
+    enabled = st.checkbox(
+        "Enable additional Greece dairy policy analysis", key="gr_policy_enabled",
+        help="Policy controls are hidden and excluded until enabled.",
+    )
+    if not enabled:
+        st.caption("Enable this section to reveal scenario and policy controls.")
+        return
+
+    a, b, c = st.columns(3)
+    with a:
+        st.markdown("**Crisis and demand**")
+        days = st.slider("Simulation days", 60, 240, 120, 10, key="gr_days")
+        consumers = st.number_input(
+            "Shopping visits per day", 50, 1000, 200, 50, key="gr_consumers",
+            help="Synthetic store traffic; it is not a measured Greek footfall value.",
+        )
+        start = st.slider("Crisis start day", 10, max(11, days - 20), min(30, days - 20), key="gr_start")
+        duration = st.slider("Crisis duration", 5, max(5, days - start), min(45, days - start), 5, key="gr_duration")
+        inflation = st.slider(
+            "Dairy price increase (%)", 0, 80, 15, 5, key="gr_inflation",
+            help="Analyst-defined crisis price shock applied to all dairy SKUs.",
+        )
+    with b:
+        st.markdown("**Cold chain and behaviour**")
+        disruption = st.slider(
+            "Refrigerated-delivery interruption (days)", 0, 21, 7, key="gr_disruption",
+            help="Number of crisis days on which scheduled deliveries are blocked.",
+        )
+        lead = st.slider("Normal dairy lead time (days)", 1, 10, 3, key="gr_lead")
+        reorder = st.slider("Reorder point (% capacity)", 15, 60, 35, 5, key="gr_reorder") / 100
+        target = st.slider("Restock target (% capacity)", 65, 100, 85, 5, key="gr_target") / 100
+        panic = st.slider(
+            "Exploratory scarcity-response sensitivity", 0.0, 0.8, 0.20, 0.05, key="gr_panic",
+            help="Unvalidated synthetic assumption; no Greek questionnaire currently estimates it.",
+        )
+        hoard = st.slider(
+            "Exploratory extra-purchase factor", 1.0, 2.0, 1.15, 0.05, key="gr_hoard",
+            help="Unvalidated synthetic multiplier, active only in this optional exploratory analysis.",
+        )
+    with c:
+        st.markdown("**Dairy policy levers**")
+        rationing = st.checkbox("Per-SKU dairy quantity limit", key="gr_rationing")
+        limit = st.slider("Maximum units per dairy SKU", 1, 8, 3, key="gr_limit", disabled=not rationing)
+        subsidy = st.checkbox(
+            "Essential milk and yogurt subsidy", key="gr_subsidy",
+            help="Reduces modeled prices for Milk and Yogurt only; cheese, cream and butter are unchanged.",
+        )
+        subsidy_rate = st.slider(
+            "Essential dairy subsidy rate (%)", 5, 40, 15, 5,
+            key="gr_subsidy_rate", disabled=not subsidy,
+        ) / 100
+        comm = st.selectbox(
+            "Public scarcity communication", ["neutral", "calming", "panic"], key="gr_comm",
+            help="An exploratory behavioural scenario—not a measured communication effect.",
+        )
+        intensity = (
+            st.slider("Communication intensity", 0.0, 1.0, 0.30, 0.05, key="gr_comm_intensity")
+            if comm != "neutral" else 0.0
+        )
+
+    policy_cfg = _sf_no_policy_config(start)
+    policy_cfg.update({
+        "subsidy_active": subsidy,
+        "subsidy_target": "category",
+        "subsidy_categories": ["Milk", "Yogurt"],
+        "subsidy_rate": subsidy_rate if subsidy else 0.0,
+    })
+    params = {
+        "days": days, "month": 7, "base_con": int(consumers),
+        "reorder": reorder, "target": target, "lead": lead,
+        "cri_start": start, "cri_duration": duration,
+        "inf": float(inflation), "dis": disruption,
+        "panic": panic, "hoard": hoard, "mc_runs": 1,
+        "policy_cfg": policy_cfg,
+        "purchase_limit": limit if rationing else None,
+        "media_intensity": intensity,
+        "communication_type": comm,
+        "stockpile_days": None,
+        "exploratory_behaviour": True,
+    }
+    has_policy = _sf_has_active_policy(params)
+    if not has_policy:
+        st.info("Select a quantity limit, essential dairy subsidy, or non-neutral communication.")
+    if st.button(
+        "Run Greece dairy policy analysis", type="primary", key="gr_run_policy",
+        disabled=not has_policy,
+    ):
+        with st.spinner("Running paired synthetic policy and no-policy dairy crises..."):
+            st.session_state["gr_results_policy"] = _gr_run_simulation(config, params)
+    if st.session_state.get("gr_results_policy"):
+        _gr_download_row(
+            st.session_state["gr_results_policy"], config, "policy",
+            "Synthetic policy analysis generated from this run",
+        )
+        _render_gr_results(st.session_state["gr_results_policy"], "Synthetic policy-analysis results")
+
+
+# ===========================================================================
 # 1. SESSION STATE INITIALISATION
 # ===========================================================================
 
@@ -4994,6 +5420,10 @@ defaults = {
     "pt_config": None,
     "pt_results_default": None,
     "pt_results_policy": None,
+    # Greece dairy synthetic local-development case study
+    "gr_config": None,
+    "gr_results_default": None,
+    "gr_results_policy": None,
     # Simulation results
     "sim_results":     None,
     "sim_stock":       None,
@@ -16385,11 +16815,11 @@ def main():
 
 if __name__ == "__main__":
     # Local-development deep link; this branch is intentionally not deployed.
-    page = (
-        "portugal_fruits"
-        if st.query_params.get("case") == "portugal-fruits"
-        else st.session_state.get("page", "landing")
-    )
+    _case_link = st.query_params.get("case")
+    page = {
+        "portugal-fruits": "portugal_fruits",
+        "greece-dairy": "greece_dairy",
+    }.get(_case_link, st.session_state.get("page", "landing"))
     if page == "landing":
         render_landing_page()
     elif page == "case_studies":
@@ -16398,5 +16828,7 @@ if __name__ == "__main__":
         render_securefood_page()
     elif page == "portugal_fruits":
         render_portugal_fruits_page()
+    elif page == "greece_dairy":
+        render_greece_dairy_page()
     else:
         main()
